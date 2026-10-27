@@ -145,6 +145,7 @@ jobs:
             fi
           }
           refuse "desktop.image is required"
+          # Null drops the default namespaceSelector; the default podSelector is empty.
           refuse "networkPolicy.ingressController needs a namespaceSelector" \
             --set desktop.image=example/desktop:1 \
-            --set-json 'networkPolicy.ingressController={"namespaceSelector":{},"podSelector":{}}'
+            --set-json 'networkPolicy.ingressController.namespaceSelector=null'
