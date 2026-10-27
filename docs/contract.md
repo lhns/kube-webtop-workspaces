@@ -448,7 +448,7 @@ gateway:
   groupsSeparator: ","
   adminGroup: ""
   requiredGroup: ""
-  trustedProxyCIDRs: []
+  trustedProxyCIDRs: []          # set to the ingress controller's CIDRs, else the desktop sees X-Forwarded-Proto: http
   cookieSecure: true
 ```
 

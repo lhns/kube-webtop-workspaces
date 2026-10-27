@@ -193,9 +193,15 @@ func (s *Server) livePod(ctx context.Context, name string, uid types.UID) (*core
 	return nil, fail(http.StatusForbidden, "no such pod")
 }
 
-func (s *Server) getDesktop(ctx context.Context, name string) (*v1alpha1.Desktop, *httpError) {
+// getDesktop reads cache-first, or API-first when fresh: a power request decides from lastStart
+// whether a stop is already recorded, and a lagging cache would hide a new start.
+func (s *Server) getDesktop(ctx context.Context, name string, fresh bool) (*v1alpha1.Desktop, *httpError) {
 	key := client.ObjectKey{Namespace: s.Namespace, Name: name}
-	for _, rd := range []client.Reader{s.Client, s.Reader} {
+	readers := []client.Reader{s.Client, s.Reader}
+	if fresh {
+		readers[0], readers[1] = s.Reader, s.Client
+	}
+	for _, rd := range readers {
 		if rd == nil {
 			continue
 		}
@@ -275,7 +281,7 @@ func (s *Server) power(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) applyPower(ctx context.Context, c *caller, req powerRequest) *httpError {
-	d, herr := s.getDesktop(ctx, c.desktop)
+	d, herr := s.getDesktop(ctx, c.desktop, true)
 	if herr != nil {
 		return herr
 	}
@@ -354,7 +360,7 @@ func (s *Server) report(w http.ResponseWriter, r *http.Request) {
 		writeErr(sw, fail(http.StatusBadRequest, "value out of range"))
 		return
 	}
-	d, herr := s.getDesktop(r.Context(), c.desktop)
+	d, herr := s.getDesktop(r.Context(), c.desktop, false)
 	if herr != nil {
 		writeErr(sw, herr)
 		return
