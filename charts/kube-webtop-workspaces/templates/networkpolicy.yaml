@@ -8,6 +8,9 @@
 {{- $apiPort := include "kwt.port" .Values.powerApi.addr }}
 {{- $metricsPort := include "kwt.port" .Values.metricsAddr }}
 {{- $dns := .Values.networkPolicy.dns }}
+{{- if not (or $dns.namespaceSelector $dns.podSelector) }}
+{{- fail "networkPolicy.dns needs a namespaceSelector and/or podSelector" }}
+{{- end }}
 ---
 # Gateway: only the ingress controller. Desktop pods must not reach it: it trusts Remote-User.
 apiVersion: networking.k8s.io/v1

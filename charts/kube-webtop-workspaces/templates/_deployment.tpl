@@ -63,14 +63,10 @@ spec:
             - --config=/etc/kube-webtop-workspaces/config.yaml
             - --log-level={{ $ctx.Values.logLevel }}
             - --log-format={{ $ctx.Values.logFormat }}
+          {{- with $v.extraEnv }}
           env:
-            - name: POD_NAMESPACE
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.namespace
-            {{- with $v.extraEnv }}
             {{- toYaml . | nindent 12 }}
-            {{- end }}
+          {{- end }}
           ports:
             - name: {{ ternary "power-api" "http" $isController }}
               containerPort: {{ $apiPort }}

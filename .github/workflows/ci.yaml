@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   unit:
     runs-on: ubuntu-latest
@@ -125,27 +128,8 @@ jobs:
           render --set desktop.image=example/desktop:1
           render -f charts/tests/values-all-on.yaml
           render -f charts/tests/values-netpol-off.yaml
+      # Also renders the defaults/all-on/netpol-off cases and checks that invalid values are refused.
       - name: chart checks
         run: |
           python3 -c "import yaml" 2>/dev/null || pip install --quiet pyyaml
           python3 charts/tests/check.py
-      - name: helm template refuses invalid values
-        run: |
-          set -uo pipefail
-          # Match the chart's own message, so a render that fails for any
-          # other reason does not count.
-          refuse() {
-            local want=$1; shift
-            local err
-            if err=$(helm template testrelease charts/kube-webtop-workspaces --kube-version 1.31.0 "$@" 2>&1 >/dev/null); then
-              echo "rendered, want a failure: $*"; exit 1
-            fi
-            if ! grep -qF -- "$want" <<<"$err"; then
-              echo "failed without '$want': $*"; echo "$err"; exit 1
-            fi
-          }
-          refuse "desktop.image is required"
-          # Null drops the default namespaceSelector; the default podSelector is empty.
-          refuse "networkPolicy.ingressController needs a namespaceSelector" \
-            --set desktop.image=example/desktop:1 \
-            --set-json 'networkPolicy.ingressController.namespaceSelector=null'

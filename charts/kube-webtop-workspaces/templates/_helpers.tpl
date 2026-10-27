@@ -1,12 +1,12 @@
-{{- define "kwt.name" -}}kube-webtop-workspaces{{- end }}
+{{- define "kwt.name" -}}{{ .Values.nameOverride | default "kube-webtop-workspaces" | trunc 40 | trimSuffix "-" }}{{- end }}
 
 {{- define "kwt.fullname" -}}
 {{- if .Values.fullnameOverride -}}
 {{- .Values.fullnameOverride | trunc 40 | trimSuffix "-" -}}
-{{- else if contains "kube-webtop-workspaces" .Release.Name -}}
+{{- else if contains (include "kwt.name" .) .Release.Name -}}
 {{- .Release.Name | trunc 40 | trimSuffix "-" -}}
 {{- else -}}
-{{- printf "%s-kube-webtop-workspaces" .Release.Name | trunc 40 | trimSuffix "-" -}}
+{{- printf "%s-%s" .Release.Name (include "kwt.name" .) | trunc 40 | trimSuffix "-" -}}
 {{- end -}}
 {{- end }}
 

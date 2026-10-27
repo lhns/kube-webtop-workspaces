@@ -108,6 +108,9 @@ for name, args in cases.items():
             if np["desktop"]["spec"]["ingress"][0]["from"][0]["podSelector"]["matchLabels"][
                     "app.kubernetes.io/component"] != "gateway":
                 fail(f"{name}: desktop ingress is not limited to the gateway")
+            dns_ports = {(p["protocol"], p["port"]) for p in np["desktop"]["spec"]["egress"][0]["ports"]}
+            if dns_ports != {("UDP", 53), ("TCP", 53)}:
+                fail(f"{name}: DNS egress must allow UDP and TCP 53, got {sorted(dns_ports)}")
     if name == "all-on":
         for k in ("Ingress", "HTTPRoute", "ServiceMonitor"):
             if k not in kinds:
@@ -123,12 +126,22 @@ for name, args in cases.items():
                 fail(f"{name}: selector of {d['metadata']['name']} does not match its pod labels")
     print(f"ok: {name} ({len(docs)} objects)")
 
-# 3. An empty ingress-controller selector must be refused.
-bad = subprocess.run(
-    ["helm", "template", "r", str(CHART), "--kube-version", KUBE_VERSION, "--set", "desktop.image=x",
-     "--set-json", "networkPolicy.ingressController={\"namespaceSelector\":null,\"podSelector\":null}"],
-    capture_output=True, text=True)
-if bad.returncode == 0:
-    fail("empty networkPolicy.ingressController was accepted")
+# 3. Invalid values must be refused by the chart's own message, not by some other render error.
+def refuse(want, *args):
+    bad = subprocess.run(["helm", "template", "r", str(CHART), "--kube-version", KUBE_VERSION, *args],
+                         capture_output=True, text=True)
+    if bad.returncode == 0:
+        fail(f"rendered, want a failure with {want!r}: {args}")
+    elif want not in bad.stderr:
+        fail(f"failed without {want!r}: {args}\n{bad.stderr}")
+
+
+refuse("desktop.image is required")
+# Null drops the default namespaceSelector; the default podSelector is empty.
+refuse("networkPolicy.ingressController needs a namespaceSelector",
+       "--set", "desktop.image=x", "--set-json", "networkPolicy.ingressController.namespaceSelector=null")
+refuse("networkPolicy.dns needs a namespaceSelector",
+       "--set", "desktop.image=x", "--set-json", "networkPolicy.dns={\"namespaceSelector\":null,\"podSelector\":null}")
+print("ok: invalid values refused")
 
 sys.exit(1 if errors else 0)

@@ -25,5 +25,5 @@ chart-crd:
 
 # Lint, render and check the chart (needs helm and python3 with PyYAML).
 chart-check:
-	helm lint charts/kube-webtop-workspaces --set desktop.image=x
+	helm lint charts/kube-webtop-workspaces --strict --set desktop.image=x
 	python3 charts/tests/check.py
