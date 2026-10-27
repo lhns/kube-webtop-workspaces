@@ -1,0 +1,27 @@
+{{- /* Rendered 1:1 into internal/config. Chart-only keys are stripped; the config parser rejects unknown fields. */ -}}
+{{- $ldap := omit .Values.ldap "bindSecret" "caSecret" }}
+{{- if .Values.ldap.bindSecret.name }}{{ $_ := set $ldap "bindPasswordFile" (include "kwt.ldapPasswordPath" .) }}{{ end }}
+{{- if .Values.ldap.caSecret.name }}{{ $_ := set $ldap "caFile" (include "kwt.ldapCAPath" .) }}{{ end }}
+{{- $_ := required "desktop.image is required" .Values.desktop.image }}
+{{- $desktop := set (deepCopy .Values.desktop) "serviceAccountName" (include "kwt.desktopServiceAccount" .) }}
+{{- $powerApi := set (deepCopy .Values.powerApi) "url" (include "kwt.powerApiURL" .) }}
+{{- $config := dict
+  "namespace" .Release.Namespace
+  "names" .Values.names
+  "metricsAddr" .Values.metricsAddr
+  "healthAddr" .Values.healthAddr
+  "controller" .Values.controller
+  "powerApi" $powerApi
+  "ldap" $ldap
+  "desktop" $desktop
+  "storage" .Values.storage
+  "gateway" .Values.gateway }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "kwt.fullname" . }}
+  labels:
+    {{- include "kwt.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    {{- toYaml $config | nindent 4 }}

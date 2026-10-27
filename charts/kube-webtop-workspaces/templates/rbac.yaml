@@ -1,0 +1,90 @@
+{{- /*
+Mirrors config/rbac/{controller,gateway}/role.yaml (charts/tests/check.py compares them).
+One rule per line. persistentvolumeclaims must never get delete.
+*/ -}}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "kwt.fullname" . }}-controller
+  labels:
+    {{- include "kwt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: controller
+rules:
+  - {apiGroups: [""], resources: [events], verbs: [create, patch]}
+  - {apiGroups: [""], resources: [persistentvolumeclaims], verbs: [create, get, list, patch, watch]}
+  - {apiGroups: [""], resources: [pods], verbs: [get, list, watch]}
+  - {apiGroups: [""], resources: [services], verbs: [create, get, list, patch, update, watch]}
+  - {apiGroups: [apps], resources: [deployments], verbs: [create, get, list, patch, update, watch]}
+  - {apiGroups: [coordination.k8s.io], resources: [leases], verbs: [create, get, list, patch, update, watch]}
+  - {apiGroups: [webtop.lhns.github.io], resources: [desktops], verbs: [get, list, patch, update, watch]}
+  - {apiGroups: [webtop.lhns.github.io], resources: [desktops/status], verbs: [get, patch, update]}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "kwt.fullname" . }}-controller
+  labels:
+    {{- include "kwt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "kwt.fullname" . }}-controller
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kwt.fullname" . }}-controller
+    namespace: {{ .Release.Namespace }}
+---
+# Cluster-scoped: only TokenReview, to authenticate desktop agents.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "kwt.fullname" . }}-{{ .Release.Namespace }}-controller
+  labels:
+    {{- include "kwt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: controller
+rules:
+  - {apiGroups: [authentication.k8s.io], resources: [tokenreviews], verbs: [create]}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "kwt.fullname" . }}-{{ .Release.Namespace }}-controller
+  labels:
+    {{- include "kwt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "kwt.fullname" . }}-{{ .Release.Namespace }}-controller
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kwt.fullname" . }}-controller
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "kwt.fullname" . }}-gateway
+  labels:
+    {{- include "kwt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+rules:
+  - {apiGroups: [webtop.lhns.github.io], resources: [desktops], verbs: [create, get, list, patch, watch]}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "kwt.fullname" . }}-gateway
+  labels:
+    {{- include "kwt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "kwt.fullname" . }}-gateway
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kwt.fullname" . }}-gateway
+    namespace: {{ .Release.Namespace }}

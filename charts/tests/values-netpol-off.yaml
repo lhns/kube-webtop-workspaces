@@ -1,0 +1,3 @@
+desktop: {image: example.org/desktop:1}
+networkPolicy: {enabled: false}
+controllerPod: {podDisruptionBudget: {enabled: false}}

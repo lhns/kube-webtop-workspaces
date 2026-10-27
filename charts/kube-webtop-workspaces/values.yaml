@@ -1,0 +1,212 @@
+# Values for kube-webtop-workspaces. The sections names, controller, powerApi, ldap, desktop,
+# storage and gateway (plus metricsAddr/healthAddr) are rendered 1:1 into the shared config file
+# (docs/contract.md, "Configuration"); keys the binary does not know make it refuse to start.
+# Everything lives in the release namespace.
+
+nameOverride: ""
+fullnameOverride: ""
+
+# Image of the controller and the gateway (one binary, --mode selects).
+image:
+  repository: ghcr.io/lhns/kube-webtop-workspaces
+  tag: ""            # default: the chart appVersion
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+logLevel: info
+logFormat: json      # json | text
+
+metricsAddr: ":9090"
+healthAddr: ":8081"
+
+names:
+  prefix: desktop-   # prefix of the per-user Deployment/Service/PVC; starts with a letter, <= 22 chars
+
+controller:
+  leaderElection: true
+  leaderElectionID: kube-webtop-workspaces
+  requireAgentReady: true
+  # Container exit codes that count as a clean poweroff from inside the desktop.
+  # Must match what PID 1 of the desktop image exits with.
+  cleanExitCodes: [0]
+
+powerApi:
+  addr: ":8082"
+  audience: kube-webtop-workspaces
+  # URL the desktop agent uses; empty: http://<release>-controller.<namespace>.svc:<port>.
+  url: ""
+
+ldap:
+  # Empty url disables LDAP: every user is authorized.
+  url: ""
+  startTLS: false
+  insecureSkipVerify: false
+  bindDN: ""
+  baseDN: ""
+  userFilter: "(objectClass=person)"
+  userAttribute: uid
+  groupDN: ""
+  membership: memberOf        # memberOf | member
+  memberAttribute: ""         # default: memberOf / member by mode
+  syncInterval: 5m
+  timeout: 10s
+  errorPolicy: deny           # deny | allow, applies to new starts while LDAP is failing
+  # Bind password from an existing Secret; never a literal value. Sets bindPasswordFile.
+  bindSecret:
+    name: ""
+    key: password
+  # Optional CA bundle from an existing Secret. Sets caFile.
+  caSecret:
+    name: ""
+    key: ca.crt
+
+# Desktop pods created by the controller.
+desktop:
+  image: ""                   # required, the desktop image
+  imagePullPolicy: IfNotPresent
+  imagePullSecrets: []        # [{name: ...}]
+  port: 8080                  # the web client listens here (plain HTTP)
+  # Shared ServiceAccount of all desktop pods; empty: <release>-desktop. Created by
+  # desktopServiceAccount.create, automount off (a projected token for powerApi.audience is used).
+  serviceAccountName: ""
+  # RuntimeClass must exist (see docs/cluster-requirements.md); the chart does not create it.
+  runtimeClassName: ""
+  priorityClassName: ""
+  hostUsers: false            # false = user namespace; required for the default security setup
+  resources: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podLabels: {}
+  podAnnotations: {}
+  extraEnv: []                # []corev1.EnvVar
+  extraVolumes: []            # []corev1.Volume
+  extraVolumeMounts: []       # []corev1.VolumeMount
+  securityContext: null       # when set, replaces the whole default container securityContext
+  shmSize: 1Gi
+  runSizeLimit: 256Mi
+  # Must exceed the power-hook timeout plus the session save.
+  terminationGracePeriodSeconds: 120
+
+# Per-user PVC. Created on first start; never deleted by the controller.
+storage:
+  storageClassName: ""        # empty: cluster default
+  size: 50Gi
+  accessModes: [ReadWriteOnce]
+  mountPath: /persist
+  labels: {}
+  annotations: {}
+
+gateway:
+  addr: ":8080"
+  userHeader: Remote-User
+  groupsHeader: Remote-Groups
+  groupsSeparator: ","
+  adminGroup: ""
+  requiredGroup: ""
+  # SECURITY: the gateway trusts userHeader/groupsHeader from whoever connects. Set this to the
+  # CIDRs of your ingress controller / gateway pods: peers outside get 403 (defence in depth next
+  # to networkPolicy), and incoming X-Forwarded-* are kept only from them. Empty = any peer is
+  # trusted and the desktop sees X-Forwarded-Proto: http.
+  trustedProxyCIDRs: []
+  cookieSecure: true          # false only when serving plain HTTP
+
+desktopServiceAccount:
+  create: true
+
+# Workloads (chart-only; not part of the config file).
+controllerPod:
+  replicas: 2
+  resources: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}                # empty: soft anti-affinity across nodes
+  topologySpreadConstraints: []
+  priorityClassName: ""
+  podAnnotations: {}
+  podLabels: {}
+  extraEnv: []
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+    maxUnavailable: ""        # when set, wins over minAvailable
+
+gatewayPod:
+  replicas: 2
+  resources: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}                # empty: soft anti-affinity across nodes
+  topologySpreadConstraints: []
+  priorityClassName: ""
+  podAnnotations: {}
+  podLabels: {}
+  extraEnv: []
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+    maxUnavailable: ""        # when set, wins over minAvailable
+
+gatewayService:
+  type: ClusterIP
+  port: 80
+  annotations: {}
+
+# Optional exposure of the gateway. Both off by default. The proxy in front must authenticate the
+# user and set the gateway.userHeader/groupsHeader headers (and strip any client-sent ones).
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts: []                   # [desktop.example.com]
+  path: /
+  pathType: Prefix
+  tls: []                     # [{secretName: ..., hosts: [...]}]
+
+httpRoute:
+  enabled: false
+  annotations: {}
+  parentRefs: []              # [{name: gw, namespace: gateway-system}]
+  hostnames: []
+  path: /
+
+metrics:
+  # prometheus.io/scrape pod annotations (port = metricsAddr).
+  prometheusAnnotations: false
+  serviceMonitor:             # needs the Prometheus Operator CRDs
+    enabled: false
+    interval: 30s
+    scrapeTimeout: ""
+    labels: {}
+
+# SECURITY: on by default. Needs a CNI that enforces NetworkPolicy.
+#  - gateway: ingress only from the ingress controller (desktop pods cannot reach it: it trusts
+#    the Remote-User header)
+#  - desktop pods: ingress only from the gateway
+#  - controller: power API only from desktop pods
+#  - desktop egress: DNS, the power API, and desktopEgress.allowCIDRs minus exceptCIDRs
+networkPolicy:
+  enabled: true
+  # Where the ingress controller / Gateway-API implementation runs. Must not match the desktop
+  # pods; at least one of the two selectors is required.
+  ingressController:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: ingress-nginx
+    podSelector: {}
+  # Cluster DNS.
+  dns:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: kube-system
+    podSelector:
+      matchLabels:
+        k8s-app: kube-dns
+  # Who may scrape :metrics on the controller and gateway, e.g.
+  # [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: monitoring}}}]. Empty: nobody.
+  metricsFrom: []
+  desktopEgress:
+    allowCIDRs: ["0.0.0.0/0"]
+    # Carved out of allowCIDRs (an except must lie inside the allow entry of the same IP family).
+    # List the cluster's pod, service and node ranges so a desktop cannot reach in-cluster
+    # services, the API server or other nodes. The controller and DNS are allowed separately.
+    exceptCIDRs: []
