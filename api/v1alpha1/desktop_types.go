@@ -73,7 +73,7 @@ type DesktopSpec struct {
 // LastStop records the most recent recorded stop. Microsecond precision: compared with LastStart.
 type LastStop struct {
 	Time   metav1.MicroTime `json:"time"`
-	Reason StopReason  `json:"reason"`
+	Reason StopReason       `json:"reason"`
 }
 
 // DesktopStatus is the observed state of a Desktop.
