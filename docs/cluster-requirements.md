@@ -8,18 +8,17 @@ inside a user namespace, which needs the following.
 - Kubernetes 1.30+ with **user namespaces** (`pod.spec.hostUsers: false`, the chart default
   `desktop.hostUsers: false`). Needs a Linux kernel with idmapped mounts (>= 6.3 recommended) and a
   runtime that supports it (containerd >= 2.0 / CRI-O).
-- A **writable-cgroup runtime** for systemd inside the pod. With containerd, add a runtime handler
-  whose runc options set `cgroup_writable = true`:
+- A **writable-cgroup runtime** for systemd inside the pod: containerd >= 2.1, a runtime handler
+  with `cgroup_writable = true` (a key of the runtime itself, not of its runc `options`):
 
   ```toml
   # /etc/containerd/config.toml (or a drop-in)
   [plugins."io.containerd.cri.v1.runtime".containerd.runtimes.cgroup-writable]
     runtime_type = "io.containerd.runc.v2"
+    cgroup_writable = true
     [plugins."io.containerd.cri.v1.runtime".containerd.runtimes.cgroup-writable.options]
-      cgroup_writable = true
+      SystemdCgroup = true  # match the node's cgroup driver
   ```
-
-  The section path depends on the containerd version (1.x uses `io.containerd.grpc.v1.cri`).
 - A **RuntimeClass** naming that handler, then `desktop.runtimeClassName` set to it:
 
   ```yaml
