@@ -70,9 +70,9 @@ type DesktopSpec struct {
 	RestartRequestedAt *metav1.Time `json:"restartRequestedAt,omitempty"`
 }
 
-// LastStop records the most recent recorded stop.
+// LastStop records the most recent recorded stop. Microsecond precision: compared with LastStart.
 type LastStop struct {
-	Time   metav1.Time `json:"time"`
+	Time   metav1.MicroTime `json:"time"`
 	Reason StopReason  `json:"reason"`
 }
 
@@ -102,7 +102,7 @@ type DesktopStatus struct {
 	AgentReady bool `json:"agentReady,omitempty"`
 	// LastStart is when powerState last went On or a restart was applied.
 	// +optional
-	LastStart *metav1.Time `json:"lastStart,omitempty"`
+	LastStart *metav1.MicroTime `json:"lastStart,omitempty"`
 	// +optional
 	LastStop *LastStop `json:"lastStop,omitempty"`
 	// +optional

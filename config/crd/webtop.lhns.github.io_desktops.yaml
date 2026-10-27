@@ -176,7 +176,8 @@ spec:
                 format: date-time
                 type: string
               lastStop:
-                description: LastStop records the most recent recorded stop.
+                description: 'LastStop records the most recent recorded stop. Microsecond
+                  precision: compared with LastStart.'
                 properties:
                   reason:
                     description: StopReason says why a desktop stopped. See docs/contract.md,

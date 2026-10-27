@@ -49,8 +49,8 @@ Desktop whose name is not `sanitize(spec.user)`.
 | `url` | string | proxy target, `http://<svc>.<ns>.svc:<port>`; set by the controller |
 | `podName`, `podUID` | string | the current desktop pod |
 | `agentReady` | bool | the agent of `podUID` reported ready |
-| `lastStart` | time | when `powerState` last went `On` (or a restart was applied) |
-| `lastStop` | `{time, reason}` | last recorded stop; reasons in section 3.3 |
+| `lastStart` | time (µs) | when `powerState` last went `On` (or a restart was applied) |
+| `lastStop` | `{time (µs), reason}` | last recorded stop; reasons in section 3.3. Both µs fields are compared with each other |
 | `lastReportTime` | time | last accepted agent report |
 | `appliedTemplateHash` | string | hash of the pod template on the Deployment |
 | `updatePending` | bool | desired hash ≠ applied hash while running |
