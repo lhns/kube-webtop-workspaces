@@ -1,0 +1,500 @@
+# kube-webtop-workspaces contract
+
+The interface between the controller/gateway binary, the desktop image (and its in-pod agent) and
+the Helm chart. Anything not stated here is an implementation detail and may change.
+
+Version: `v1alpha1`. Go module: `github.com/lhns/kube-webtop-workspaces`.
+
+## 1. Components
+
+| component | binary | replicas | job |
+| --- | --- | --- | --- |
+| gateway | `kube-webtop-workspaces --mode=gateway` | 2+, stateless | auth-header routing, start on navigation, boot/off pages, reverse proxy |
+| controller | `kube-webtop-workspaces --mode=controller` | 2+, leader election | reconcile `Desktop`s, LDAP sync (leader only); power/report API (every replica) |
+| desktop | the desktop image | 0/1 per user | NixOS + systemd; the in-pod agent talks to the power/report API |
+
+Everything lives in **one namespace** (`namespace` in the config, default: the pod's namespace).
+
+## 2. CRD `Desktop`
+
+- Group/version: **`webtop.lhns.github.io/v1alpha1`**, kind `Desktop`, plural `desktops`, short
+  name `dt`, **namespaced**. The group is fixed (it names the project owner, like the module path,
+  and is collision-free); it is not a chart value.
+- Subresource **`status`** is enabled: spec and status have separate RBAC. The gateway may only
+  touch spec; only the controller writes status.
+- CRD YAML: `config/crd/webtop.lhns.github.io_desktops.yaml` (controller-gen). The chart copies it
+  to `crds/`.
+
+### Name
+
+`metadata.name` = `sanitize(spec.user)` (section 4). The controller sets phase `Error` on a
+Desktop whose name is not `sanitize(spec.user)`.
+
+### spec
+
+| field | type | notes |
+| --- | --- | --- |
+| `user` | string, required, immutable (CEL `self == oldSelf`) | the user ID exactly as the auth header / LDAP has it |
+| `powerState` | `On` \| `Off`, default `Off` | desired state |
+| `restartRequestedAt` | RFC 3339 time, optional | set to request a restart ("reboot"); applies pending updates |
+
+### status
+
+| field | type | meaning |
+| --- | --- | --- |
+| `phase` | `Off` \| `Starting` \| `Running` \| `Stopping` \| `Error` | summary; the gateway proxies only in `Running` |
+| `stage` | string | human-readable current step (section 3.4) |
+| `bootProgress` | int 0–100 | 0 when off |
+| `message` | string | detail for `Error` or an unauthorized desktop |
+| `url` | string | proxy target, `http://<svc>.<ns>.svc:<port>`; set by the controller |
+| `podName`, `podUID` | string | the current desktop pod |
+| `agentReady` | bool | the agent of `podUID` reported ready |
+| `lastStart` | time | when `powerState` last went `On` (or a restart was applied) |
+| `lastStop` | `{time, reason}` | last recorded stop; reasons in section 3.3 |
+| `lastReportTime` | time | last accepted agent report |
+| `appliedTemplateHash` | string | hash of the pod template on the Deployment |
+| `updatePending` | bool | desired hash ≠ applied hash while running |
+| `observedRestartAt` | time | last `spec.restartRequestedAt` the controller applied |
+| `connectedClients` | int | from the agent |
+| `idleSeconds` | int | from the agent |
+| `observedGeneration` | int | |
+| `conditions` | `[]metav1.Condition` | `Authorized`, `Ready` |
+
+Conditions:
+
+- `Authorized`: `True` (reason `Member` or `LDAPDisabled`), `False` (`NotMember`), `Unknown`
+  (`LDAPError` — no successful lookup yet).
+- `Ready`: `True` iff phase `Running`.
+
+## 3. Controller behaviour
+
+### 3.1 Created objects
+
+| object | name | owner | notes |
+| --- | --- | --- | --- |
+| Deployment | `<prefix><desktop>` | Desktop (controller ownerReference) | replicas 0/1, strategy `Recreate` |
+| Service | `<prefix><desktop>` | Desktop (controller ownerReference) | ClusterIP, port `desktop.port`, selects the desktop label |
+| PVC | `<prefix><desktop>` | **none, ever** | created on the first start; mounted at `storage.mountPath` |
+
+`<prefix>` is `names.prefix` (default `desktop-`); it must start with a letter and be ≤ 22 chars so
+names stay ≤ 63.
+
+Labels on all three and on the pod template:
+
+| key | value |
+| --- | --- |
+| `webtop.lhns.github.io/desktop` | desktop name |
+| `app.kubernetes.io/name` | `webtop-desktop` |
+| `app.kubernetes.io/instance` | desktop name |
+| `app.kubernetes.io/managed-by` | `kube-webtop-workspaces` |
+
+Annotations:
+
+| key | on | value |
+| --- | --- | --- |
+| `webtop.lhns.github.io/user` | PVC, Deployment, pod template | original user ID |
+| `webtop.lhns.github.io/template-hash` | Deployment | hash of the rendered pod template |
+| `webtop.lhns.github.io/restarted-at` | pod template | `spec.restartRequestedAt` when applied (not hashed) |
+
+Deleting a `Desktop` garbage-collects the Deployment and Service; the **PVC stays**. A re-created
+Desktop of the same name re-adopts it.
+
+**PVC rules (hard):** the code has no PVC delete call, PVCs never get an ownerReference, and the
+controller role has no `delete`/`deletecollection` on PVCs (asserted by a test on
+`config/rbac/controller/role.yaml`). An existing PVC of the right name is adopted only if it carries
+`webtop.lhns.github.io/desktop=<desktop>`; otherwise phase `Error` and nothing starts. To migrate
+data into a pre-created PVC, label it before the first start. The controller only adds missing
+labels/annotations to an adopted PVC; it never changes its spec.
+
+### 3.2 Reconcile
+
+1. **Validate:** name = `sanitize(spec.user)`, else `Error`.
+2. **Authorize:** `Authorized` from the LDAP member cache (section 6). On a start (`On` while the
+   Deployment is at 0) of a user not in the cache, query LDAP directly for that user. Not authorized
+   → no start, phase `Off`, `message` set. An LDAP error never stops a running desktop.
+3. **PVC** when starting (section 3.1).
+4. **Service** and **Deployment** (always, once valid).
+   - Desired pod template rendered from the config (section 5); hash = SHA-256 of the rendered pod
+     template without the `restarted-at` annotation (replicas excluded).
+   - Template written when the Deployment is at replicas 0, when it goes 0→1, or when
+     `spec.restartRequestedAt > status.observedRestartAt` (rollout; also stamps `restarted-at`).
+   - Otherwise only `spec.replicas` is patched; a differing hash sets `status.updatePending=true`.
+     **A running desktop is never restarted by an update.**
+5. **Replicas:** 1 iff `powerState=On` and authorized, else 0.
+6. **Stop recording:** when the controller scales 1→0 and `status.lastStop.time < status.lastStart`
+   (nobody recorded a reason), it records reason `admin`. LDAP removal records `ldap`.
+7. **Clean exit:** while `powerState=On`, a container termination (current or last state) with an
+   exit code in `controller.cleanExitCodes` (default `[0]`) and `finishedAt > status.lastStart` is a
+   stop with reason `exit`: `powerState=Off`, Deployment to 0. Not an exit stop if
+   `spec.restartRequestedAt` is newer than that container's `startedAt` (a reboot), or if
+   `status.lastStop.time ≥ status.lastStart`.
+8. **Status:** phase/stage/progress (section 3.4), `url`, `podName/podUID`, conditions.
+
+Only the leader reconciles. Status is written with merge patches of the fields it owns.
+
+### 3.3 Stop reasons
+
+| reason | set by |
+| --- | --- |
+| `user` | agent (shutdown/reboot from the desktop) |
+| `idle` | agent (PowerDevil idle action) |
+| `suspend` | agent (suspend mapped to save + poweroff) |
+| `kube-stop` | agent (PID 1 got the stop signal from a pod deletion); never recorded |
+| `exit` | controller (clean exit without a recorded stop) |
+| `admin` | controller (`powerState` set `Off` by someone else) |
+| `ldap` | controller (user left the group) |
+
+### 3.4 Phase and stage
+
+| condition | phase | stage |
+| --- | --- | --- |
+| `Off`, no pod | `Off` | `Stopped` |
+| `Off`, pod exists | `Stopping` | `Stopping` |
+| `On`, no pod yet | `Starting` | `Scheduling` |
+| pod unschedulable | `Starting` | `Scheduling` (+ `message`) |
+| container waiting (`ContainerCreating`, pulling) | `Starting` | `CreatingContainer` |
+| `ErrImagePull`/`ImagePullBackOff`/`CrashLoopBackOff`/`CreateContainerConfigError` | `Error` | the waiting reason (+ `message`) |
+| container running, no agent report | `Starting` | `Booting` |
+| agent reported, not ready | `Starting` | agent's `stage` |
+| pod `Ready` and (`agentReady` or `controller.requireAgentReady=false`) | `Running` | `Ready`, progress 100 |
+| invalid name / foreign PVC | `Error` | `Error` |
+
+## 4. Usernames
+
+`sanitize(user)`:
+
+1. lowercase;
+2. every character outside `[a-z0-9]` becomes `-`;
+3. runs of `-` collapse to one; leading/trailing `-` are trimmed;
+4. truncated to 40 characters, then trailing `-` trimmed again;
+5. empty → rejected (gateway 400 page).
+
+**Collision:** if a Desktop `sanitize(user)` exists with a different `spec.user`, the gateway
+refuses (409 page) and never touches it. LDAP IDs are immutable, so the mapping is stable.
+
+## 5. Desktop pod
+
+Rendered from the `desktop` and `storage` config sections. Fixed parts:
+
+- Pod: `hostUsers: false` (`desktop.hostUsers`), `automountServiceAccountToken: false`,
+  `enableServiceLinks: false`, `serviceAccountName: desktop.serviceAccountName`,
+  `runtimeClassName`, `terminationGracePeriodSeconds` (default 120; must exceed the power hook
+  timeout plus the session save).
+- Container `desktop`: `runAsUser: 0`, `runAsNonRoot: false`, capabilities add `SYS_ADMIN`,
+  `procMount: Unmasked`, `seccompProfile: RuntimeDefault`, `appArmorProfile: Unconfined`
+  (`desktop.securityContext` replaces the whole container securityContext when set).
+- Readiness probe: TCP on `desktop.port`.
+- Volumes:
+
+| mount | volume |
+| --- | --- |
+| `storage.mountPath` (default `/persist`) | the PVC; the image owns the layout below it |
+| `/run` | emptyDir `Memory`, `desktop.runSizeLimit` (default 256Mi) |
+| `/dev/shm` | emptyDir `Memory`, `desktop.shmSize` (default 1Gi) |
+| `/run/webtop/sa` | projected `serviceAccountToken` (audience `powerApi.audience`, 3600 s, path `token`) |
+
+Env (plus `desktop.extraEnv`):
+
+| name | value |
+| --- | --- |
+| `WEBTOP_CONTROLLER_URL` | `powerApi.url` (no trailing slash) |
+| `WEBTOP_TOKEN_PATH` | `/run/webtop/sa/token` |
+| `WEBTOP_DESKTOP` | desktop name |
+| `WEBTOP_USER` | original user ID |
+| `WEBTOP_NAMESPACE` | namespace |
+| `WEBTOP_HTTP_PORT` | `desktop.port` — the web client (Selkies) must listen here, plain HTTP |
+| `WEBTOP_PERSIST_PATH` | `storage.mountPath` |
+
+**Image obligations:**
+
+- Serve the web client on `WEBTOP_HTTP_PORT`, and work under a path prefix: load assets and open the
+  websocket relative to the page URL. The gateway serves admins at `/u/<name>/` (section 7.3).
+- A poweroff from inside must end PID 1 with an exit code in `controller.cleanExitCodes`. Phase 0
+  confirms the actual code and the chart sets it.
+- Re-read the token file on every request (kubelet rotates it).
+
+## 6. LDAP
+
+Enabled when `ldap.url` is set; otherwise every user is authorized (`LDAPDisabled`).
+
+- Membership modes (`ldap.membership`):
+  - `memberOf` (default): members = entries under `ldap.baseDN` matching
+    `(&<userFilter>(<memberAttribute>=<groupDN>))`; `memberAttribute` defaults to `memberOf`.
+  - `member`: read `ldap.groupDN`'s `memberAttribute` (default `member`) DNs; each DN's
+    `userAttribute` is the user ID.
+- `userAttribute` (default `uid`) is the user ID compared with `spec.user` (case-sensitive).
+- Sync every `ldap.syncInterval` (default 5m), leader only: users not in the set get
+  `Authorized=False`; if `On`, they are stopped with reason `ldap`. The Desktop and PVC stay; being
+  re-added does not auto-start.
+- **Errors never remove anyone.** A failed sync, or a sync returning **zero** members, changes
+  nothing and is counted as an error. While LDAP fails, new starts follow `ldap.errorPolicy`:
+  `deny` (default) or `allow`.
+
+## 7. Gateway
+
+### 7.1 Identity
+
+- User: header `gateway.userHeader` (default `Remote-User`). Missing → 401.
+- Groups: header `gateway.groupsHeader` (default `Remote-Groups`), split on
+  `gateway.groupsSeparator` (default `,`), trimmed.
+- `gateway.requiredGroup` (optional): users not in it get 403 and nothing is created.
+- `gateway.adminGroup` (optional): may open any desktop.
+- `gateway.trustedProxyCIDRs` (optional): if set, requests whose remote address is outside get 403.
+  The gateway does not use `X-Forwarded-For` to decide this.
+
+### 7.2 Paths
+
+| path | handled |
+| --- | --- |
+| `/u/<user>/…` | desktop `sanitize(<user>)`; allowed for that desktop's own user and admins. Unknown → 404; admins never create desktops |
+| everything else | the caller's own desktop |
+| `<base>/.webtop/events` | SSE, never proxied |
+| `<base>/.webtop/start` | POST start, never proxied |
+| `/.webtop/healthz` | not used; probes are on `gateway.healthAddr` (`/healthz`, `/readyz`) |
+
+`<base>` is `/u/<user>` for the prefixed form and empty otherwise. **Nothing under
+`<base>/.webtop/` is ever proxied**, so a desktop cannot spoof the gateway's pages.
+
+### 7.3 Proxying
+
+When the desktop's phase is `Running`, requests go to `status.url` with
+`httputil.ReverseProxy` (`FlushInterval: -1`, websockets via `Upgrade`). For `/u/<user>/…` the
+prefix is stripped and `X-Forwarded-Prefix: /u/<user>` is set. `X-Forwarded-Host`,
+`X-Forwarded-Proto` and `X-Forwarded-For` are set. The user and groups headers are passed through.
+Desktop state comes from a `Desktop` informer; the gateway reads no core resources.
+
+### 7.4 Navigation
+
+A request is a **navigation** iff:
+
+- `Sec-Fetch-Mode` present: it is `navigate` and `Sec-Fetch-Dest` is `document` or absent;
+- otherwise: method `GET`, `Accept` contains `text/html`, and no `Upgrade` header.
+
+### 7.5 Desktop not running
+
+| state | navigation | anything else |
+| --- | --- | --- |
+| no Desktop (own path) | create with `powerState: On` → boot page | 503 |
+| `Off`, `Authorized=False` | 403 page "no access" | 503 |
+| `Off`, no `status.lastStop` | patch `powerState: On` → boot page | 503 |
+| `Off`, `status.lastStop` set | **off page** "desktop is off — start it?" | 503 |
+| `On`, not `Running` (incl. `Error`) | boot page | 503 |
+
+503 responses carry `Retry-After: 5` and never start anything. Boot page, off page, SSE and all
+gateway error pages send `Cache-Control: no-store`.
+
+**Boot page:** HTML that opens `EventSource("<base>/.webtop/events")` and shows `stage`,
+`bootProgress` and `message`; on the `ready` event it reloads the page.
+
+**SSE** `GET <base>/.webtop/events` (same authz as the desktop, never starts it):
+
+```
+event: status
+data: {"phase":"Starting","stage":"Booting","bootProgress":40,"message":"","authorized":true}
+
+event: ready
+data: {}
+```
+
+`status` on connect and on every change; a `: ping` comment every 15 s; `ready` once phase is
+`Running`, then the stream ends.
+
+**Off page / start:** a form `POST <base>/.webtop/start` with field `csrf`. CSRF is a double-submit
+cookie: the page sets cookie `webtop_csrf` (random 32 bytes, base64url, `HttpOnly`, `SameSite=Strict`,
+`Path=/`, `Secure` unless `gateway.cookieSecure=false`) and the same value in the form. The POST is
+accepted only if field = cookie (constant-time) and the request is same-origin (`Sec-Fetch-Site:
+same-origin` if present, else `Origin` host = `Host`; neither → reject). Success: patch
+`powerState: On`, `303` to `<base>/`. Failure: 403.
+
+## 8. Power/report API (controller, every replica)
+
+Listens on `powerApi.addr` (default `:8082`), plain HTTP inside the cluster. All requests:
+`Authorization: Bearer <contents of WEBTOP_TOKEN_PATH>`, `Content-Type: application/json`.
+
+### 8.1 Authentication
+
+1. TokenReview with `spec.audiences = [powerApi.audience]`.
+2. Require `status.authenticated`, `status.audiences ∋ powerApi.audience`, username
+   `system:serviceaccount:<namespace>:<desktop.serviceAccountName>`.
+3. Pod from `user.extra["authentication.kubernetes.io/pod-name"]` and `…/pod-uid`; the live pod of
+   that name must have that UID (stale tokens of deleted pods fail).
+4. The pod must carry `app.kubernetes.io/managed-by=kube-webtop-workspaces` and
+   `webtop.lhns.github.io/desktop=<d>`; Desktop `<d>` is the only one it can act on.
+
+Missing/invalid token → 401. Valid token but checks 2–4 fail → 403. TokenReview call failure → 503.
+
+### 8.2 `POST /api/v1/power`
+
+```json
+{"action": "stop|suspend|reboot", "reason": "user|idle|suspend|kube-stop"}
+```
+
+`ldap`, `exit`, `admin` → 400. Effects, **completed before the response**:
+
+| action / reason | effect |
+| --- | --- |
+| any action, `kube-stop` | none (the pod is already being deleted; restart/drain/scale is someone else's call) |
+| `stop`, `suspend` | `status.lastStop={now, reason}` then `spec.powerState=Off`. Idempotent: if already `Off` with `lastStop.time ≥ lastStart`, nothing changes |
+| `reboot` | `spec.restartRequestedAt=now`, unless it is already newer than the pod's start time |
+
+The leader then scales the Deployment to 0 (or rolls it out). The handler never touches the
+Deployment. Response `200 {"desktop":"<d>","action":"…","reason":"…"}`.
+
+**Ack semantics:** the agent's hook blocks the shutdown until it gets the 200 (or its own timeout),
+so the stop is recorded before PID 1 exits and the exit is never mistaken for a crash or an
+`exit` stop. Retrying is safe.
+
+### 8.3 `POST /api/v1/report`
+
+All fields optional; absent fields are left unchanged:
+
+```json
+{"stage": "Starting Plasma", "bootProgress": 60, "ready": false,
+ "connectedClients": 1, "idleSeconds": 12}
+```
+
+Reports from a pod whose UID ≠ `status.podUID` → `409`, ignored. `ready: true` sets `agentReady`.
+`stage`/`bootProgress` are only applied before ready. Response `204`.
+
+**Agent cadence:** during boot on every stage change (≤ 1/s); after ready every 30 s, and
+immediately when `connectedClients` changes.
+
+### 8.4 Other
+
+`GET /healthz` on `powerApi.addr` → 200, no auth.
+
+## 9. Configuration
+
+One YAML file, `--config` (default `/etc/kube-webtop-workspaces/config.yaml`), shared by both
+modes; the chart renders it from its values. Flags: `--mode=gateway|controller` (required),
+`--config`, `--kubeconfig`, `--log-level` (`info`), `--log-format` (`json`|`text`).
+
+```yaml
+namespace: ""                     # default: POD_NAMESPACE env, then the in-cluster namespace
+names:
+  prefix: desktop-
+metricsAddr: ":9090"
+healthAddr: ":8081"
+
+controller:
+  leaderElection: true
+  leaderElectionID: kube-webtop-workspaces
+  requireAgentReady: true
+  cleanExitCodes: [0]
+
+powerApi:
+  addr: ":8082"
+  audience: kube-webtop-workspaces
+  url: ""                         # required: http://<controller-svc>.<ns>.svc:8082
+
+ldap:
+  url: ""                         # ldap:// or ldaps://; empty disables LDAP
+  startTLS: false
+  caFile: ""
+  insecureSkipVerify: false
+  bindDN: ""
+  bindPasswordFile: ""            # mounted secret
+  baseDN: ""
+  userFilter: "(objectClass=person)"
+  userAttribute: uid
+  groupDN: ""
+  membership: memberOf            # memberOf | member
+  memberAttribute: ""             # default memberOf / member by mode
+  syncInterval: 5m
+  timeout: 10s
+  errorPolicy: deny               # deny | allow
+
+desktop:
+  image: ""                       # required
+  imagePullPolicy: IfNotPresent
+  imagePullSecrets: []            # [{name: ...}]
+  port: 8080
+  serviceAccountName: webtop-desktop
+  runtimeClassName: ""
+  priorityClassName: ""
+  hostUsers: false
+  resources: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podLabels: {}
+  podAnnotations: {}
+  extraEnv: []                    # []corev1.EnvVar
+  extraVolumes: []                # []corev1.Volume
+  extraVolumeMounts: []           # []corev1.VolumeMount
+  securityContext: null           # replaces the default container securityContext
+  shmSize: 1Gi
+  runSizeLimit: 256Mi
+  terminationGracePeriodSeconds: 120
+
+storage:
+  storageClassName: ""            # empty: cluster default
+  size: 50Gi
+  accessModes: [ReadWriteOnce]
+  mountPath: /persist
+  labels: {}
+  annotations: {}
+
+gateway:
+  addr: ":8080"
+  userHeader: Remote-User
+  groupsHeader: Remote-Groups
+  groupsSeparator: ","
+  adminGroup: ""
+  requiredGroup: ""
+  trustedProxyCIDRs: []
+  cookieSecure: true
+```
+
+Ports: gateway HTTP `:8080`, controller power API `:8082`, metrics `:9090`, probes `:8081`
+(`/healthz`, `/readyz`). Leader election uses a `coordination.k8s.io` Lease.
+
+## 10. RBAC
+
+Generated by controller-gen into `config/rbac/controller/role.yaml` and
+`config/rbac/gateway/role.yaml`; the chart copies them.
+
+- **gateway** (Role): `desktops` get/list/watch/create/patch. Nothing else.
+- **controller** (Role): `desktops` get/list/watch/update/patch; `desktops/status` get/update/patch;
+  `deployments`, `services` get/list/watch/create/update/patch; `persistentvolumeclaims`
+  get/list/watch/create/patch (**no delete**); `pods` get/list/watch; `events` create/patch;
+  `leases` get/list/watch/create/update/patch.
+  (ClusterRole): `tokenreviews` create.
+- **desktop** ServiceAccount: no RBAC at all; its token is used only for the power API audience.
+
+## 11. Metrics
+
+Prefix `webtop_`. Every replica exports its own counters. Per-desktop gauges come from the informer
+cache and are exported **by the controller leader only** (non-leaders export none), so there are no
+duplicate series.
+
+Controller:
+
+| metric | type | labels |
+| --- | --- | --- |
+| `webtop_desktop_info` | gauge (1) | `desktop`, `user`, `phase`, `stage` |
+| `webtop_desktop_power_on` | gauge | `desktop` |
+| `webtop_desktop_running` | gauge | `desktop` |
+| `webtop_desktop_authorized` | gauge | `desktop` |
+| `webtop_desktop_update_pending` | gauge | `desktop` |
+| `webtop_desktop_boot_progress` | gauge | `desktop` |
+| `webtop_desktop_connected_clients` | gauge | `desktop` |
+| `webtop_desktop_idle_seconds` | gauge | `desktop` |
+| `webtop_desktop_last_stop_timestamp_seconds` | gauge | `desktop`, `reason` |
+| `webtop_desktop_stops_total` | counter | `reason` |
+| `webtop_desktop_start_duration_seconds` | histogram | — (powerState On → Running) |
+| `webtop_power_requests_total` | counter | `action`, `reason`, `code` |
+| `webtop_report_requests_total` | counter | `code` |
+| `webtop_ldap_sync_total` | counter | `result` (`success`, `error`) |
+| `webtop_ldap_last_success_timestamp_seconds` | gauge | — |
+| `webtop_ldap_members` | gauge | — |
+
+Gateway:
+
+| metric | type | labels |
+| --- | --- | --- |
+| `webtop_gateway_requests_total` | counter | `outcome` (`proxy`, `boot`, `off`, `start`, `unavailable`, `denied`, `notfound`, `error`) |
+| `webtop_gateway_websockets` | gauge | — |
+| `webtop_gateway_starts_total` | counter | `trigger` (`create`, `navigate`, `button`) |
+
+Plus the controller-runtime and Go/process defaults.
