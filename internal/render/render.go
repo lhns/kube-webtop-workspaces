@@ -55,11 +55,10 @@ func merge(ms ...map[string]string) map[string]string {
 func PVC(cfg *config.Config, d *v1alpha1.Desktop) *corev1.PersistentVolumeClaim {
 	pvc := &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      ObjectName(cfg, d),
-			Namespace: cfg.Namespace,
-			Labels:    merge(cfg.Storage.Labels, names.Labels(d.Name)),
-			Annotations: merge(map[string]string{names.AnnotationUser: d.Spec.User},
-				cfg.Storage.Annotations),
+			Name:        ObjectName(cfg, d),
+			Namespace:   cfg.Namespace,
+			Labels:      merge(cfg.Storage.Labels, names.Labels(d.Name)),
+			Annotations: merge(cfg.Storage.Annotations, map[string]string{names.AnnotationUser: d.Spec.User}),
 		},
 		Spec: corev1.PersistentVolumeClaimSpec{
 			AccessModes: append([]corev1.PersistentVolumeAccessMode(nil), cfg.Storage.AccessModes...),

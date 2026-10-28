@@ -54,7 +54,7 @@ func TestHashChangesOnImage(t *testing.T) {
 func TestPVC(t *testing.T) {
 	cfg, d := testConfig(t), testDesktop()
 	cfg.Storage.Labels = map[string]string{"extra": "l", names.LabelDesktop: "evil"}
-	cfg.Storage.Annotations = map[string]string{"extra": "a"}
+	cfg.Storage.Annotations = map[string]string{"extra": "a", names.AnnotationUser: "evil"}
 	pvc := PVC(cfg, d)
 	if len(pvc.OwnerReferences) != 0 {
 		t.Fatal("PVC must have no ownerReferences")
