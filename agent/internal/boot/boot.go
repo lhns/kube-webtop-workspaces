@@ -77,7 +77,6 @@ type Booter struct {
 // Run polls until ready has been acknowledged by the controller, or ctx ends.
 func (b *Booter) Run(ctx context.Context) {
 	var (
-		lastStage string
 		lastPct   = -1
 		best      = 0 // reported progress never goes backwards
 		retryAt   time.Time
@@ -99,7 +98,8 @@ func (b *Booter) Run(ctx context.Context) {
 		best = max(best, pct)
 		pct = best
 
-		if (stage != lastStage || pct != lastPct) && time.Now().After(retryAt) {
+		// Every stage change raises pct, so a flapping probe neither lowers progress nor the stage.
+		if pct > lastPct && time.Now().After(retryAt) {
 			r := api.Report{Stage: truncate(stage), BootProgress: &pct}
 			if ready {
 				r.Ready = &ready
@@ -108,7 +108,7 @@ func (b *Booter) Run(ctx context.Context) {
 				log.Printf("boot: report %q %d%%: %v", stage, pct, err)
 				retryAt = time.Now().Add(b.Retry)
 			} else {
-				lastStage, lastPct = stage, pct
+				lastPct = pct
 				if ready {
 					log.Print("boot: ready")
 					return
