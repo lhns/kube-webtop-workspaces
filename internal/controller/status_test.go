@@ -98,6 +98,17 @@ func TestComputeStatus(t *testing.T) {
 	}
 }
 
+func TestMetricStage(t *testing.T) {
+	for in, want := range map[string]string{
+		"Scheduling": "Scheduling", "Ready": "Ready", "ImagePullBackOff": "ImagePullBackOff",
+		"Starting Plasma": "Booting", "": "Booting",
+	} {
+		if got := metricStage(in); got != want {
+			t.Errorf("metricStage(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestNewestPod(t *testing.T) {
 	now := metav1.Now()
 	old := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "old", CreationTimestamp: metav1.NewTime(now.Add(-time.Hour))}}

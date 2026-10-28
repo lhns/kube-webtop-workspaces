@@ -32,6 +32,19 @@ const (
 	progressAgentReady = 95
 )
 
+// metricStage is the stage as a metric label: the agent's free-text stages become Booting, so
+// what the pod reports never sets label values.
+func metricStage(stage string) string {
+	switch stage {
+	case stageStopped, stageStopping, stageScheduling, stageCreatingContainer, stageBooting, stageReady, stageError:
+		return stage
+	}
+	if slices.Contains(waitingErrors, stage) {
+		return stage
+	}
+	return stageBooting
+}
+
 // waitingErrors are container waiting reasons that make the desktop phase Error.
 var waitingErrors = []string{"ErrImagePull", "ImagePullBackOff", "CrashLoopBackOff", "CreateContainerConfigError"}
 

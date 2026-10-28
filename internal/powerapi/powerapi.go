@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -37,6 +38,7 @@ const (
 	extraPodName = "authentication.kubernetes.io/pod-name"
 	extraPodUID  = "authentication.kubernetes.io/pod-uid"
 	maxBody      = 16 << 10
+	maxStage     = 64 // characters; the agent's stage is free text shown on the boot page
 )
 
 // Authenticator validates a bearer token.
@@ -341,6 +343,10 @@ func (s *Server) report(w http.ResponseWriter, r *http.Request) {
 		req.ConnectedClients != nil && *req.ConnectedClients < 0 ||
 		req.IdleSeconds != nil && *req.IdleSeconds < 0 {
 		writeErr(sw, fail(http.StatusBadRequest, "value out of range"))
+		return
+	}
+	if req.Stage != nil && utf8.RuneCountInString(*req.Stage) > maxStage {
+		writeErr(sw, fail(http.StatusBadRequest, "stage longer than %d characters", maxStage))
 		return
 	}
 	d, herr := s.getDesktop(r.Context(), c.desktop, false)

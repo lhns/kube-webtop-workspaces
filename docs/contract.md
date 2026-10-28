@@ -161,7 +161,7 @@ Only the leader reconciles. Status is written with merge patches of the fields i
 | container waiting (`ContainerCreating`, pulling) | `Starting` | `CreatingContainer` |
 | `ErrImagePull`/`ImagePullBackOff`/`CrashLoopBackOff`/`CreateContainerConfigError` | `Error` | the waiting reason (+ `message`) |
 | container running, no agent report | `Starting` | `Booting` |
-| agent reported, not ready | `Starting` | agent's `stage` |
+| agent reported, not ready | `Starting` | agent's `stage` (free text, ≤ 64 characters) |
 | pod `Ready` and (`agentReady` or `controller.requireAgentReady=false`) | `Running` | `Ready`, progress 100 |
 | invalid name / foreign PVC | `Error` | `Error` |
 
@@ -366,7 +366,8 @@ All fields optional; absent fields are left unchanged:
 
 Reports from a pod whose UID ≠ `status.podUID` → `409`, ignored; right after a pod starts the
 controller may not have recorded it yet, so the agent retries a 409 (every few seconds). `ready: true` sets `agentReady`.
-`stage`/`bootProgress` are only applied before ready. Response `204`.
+`stage`/`bootProgress` are only applied before ready. `stage` is free text for the boot page, at
+most 64 characters (longer → `400`); it never becomes a metric label value (section 11). Response `204`.
 
 **Agent cadence:** during boot on every stage change (≤ 1/s); after ready every 30 s, and
 immediately when `connectedClients` changes.
@@ -501,7 +502,7 @@ Controller:
 
 | metric | type | labels |
 | --- | --- | --- |
-| `webtop_desktop_info` | gauge (1) | `desktop`, `user`, `phase`, `stage` |
+| `webtop_desktop_info` | gauge (1) | `desktop`, `user`, `phase`, `stage` (section 3.4's stages; an agent's stage is reported as `Booting`) |
 | `webtop_desktop_power_on` | gauge | `desktop` |
 | `webtop_desktop_running` | gauge | `desktop` |
 | `webtop_desktop_authorized` | gauge | `desktop` |

@@ -83,7 +83,7 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 				auth = cond.Status == metav1.ConditionTrue
 			}
 		}
-		g(descInfo, 1, d.Name, d.Spec.User, string(st.Phase), st.Stage)
+		g(descInfo, 1, d.Name, d.Spec.User, string(st.Phase), metricStage(st.Stage))
 		g(descPowerOn, b2f(d.Spec.PowerState == v1alpha1.PowerOn), d.Name)
 		g(descRunning, b2f(st.Phase == v1alpha1.PhaseRunning), d.Name)
 		g(descAuth, b2f(auth), d.Name)

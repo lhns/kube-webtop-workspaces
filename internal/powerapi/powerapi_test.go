@@ -282,6 +282,20 @@ func TestReport(t *testing.T) {
 	}
 }
 
+func TestReportStageTooLong(t *testing.T) {
+	e := newEnv(t, desktop(nil), desktopPod("pod-1"))
+	ok := strings.Repeat("ä", maxStage)
+	if rec := e.do("/api/v1/report", `{"stage":"`+ok+`"}`, "tok"); rec.Code != 204 {
+		t.Fatal(rec.Code, rec.Body)
+	}
+	if rec := e.do("/api/v1/report", `{"stage":"`+ok+`x"}`, "tok"); rec.Code != 400 {
+		t.Fatal(rec.Code)
+	}
+	if e.get(t).Status.Stage != ok {
+		t.Fatal("rejected stage was applied")
+	}
+}
+
 func TestReportFromOldPodConflicts(t *testing.T) {
 	e := newEnv(t, desktop(func(d *v1alpha1.Desktop) { d.Status.PodUID = "pod-2" }), desktopPod("pod-1"))
 	if rec := e.do("/api/v1/report", `{"ready":true}`, "tok"); rec.Code != 409 {
