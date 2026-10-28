@@ -42,6 +42,38 @@ jobs:
             echo "generated files not committed:"; echo "$untracked"; exit 1
           fi
 
+  # The in-pod agent is its own Go module (agent/), which `./...` above does not reach.
+  agent:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.26'
+          cache: true
+          cache-dependency-path: agent/go.sum
+      - name: go vet
+        run: go vet ./...
+      - name: go test
+        run: go test ./... -count=1
+      - name: go build (static)
+        run: CGO_ENABLED=0 go build ./cmd/webtop-agent
+      - name: go.mod tidy
+        run: go mod tidy && git diff --exit-code go.mod go.sum
+
+  # Evaluates the desktop image (the whole NixOS system) and builds the agent package, which checks
+  # its vendorHash. The image itself is built by the release workflow.
+  nix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@v31
+      - name: nix flake check
+        run: nix flake check -L
+
   integration:
     runs-on: ubuntu-latest
     needs: unit

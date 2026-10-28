@@ -186,7 +186,7 @@ Rendered from the `desktop` and `storage` config sections. Fixed parts:
   `enableServiceLinks: false`, `serviceAccountName: desktop.serviceAccountName`,
   `runtimeClassName`, `terminationGracePeriodSeconds` (default 120; must exceed the power hook
   timeout plus the session save).
-- Container `desktop`: `runAsUser: 0`, `runAsNonRoot: false`, capabilities add `SYS_ADMIN`,
+- Container `desktop`: `runAsUser: 0`, `runAsNonRoot: false`, capabilities add `SYS_ADMIN` and `SYS_NICE`,
   `procMount: Unmasked`, `seccompProfile: RuntimeDefault`, `appArmorProfile: Unconfined`
   (`desktop.securityContext` replaces the whole container securityContext when set).
 - Readiness probe: TCP on `desktop.port`.

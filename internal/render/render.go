@@ -96,9 +96,10 @@ func Service(cfg *config.Config, d *v1alpha1.Desktop) *corev1.Service {
 
 func defaultSecurityContext() *corev1.SecurityContext {
 	return &corev1.SecurityContext{
-		RunAsUser:       ptr(int64(0)),
-		RunAsNonRoot:    ptr(false),
-		Capabilities:    &corev1.Capabilities{Add: []corev1.Capability{"SYS_ADMIN"}},
+		RunAsUser:    ptr(int64(0)),
+		RunAsNonRoot: ptr(false),
+		// SYS_NICE: NixOS's kwin_wayland capability wrapper cannot exec without it.
+		Capabilities:    &corev1.Capabilities{Add: []corev1.Capability{"SYS_ADMIN", "SYS_NICE"}},
 		ProcMount:       ptr(corev1.UnmaskedProcMount),
 		SeccompProfile:  &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 		AppArmorProfile: &corev1.AppArmorProfile{Type: corev1.AppArmorProfileTypeUnconfined},

@@ -1,0 +1,182 @@
+#!@busybox@/bin/sh
+# Container entrypoint (static busybox): per-user overlay /nix/store and /home on the volume, then
+# exec systemd. Layout under /persist:
+#   nix/upper, nix/work   overlay upper/work of /nix/store (lower: the image's store)
+#   nix/var               /nix/var/nix of the overlay store (its DB holds only upper paths)
+#   nix/lower-stamp       stamp of the lower store the upper was built against
+#   nix/reinstall/        what to reinstall after an image update (webtop-nix-reinstall.service)
+#   home                  /home
+# WEBTOP_INIT_DEBUG=1        a failing step parks the container (shell / sleep) instead of exiting.
+# WEBTOP_INIT_SKIP_OVERLAY=1 skips the store overlay (boots on the image's store alone).
+export PATH=@busybox@/bin
+
+STAMP_FILE=/webtop-image-stamp
+P=/persist
+N=$P/nix
+
+log() { echo "webtop-init: $*"; }
+
+fail() {
+  log "FAILED: $1"
+  if [ "$WEBTOP_INIT_DEBUG" = 1 ]; then
+    log "debug mode: parking; use kubectl exec"
+    [ -t 0 ] && exec sh
+    while :; do sleep 3600; done
+  fi
+  exit 1
+}
+
+# step <name> <command...>
+step() {
+  name=$1; shift
+  log "step: $name"
+  "$@" || fail "$name (exit $?)"
+}
+
+is_mounted() { awk -v m="$1" '$5 == m { f = 1 } END { exit !f }' /proc/self/mountinfo; }
+
+mount_run() {
+  # kubelet gives /run as a tmpfs; plain docker does not.
+  is_mounted /run || mount -t tmpfs -o mode=755 tmpfs /run
+}
+
+make_rprivate() { mount --make-rprivate /; }
+
+persist_path() {
+  # The rest of the image (nix.conf, units) assumes /persist.
+  src=${WEBTOP_PERSIST_PATH:-/persist}
+  [ "$src" = /persist ] && return 0
+  mkdir -p /persist && mount --bind "$src" /persist
+}
+
+bind_lower() {
+  # Nix creates its state dirs even for a read-only lower store; they must exist before the ro bind.
+  mkdir -p /nix/var/nix/profiles/per-user /nix/var/nix/gcroots/per-user /nix/var/nix/temproots /nix/var/nix/db &&
+  mkdir -p /.lower/nix &&
+  mount --bind /nix /.lower/nix &&
+  # Source and target given: busybox otherwise looks the target up in /proc/mounts, whose lines
+  # (one lowerdir per image layer) overflow its buffer.
+  mount -o remount,bind,ro /nix /.lower/nix
+}
+
+# Store path name a profile symlink chain ends in. Resolved by hand: the target is usually an
+# upper-only path, which does not exist before the overlay is mounted.
+profile_target() {
+  l=$1
+  for _ in 1 2 3 4; do
+    [ -L "$l" ] || break
+    t=$(readlink "$l")
+    case "$t" in
+      /nix/store/*) echo "${t#/nix/store/}" | cut -d/ -f1; return 0 ;;
+      /*) l=$t ;;
+      *) l=$(dirname "$l")/$t ;;
+    esac
+  done
+  return 1
+}
+
+# The overlay store forbids a changed lower store. When the image's store differs from the one the
+# upper was built on: record each user's Nix profile manifest, move upper/work/var aside (deleted
+# after boot by webtop-nix-trash.service) and start on a fresh upper; webtop-nix-reinstall.service
+# reinstalls from the records.
+check_stamp() {
+  new=$(cat "$STAMP_FILE") || return 1
+  old=$(cat "$N/lower-stamp" 2>/dev/null)
+  [ "$old" = "$new" ] && return 0
+  if [ -z "$old" ] && [ ! -d "$N/upper" ]; then
+    log "first boot on this volume"
+    mkdir -p "$N" && echo "$new" > "$N/lower-stamp"
+    return
+  fi
+  log "image store changed (${old:-no stamp} -> $new): starting a fresh store overlay"
+  ts=$(date +%s)
+  r=$N/reinstall
+  mkdir -p "$r" || return 1
+  for home in "$P"/home/*; do
+    [ -d "$home/.local/state/nix/profiles" ] || continue
+    u=$(basename "$home")
+    if sp=$(profile_target "$home/.local/state/nix/profiles/profile"); then
+      for d in "$N/upper" /.lower/nix/store; do
+        if [ -f "$d/$sp/manifest.json" ]; then
+          cp "$d/$sp/manifest.json" "$r/$u.manifest.json" && log "recorded the nix profile of $u ($sp)"
+          break
+        fi
+      done
+    fi
+    # Its generations point into the old upper, and nix cannot extend a dangling profile.
+    mkdir -p "$r/old-profiles-$ts" && mv "$home/.local/state/nix/profiles" "$r/old-profiles-$ts/$u" || return 1
+    rm -f "$home/.nix-profile"
+  done
+  touch "$r/pending"
+  mkdir -p "$N/trash-$ts" || return 1
+  for d in upper work var; do
+    if [ -e "$N/$d" ]; then mv "$N/$d" "$N/trash-$ts/$d" || return 1; fi
+  done
+  echo "$new" > "$N/lower-stamp"
+}
+
+prepare_persist() {
+  # The upper DB is NOT seeded from the image: the overlay store reads lower paths from the lower
+  # store's own DB (/.lower/nix/var/nix/db) and keeps only upper-added paths in this one.
+  mkdir -p "$N/upper" "$N/work" "$N/var" "$P/home"
+}
+
+mount_overlay() {
+  mount -t overlay overlay \
+    -o "lowerdir=/.lower/nix/store,upperdir=$N/upper,workdir=$N/work,userxattr" \
+    /nix/store
+}
+
+bind_var() { mount --bind "$N/var" /nix/var/nix; }
+
+bind_home() { mkdir -p /home && mount --bind "$P/home" /home; }
+
+# systemd (PID 1) replaces stdout with /dev/null, so /proc/1/fd/1 is useless for logs. Relay a fifo
+# (written by webtop-journal-relay.service) to our original stdout, which the runtime collects.
+console_relay() {
+  mkdir -p /run/webtop &&
+  rm -f /run/webtop/console && mkfifo /run/webtop/console || return 1
+  ( while :; do cat /run/webtop/console; done ) &
+}
+
+# logind offers sleep only if /sys/power/state is writable, which it is not in a pod. Sleep itself
+# runs systemd-suspend.service, which the image maps to session save + poweroff, so a writable
+# stand-in is enough.
+fake_sys_power() {
+  # Not `test -w`: busybox reports every file writable for root, even on a read-only mount.
+  [ -e /sys/power/state ] && awk '$5 == "/sys" && $6 ~ /(^|,)ro(,|$)/ { f = 1 } END { exit !f }' /proc/self/mountinfo || return 0
+  d=/run/webtop/sys-power
+  mkdir -p $d && echo "freeze mem" > $d/state && echo "s2idle [deep]" > $d/mem_sleep &&
+  mount --bind $d/state /sys/power/state &&
+  { [ ! -e /sys/power/mem_sleep ] || mount --bind $d/mem_sleep /sys/power/mem_sleep; }
+}
+
+# systemd does not pass the container env to units; they read these files.
+write_env() {
+  mkdir -p /run/webtop &&
+  { env | grep '^WEBTOP_'; [ -n "$WEBTOP_HTTP_PORT" ] || echo WEBTOP_HTTP_PORT=8080; } > /run/webtop/env.tmp &&
+  mv /run/webtop/env.tmp /run/webtop/env &&
+  echo "SELKIES_PORT=${WEBTOP_HTTP_PORT:-8080}" > /run/webtop/selkies.env
+}
+
+step "mount /run" mount_run
+step "make / rprivate" make_rprivate
+step "volume at /persist" persist_path
+if [ "$WEBTOP_INIT_SKIP_OVERLAY" = 1 ]; then
+  log "WEBTOP_INIT_SKIP_OVERLAY=1: skipping the store overlay"
+  step "prepare /persist" mkdir -p "$P/home"
+else
+  step "bind image /nix read-only at /.lower/nix" bind_lower
+  step "lower store stamp" check_stamp
+  step "prepare /persist" prepare_persist
+  step "overlay on /nix/store" mount_overlay
+  step "bind $N/var on /nix/var/nix" bind_var
+fi
+step "bind $P/home on /home" bind_home
+step "console relay" console_relay
+step "write /run/webtop/env" write_env
+log "step: writable /sys/power stand-in"
+fake_sys_power || log "no /sys/power stand-in: the desktop will not offer sleep"
+
+log "exec /sbin/init"
+exec /sbin/init

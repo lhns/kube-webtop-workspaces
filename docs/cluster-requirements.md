@@ -32,7 +32,8 @@ inside a user namespace, which needs the following.
 - **AppArmor**: desktop pods run with `appArmorProfile: Unconfined` (set by the controller; see
   contract section 5). Nodes that enforce a default AppArmor profile need to permit this; clusters
   using Pod Security Admission must exempt or label the namespace accordingly (the desktop
-  container needs `SYS_ADMIN`, `procMount: Unmasked` and runs as UID 0 inside the user namespace,
+  container needs `SYS_ADMIN`, `SYS_NICE` (to exec NixOS's kwin_wayland capability wrapper; real-time
+  priority still fails harmlessly in a user namespace), `procMount: Unmasked` and runs as UID 0 inside the user namespace,
   so the `restricted` and `baseline` profiles reject it).
 - A **StorageClass** for the per-user PVCs (`storage.storageClassName`, or a default class). The
   controller never deletes PVCs; reclaiming them is an operator decision.

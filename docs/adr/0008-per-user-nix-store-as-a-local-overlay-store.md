@@ -27,3 +27,8 @@ store at another path than `/nix/store` cannot use binary caches.
 - The user's declared software (their home-manager flake) is the source of truth; imperatively
   installed paths are rebuilt after image updates.
 - Depends on an experimental Nix feature.
+
+## Amendment 2026-10-28
+
+Only the Nix daemon opens the overlay store; all clients, root included, go through it. The build
+sandbox is off, because `pivot_root` fails in the user-namespaced pod.
