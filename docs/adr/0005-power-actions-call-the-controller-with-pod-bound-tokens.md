@@ -12,8 +12,8 @@ daemon and without giving the root-capable desktop write access to the cluster.
 
 ## Decision
 
-- The image attaches **systemd units to the `poweroff`, `reboot`, `halt` and sleep targets**. They
-  call the controller's power API and wait for its acknowledgement before PID 1 may exit.
+- The image runs **a systemd unit whose stop hook fires on the `poweroff`, `reboot` and `halt` targets, and maps sleep to poweroff**. It
+  calls the controller's power API and wait for its acknowledgement before PID 1 may exit.
 - Calls carry the pod's **projected ServiceAccount token** (own audience). The controller checks it
   with a TokenReview and acts only on the desktop the calling pod belongs to. No sidecar, no
   per-pod RBAC.
