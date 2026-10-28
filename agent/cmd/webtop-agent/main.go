@@ -1,7 +1,7 @@
 // Command webtop-agent is the in-pod agent of a desktop.
 //
 //	webtop-agent run                 long-running: boot/steady reports
-//	webtop-agent power-hook <target> shutdown hook (poweroff|reboot|halt)
+//	webtop-agent power-hook          at shutdown: report the queued target (poweroff|reboot|halt)
 //	webtop-agent suspend             map suspend to "mark + start poweroff.target"
 //	webtop-agent save-session        save the Plasma session on kube stop/suspend
 package main
@@ -38,10 +38,7 @@ func main() {
 	case "run":
 		run(cfg)
 	case "power-hook":
-		if len(args) != 2 {
-			usage()
-		}
-		powerHook(cfg, args[1])
+		powerHook(cfg)
 	case "suspend":
 		os.Exit(suspend(cfg))
 	case "save-session":
@@ -52,11 +49,21 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: webtop-agent run | power-hook <poweroff|reboot|halt> | suspend | save-session")
+	fmt.Fprintln(os.Stderr, "usage: webtop-agent run | power-hook | suspend | save-session")
 	os.Exit(2)
 }
 
-func powerHook(cfg config.Config, instance string) {
+func powerHook(cfg config.Config) {
+	jobs, err := sysd.ListJobs()
+	if err != nil {
+		log.Printf("power-hook: cannot list jobs: %v", err)
+		return
+	}
+	instance := powerhook.Instance(jobs)
+	if instance == "" {
+		log.Print("power-hook: no shutdown target queued, ignoring")
+		return
+	}
 	powerhook.Run(context.Background(), api.New(cfg.ControllerURL, cfg.TokenPath), instance, powerhook.Options{
 		StateDir:      cfg.StateDir,
 		IdleThreshold: cfg.IdleThreshold,

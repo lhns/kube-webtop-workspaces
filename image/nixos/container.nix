@@ -64,6 +64,10 @@ in
   systemd.services."serial-getty@".enable = false;
   systemd.services."console-getty".enable = false;
   systemd.services.systemd-oomd.enable = false;
+  # rtkit-daemon fails (cap_set_proc EPERM) and degrades the system; PipeWire runs without it.
+  security.rtkit.enable = lib.mkForce false;
+  # Needs /dev/fuse, which a pod does not have; the unit would fail and degrade the user manager.
+  systemd.user.units."xdg-document-portal.service".enable = false;
   # getty.target pulls in getty@tty1 from systemd's own units.
   systemd.suppressedSystemUnits = [ "getty@.service" "autovt@.service" ];
   services.logind.settings.Login = { NAutoVTs = 0; ReserveVT = 0; };

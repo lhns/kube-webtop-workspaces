@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/api"
+	"github.com/lhns/kube-webtop-workspaces/agent/internal/sysd"
 )
 
 var now = time.Unix(10_000, 0)
@@ -126,6 +127,35 @@ func TestRetries(t *testing.T) {
 				t.Fatalf("body %+v auth %q", s.body, s.auths[0])
 			}
 		})
+	}
+}
+
+func TestMissingTokenIsPermanent(t *testing.T) {
+	s := newServer(t, 200)
+	c, tok := client(t, s.URL)
+	os.Remove(tok)
+	start := time.Now()
+	Run(context.Background(), c, "halt", opts(t))
+	if s.calls != 0 || time.Since(start) > time.Second {
+		t.Fatalf("calls = %d after %v", s.calls, time.Since(start))
+	}
+}
+
+func TestInstance(t *testing.T) {
+	job := func(u string) sysd.Job { return sysd.Job{Unit: u} }
+	tests := []struct {
+		jobs []sysd.Job
+		want string
+	}{
+		{[]sysd.Job{job("webtop-power-hook.service"), job("halt.target")}, "halt"},
+		{[]sysd.Job{job("poweroff.target"), job("shutdown.target")}, "poweroff"},
+		{[]sysd.Job{job("reboot.target")}, "reboot"},
+		{[]sysd.Job{job("multi-user.target")}, ""},
+	}
+	for _, tc := range tests {
+		if got := Instance(tc.jobs); got != tc.want {
+			t.Errorf("Instance(%v) = %q, want %q", tc.jobs, got, tc.want)
+		}
 	}
 }
 

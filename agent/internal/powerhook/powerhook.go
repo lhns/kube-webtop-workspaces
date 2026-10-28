@@ -17,6 +17,7 @@ package powerhook
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"log"
 	"net/http"
 	"path/filepath"
@@ -25,6 +26,7 @@ import (
 
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/api"
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/state"
+	"github.com/lhns/kube-webtop-workspaces/agent/internal/sysd"
 )
 
 type Options struct {
@@ -34,6 +36,21 @@ type Options struct {
 	BackoffStart  time.Duration
 	BackoffMax    time.Duration
 	Now           func() time.Time
+}
+
+// Instance names the shutdown being carried out (poweroff, reboot or halt) from the queued
+// systemd jobs, or "" if none is queued.
+func Instance(jobs []sysd.Job) string {
+	queued := map[string]bool{}
+	for _, j := range jobs {
+		queued[j.Unit] = true
+	}
+	for _, t := range []string{"reboot", "poweroff", "halt"} {
+		if queued[t+".target"] {
+			return t
+		}
+	}
+	return ""
 }
 
 // Request maps the systemd target to the API payload; ok is false for unknown targets.
@@ -79,6 +96,11 @@ func Run(ctx context.Context, c *api.Client, instance string, o Options) {
 			return
 		}
 		log.Printf("power-hook: attempt %d: %v", attempt, err)
+		// The pod's mounts are gone (late shutdown): no retry can succeed.
+		if errors.Is(err, fs.ErrNotExist) {
+			log.Printf("power-hook: permanent failure, giving up")
+			return
+		}
 		var se *api.StatusError
 		if errors.As(err, &se) {
 			switch se.Status {

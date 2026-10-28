@@ -70,26 +70,26 @@ in
     };
   };
 
-  # Records the stop with the controller and waits for its ack before PID 1 exits. The instance is
-  # the target being started: SIGRTMIN+3 (pod deletion) starts halt.target, logind and
-  # `systemctl poweroff` start poweroff.target; that is how kube-stop and user stops differ.
-  systemd.services."webtop-power-hook@" = {
-    description = "Report %i to the desktop controller";
-    unitConfig.DefaultDependencies = false;
-    before = [ "systemd-poweroff.service" "systemd-reboot.service" "systemd-halt.service" ];
+  # Records the stop with the controller and waits for its ack before PID 1 exits. A boot-time
+  # RemainAfterExit unit whose ExecStop runs at shutdown: systemd unmounts the token, resolv.conf
+  # and hosts early in the shutdown, and RequiresMountsFor stops this unit before that. The agent
+  # derives the target from the queued jobs: SIGRTMIN+3 (pod deletion) queues halt.target, logind
+  # and `systemctl poweroff` poweroff.target; that is how kube-stop and user stops differ.
+  systemd.services.webtop-power-hook = {
+    description = "Report the shutdown to the desktop controller";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "dbus.service" ];
+    unitConfig.RequiresMountsFor = "/run/webtop/sa /etc/resolv.conf /etc/hosts";
     serviceConfig = {
       Type = "oneshot";
-      ExecStart = "${exe} power-hook %i";
+      RemainAfterExit = true;
+      ExecStart = "${pkgs.coreutils}/bin/true";
+      ExecStop = "${exe} power-hook";
       EnvironmentFile = envFile;
-      # The template's default slice conflicts with shutdown.target, which drops this start job.
-      Slice = "system.slice";
       StandardOutput = "journal+console"; # the journal relay may be gone by now
-      TimeoutStartSec = 90; # the agent itself gives up after WEBTOP_POWER_HOOK_TIMEOUT (60s)
+      TimeoutStopSec = 90; # the agent itself gives up after WEBTOP_POWER_HOOK_TIMEOUT (60s)
     };
   };
-  systemd.targets.poweroff.wants = [ "webtop-power-hook@poweroff.service" ];
-  systemd.targets.reboot.wants = [ "webtop-power-hook@reboot.service" ];
-  systemd.targets.halt.wants = [ "webtop-power-hook@halt.service" ];
 
   # Saves the Plasma session on a pod deletion or a suspend, where ksmserver does not. Stopped before
   # the session and the user manager (plasma-ksmserver.service runs there).

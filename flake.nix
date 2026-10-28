@@ -71,7 +71,8 @@
           config = {
             Entrypoint = [ "/webtop-init" ];
             StopSignal = "SIGRTMIN+3";
-            Env = [ "container=docker" ];
+            # PATH for `kubectl exec`; webtop-init sets its own.
+            Env = [ "container=docker" "PATH=/run/current-system/sw/bin:/run/wrappers/bin:/bin" ];
           };
         };
         default = self.packages.${system}.image;

@@ -67,8 +67,9 @@ without a flake reference are lost on an image update.
 | Restart | `reboot.target` | `reboot` |
 | Sleep | `suspend.target` | marker + poweroff, then `suspend`/`suspend`, after saving the session |
 
-`webtop-power-hook@<target>.service` (`DefaultDependencies=no`, before `systemd-poweroff/reboot/
-halt.service`) posts the request and retries until the 200 or 60 s
+`webtop-power-hook.service` (a boot-time `RemainAfterExit` unit whose `ExecStop` runs at shutdown,
+while the token, `resolv.conf` and `hosts` mounts still exist; it reads the target from the queued
+jobs) posts the request and retries until the 200 or 60 s
 (`WEBTOP_POWER_HOOK_TIMEOUT`); it never fails the shutdown. `idle` vs `user` is a heuristic: the
 agent tracks input idleness from KWin (`ext-idle-notify-v1` on the socket named by `WAYLAND_DISPLAY`
 in the user manager's environment); a poweroff after at least 60 s without
