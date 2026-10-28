@@ -603,10 +603,11 @@ func TestProxy(t *testing.T) {
 		req.Header.Set("Remote-User", "alice")
 		req.Header.Set("X-Forwarded-Proto", "https")
 		req.Header.Set("X-Forwarded-Host", "desk.example.org")
-		req.Header.Set("X-Forwarded-For", "203.0.113.9")
+		req.Header.Add("X-Forwarded-For", "203.0.113.9")
+		req.Header.Add("X-Forwarded-For", "198.51.100.1")
 		e.h.ServeHTTP(httptest.NewRecorder(), req)
 		if got.Header.Get("X-Forwarded-Proto") != "https" || got.Header.Get("X-Forwarded-Host") != "desk.example.org" ||
-			got.Header.Get("X-Forwarded-For") != "203.0.113.9, 10.0.0.5" {
+			got.Header.Get("X-Forwarded-For") != "203.0.113.9, 198.51.100.1, 10.0.0.5" {
 			t.Errorf("forwarded headers: %v", got.Header)
 		}
 	})
@@ -618,6 +619,10 @@ func TestProxy(t *testing.T) {
 		rec := e.do("GET", "/")
 		if rec.Code != 502 || rec.Header().Get("Cache-Control") != "no-store" {
 			t.Fatalf("code %d cc %q", rec.Code, rec.Header().Get("Cache-Control"))
+		}
+		if p, er := counter(t, e.reg, "webtop_gateway_requests_total", map[string]string{"outcome": "proxy"}),
+			counter(t, e.reg, "webtop_gateway_requests_total", map[string]string{"outcome": "error"}); p != 0 || er != 1 {
+			t.Errorf("outcomes proxy=%v error=%v, want 0 and 1", p, er)
 		}
 	})
 }

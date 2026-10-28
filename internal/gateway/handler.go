@@ -68,6 +68,7 @@ type proxyTarget struct {
 	rawPath string
 	prefix  string // X-Forwarded-Prefix, empty if none
 	trusted bool   // peer is a configured trusted proxy: its X-Forwarded-* are kept
+	failed  bool   // set by proxyError
 }
 
 // route is the resolved request path.
@@ -133,8 +134,8 @@ func (h *Handler) rewrite(pr *httputil.ProxyRequest) {
 		if v := pr.In.Header.Get("X-Forwarded-Host"); v != "" {
 			pr.Out.Header.Set("X-Forwarded-Host", v)
 		}
-		if v := pr.In.Header.Get("X-Forwarded-For"); v != "" {
-			pr.Out.Header.Set("X-Forwarded-For", v+", "+pr.Out.Header.Get("X-Forwarded-For"))
+		if v := pr.In.Header.Values("X-Forwarded-For"); len(v) > 0 {
+			pr.Out.Header.Set("X-Forwarded-For", strings.Join(v, ", ")+", "+pr.Out.Header.Get("X-Forwarded-For"))
 		}
 	}
 	pr.Out.Header.Del("X-Forwarded-Prefix")
@@ -145,6 +146,7 @@ func (h *Handler) rewrite(pr *httputil.ProxyRequest) {
 
 func (h *Handler) proxyError(w http.ResponseWriter, r *http.Request, err error) {
 	h.log.V(1).Info("proxy error", "path", r.URL.Path, "error", err.Error())
+	r.Context().Value(ctxKey{}).(*proxyTarget).failed = true
 	h.errorPage(w, http.StatusBadGateway, "Desktop unreachable", "The desktop did not answer. Try again in a moment.", outError)
 }
 
@@ -237,7 +239,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if d != nil && d.Status.Phase == v1alpha1.PhaseRunning && d.Status.URL != "" {
+	if isReady(d) {
 		h.serveProxy(w, r, rt, d, trustedPeer)
 		return
 	}
@@ -353,12 +355,14 @@ func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, rt *route, 
 			t.rawPath = ""
 		}
 	}
-	h.count(outProxy)
 	if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
 		h.m.Websockets.Inc()
 		defer h.m.Websockets.Dec()
 	}
 	h.proxy.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, t)))
+	if !t.failed { // proxyError counted it as an error
+		h.count(outProxy)
+	}
 }
 
 func authorizedFalse(d *v1alpha1.Desktop) bool {
