@@ -70,7 +70,8 @@
         "leaderElection": {"type": "boolean"},
         "leaderElectionID": {"type": "string"},
         "requireAgentReady": {"type": "boolean"},
-        "cleanExitCodes": {"type": "array", "items": {"type": "integer", "minimum": 0, "maximum": 255}}
+        "cleanExitCodes": {"type": "array", "items": {"type": "integer", "minimum": 0, "maximum": 255}},
+        "maxConcurrentReconciles": {"type": "integer", "minimum": 1}
       }
     },
     "powerApi": {

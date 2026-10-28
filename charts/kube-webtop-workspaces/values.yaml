@@ -28,6 +28,8 @@ controller:
   # Container exit codes that count as a clean poweroff from inside the desktop.
   # Must match what PID 1 of the desktop image exits with.
   cleanExitCodes: [0]
+  # Desktops reconciled in parallel; a slow LDAP lookup holds only one worker.
+  maxConcurrentReconciles: 4
 
 powerApi:
   addr: ":8082"

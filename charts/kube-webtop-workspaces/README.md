@@ -41,6 +41,7 @@ unknown keys. Defaults are in `values.yaml`.
 | `names.prefix` | `desktop-` | prefix of per-user Deployment/Service/PVC |
 | `controller.leaderElection`, `leaderElectionID`, `requireAgentReady` | `true`, `kube-webtop-workspaces`, `true` | |
 | `controller.cleanExitCodes` | `[0]` | exit codes of desktop PID 1 meaning "powered off"; set to what the image exits with |
+| `controller.maxConcurrentReconciles` | `4` | desktops reconciled in parallel |
 | `powerApi.addr` / `audience` | `:8082` / `kube-webtop-workspaces` | power/report API |
 | `powerApi.url` | `""` | URL the desktop agent uses; empty: the controller Service |
 | `ldap.url` | `""` | empty disables LDAP (everyone authorized) |
