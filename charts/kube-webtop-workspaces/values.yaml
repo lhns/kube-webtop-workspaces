@@ -83,7 +83,7 @@ desktop:
   extraEnv: []                # []corev1.EnvVar
   extraVolumes: []            # []corev1.Volume
   extraVolumeMounts: []       # []corev1.VolumeMount
-  securityContext: null       # when set, replaces the whole default container securityContext
+  securityContext: null       # when set, replaces the whole default container securityContext (default caps: SYS_ADMIN, SYS_NICE for NixOS's kwin_wayland wrapper)
   shmSize: 1Gi
   runSizeLimit: 256Mi
   # Must exceed the power-hook timeout plus the session save.
