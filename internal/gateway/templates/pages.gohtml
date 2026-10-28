@@ -1,0 +1,55 @@
+{{define "head"}}<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>{{.Title}}</title>
+<style>
+body{font-family:system-ui,sans-serif;margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:Canvas;color:CanvasText}
+main{max-width:28rem;padding:2rem;text-align:center}
+h1{font-size:1.4rem;margin:0 0 .75rem}
+p{margin:.5rem 0;opacity:.85}
+.bar{height:.6rem;border-radius:.3rem;background:rgba(128,128,128,.3);overflow:hidden;margin:1.25rem 0 .5rem}
+.bar>div{height:100%;width:0;background:currentColor;opacity:.7;transition:width .4s}
+button{font:inherit;padding:.6rem 1.6rem;margin-top:1rem;cursor:pointer}
+</style></head><body><main>{{end}}
+{{define "foot"}}</main></body></html>{{end}}
+
+{{define "error"}}{{template "head" .}}
+<h1>{{.Title}}</h1>
+<p>{{.Message}}</p>
+{{template "foot" .}}{{end}}
+
+{{define "boot"}}{{template "head" .}}
+<h1>Starting your desktop</h1>
+<p id="stage">{{.Stage}}</p>
+<div class="bar"><div id="bar" style="width:{{.Progress}}%"></div></div>
+<p id="msg">{{.Message}}</p>
+<noscript><p>Enable JavaScript or reload this page to follow the progress.</p></noscript>
+<script>
+(function(){
+  var stage=document.getElementById("stage"),bar=document.getElementById("bar"),msg=document.getElementById("msg");
+  var idleTimer=null;
+  var es=new EventSource({{.EventsURL}});
+  es.addEventListener("status",function(e){
+    var s=JSON.parse(e.data);
+    if(s.stage){stage.textContent=s.stage}
+    bar.style.width=(s.bootProgress||0)+"%";
+    msg.textContent=s.message||"";
+    // Stopped or stopping while this page is open: reload to get the right page.
+    if(s.phase==="Off"||s.phase==="Stopping"){
+      if(!idleTimer){idleTimer=setTimeout(function(){location.reload()},30000)}
+    }else if(idleTimer){clearTimeout(idleTimer);idleTimer=null}
+  });
+  es.addEventListener("ready",function(){es.close();location.reload()});
+})();
+</script>
+{{template "foot" .}}{{end}}
+
+{{define "off"}}{{template "head" .}}
+<h1>Your desktop is off</h1>
+<p>{{.Reason}}</p>
+<form method="post" action="{{.StartURL}}">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<button type="submit">Start</button>
+</form>
+{{template "foot" .}}{{end}}

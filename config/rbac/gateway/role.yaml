@@ -1,0 +1,16 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kube-webtop-workspaces-gateway
+rules:
+- apiGroups:
+  - webtop.lhns.github.io
+  resources:
+  - desktops
+  verbs:
+  - create
+  - get
+  - list
+  - patch
+  - watch
