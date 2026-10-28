@@ -1,0 +1,38 @@
+desktop:
+  image: example.org/desktop:1
+  runtimeClassName: cgroup-writable
+  nodeSelector: {kubernetes.io/os: linux}
+  tolerations: [{key: gpu, operator: Exists}]
+  extraEnv: [{name: FOO, value: bar}]
+  extraVolumes: [{name: data, emptyDir: {}}]
+  extraVolumeMounts: [{name: data, mountPath: /data}]
+  resources: {requests: {cpu: "1", memory: 2Gi}}
+storage: {storageClassName: fast, size: 10Gi}
+controller: {cleanExitCodes: [0, 143]}
+ldap:
+  url: ldaps://ldap.example.org
+  bindDN: cn=bind,dc=example,dc=org
+  baseDN: dc=example,dc=org
+  groupDN: cn=desktop,ou=groups,dc=example,dc=org
+  bindSecret: {name: ldap-bind, key: pw}
+  caSecret: {name: ldap-ca}
+gateway:
+  adminGroup: admins
+  trustedProxyCIDRs: [10.0.0.0/8]
+metrics:
+  prometheusAnnotations: true
+  serviceMonitor: {enabled: true, labels: {release: prom}}
+ingress:
+  enabled: true
+  className: nginx
+  hosts: [desktop.example.org]
+  tls: [{secretName: tls, hosts: [desktop.example.org]}]
+httpRoute:
+  enabled: true
+  parentRefs: [{name: gw, namespace: gateway-system}]
+  hostnames: [desktop.example.org]
+networkPolicy:
+  metricsFrom: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: monitoring}}}]
+  desktopEgress:
+    allowCIDRs: [0.0.0.0/0, "::/0"]
+    exceptCIDRs: [10.0.0.0/8, 192.168.0.0/16, "fd00::/8"]

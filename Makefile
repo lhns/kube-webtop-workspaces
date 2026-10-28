@@ -1,6 +1,6 @@
 ENVTEST_K8S_VERSION ?= 1.37.x
 
-.PHONY: generate build vet test
+.PHONY: generate build vet test chart-crd chart-check
 
 # DeepCopy, CRD and the two RBAC roles. Rerun after changing api/ or a +kubebuilder:rbac marker.
 generate:
@@ -18,3 +18,12 @@ vet:
 # envtest needs kube-apiserver and etcd binaries; setup-envtest fetches them.
 test:
 	KUBEBUILDER_ASSETS="$$(go tool setup-envtest use $(ENVTEST_K8S_VERSION) -p path)" go test ./...
+
+# The chart ships a copy of the generated CRD (Helm installs crds/ before templates).
+chart-crd:
+	cp config/crd/webtop.lhns.github.io_desktops.yaml charts/kube-webtop-workspaces/crds/
+
+# Lint, render and check the chart (needs helm and python3 with PyYAML).
+chart-check:
+	helm lint charts/kube-webtop-workspaces --strict --set desktop.image=x
+	python3 charts/tests/check.py

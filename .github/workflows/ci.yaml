@@ -1,0 +1,135 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.26'
+          cache: true
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l $(git ls-files '*.go'))
+          if [ -n "$unformatted" ]; then
+            echo "gofmt needed:"; echo "$unformatted"; exit 1
+          fi
+      - name: go vet
+        run: go vet ./...
+      - name: go build
+        run: go build ./...
+      # envtest tests skip here (no KUBEBUILDER_ASSETS); the integration job runs them.
+      - name: go test (unit)
+        run: go test ./... -count=1
+      - name: verify generated code is up to date
+        run: |
+          # Deepcopy, CRD and RBAC, then the chart's CRD copy.
+          make generate chart-crd
+          git diff --exit-code
+          # git diff does not see a newly generated (untracked) file.
+          untracked=$(git status --porcelain --untracked-files=all)
+          if [ -n "$untracked" ]; then
+            echo "generated files not committed:"; echo "$untracked"; exit 1
+          fi
+
+  integration:
+    runs-on: ubuntu-latest
+    needs: unit
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.26'
+          cache: true
+      - name: cache envtest assets
+        uses: actions/cache@v6
+        with:
+          path: ~/.local/share/kubebuilder-envtest
+          key: envtest-${{ runner.os }}-${{ hashFiles('Makefile', 'go.sum') }}
+      # The Makefile fetches kube-apiserver/etcd with `go tool setup-envtest`
+      # and runs every test, envtest ones included.
+      - name: integration tests (envtest)
+        run: make test
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: unit
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - name: build image (no push)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: false
+          load: true
+          tags: ghcr.io/lhns/kube-webtop-workspaces:ci
+      - name: trivy image scan
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ghcr.io/lhns/kube-webtop-workspaces:ci
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+
+  trivy-fs:
+    runs-on: ubuntu-latest
+    needs: unit
+    steps:
+      - uses: actions/checkout@v7
+      - name: trivy filesystem scan (sources + go.sum)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: '1'
+          ignore-unfixed: true
+          skip-dirs: 'docs'
+
+  helm:
+    runs-on: ubuntu-latest
+    needs: unit
+    steps:
+      - uses: actions/checkout@v7
+      - uses: azure/setup-helm@v5
+        with:
+          version: v3.16.3
+      - name: install kubeconform
+        run: |
+          curl -sSfL https://github.com/yannh/kubeconform/releases/download/v0.8.0/kubeconform-linux-amd64.tar.gz \
+            | tar -xz -C "$RUNNER_TEMP" kubeconform
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      # Without desktop.image the chart refuses to render, and helm lint reports
+      # that as INFO and passes without linting anything.
+      - name: helm lint
+        run: helm lint charts/kube-webtop-workspaces --strict --set desktop.image=example/desktop:1
+      - name: helm template + kubeconform
+        run: |
+          set -euo pipefail
+          render() {
+            helm template testrelease charts/kube-webtop-workspaces --kube-version 1.31.0 "$@" \
+              | kubeconform -strict -summary -kubernetes-version 1.31.0 \
+                  -schema-location default -ignore-missing-schemas
+          }
+          render --set desktop.image=example/desktop:1
+          render -f charts/tests/values-all-on.yaml
+          render -f charts/tests/values-netpol-off.yaml
+      # Also renders the defaults/all-on/netpol-off cases and checks that invalid values are refused.
+      - name: chart checks
+        run: |
+          python3 -c "import yaml" 2>/dev/null || pip install --quiet pyyaml
+          python3 charts/tests/check.py

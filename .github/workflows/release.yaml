@@ -1,0 +1,175 @@
+name: release
+
+# Two modes:
+#   - release: triggered by `v*` tag push. Multi-arch build, full
+#     image+chart sign + SBOM + attest, plus GitHub Release asset upload.
+#   - dev:     any other push (any branch) or manual workflow_dispatch.
+#     Single-arch (amd64) build, image+chart still signed + SBOM'd.
+#     Versioned `0.0.0-dev.<short-sha>` so users can `helm install
+#     --version 0.0.0-dev.abc1234` to test a specific commit.
+on:
+  push:
+    tags:     ['v*']
+    branches: ['**']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: install cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: v2.4.1
+
+      - name: install syft
+        uses: anchore/sbom-action/download-syft@v0
+        with:
+          syft-version: v1.14.0
+
+      - name: install Helm
+        uses: azure/setup-helm@v5
+        with:
+          version: v3.16.3
+
+      # ------ mode (release vs dev) ----------------------------------------
+
+      - name: compute mode
+        id: mode
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME}"
+            CHART_VERSION="${VERSION#v}"
+            {
+              echo "mode=release"
+              echo "version=${VERSION}"
+              echo "chart_version=${CHART_VERSION}"
+              echo "platforms=linux/amd64,linux/arm64"
+              echo "extra_image_tags=ghcr.io/lhns/kube-webtop-workspaces:latest"
+            } >> "$GITHUB_OUTPUT"
+          else
+            SHORT="${GITHUB_SHA::7}"
+            CHART_VERSION="0.0.0-dev.${SHORT}"
+            BRANCH=$(echo "${GITHUB_REF_NAME}" | tr -c 'a-zA-Z0-9-' '-' | sed 's/-\+/-/g; s/^-\|-$//g')
+            {
+              echo "mode=dev"
+              echo "version=${CHART_VERSION}"
+              echo "chart_version=${CHART_VERSION}"
+              echo "platforms=linux/amd64"
+              echo "extra_image_tags=ghcr.io/lhns/kube-webtop-workspaces:sha-${SHORT},ghcr.io/lhns/kube-webtop-workspaces:${BRANCH}"
+            } >> "$GITHUB_OUTPUT"
+          fi
+          echo "Mode resolved:" && cat "$GITHUB_OUTPUT"
+
+      # ------ container image -----------------------------------------------
+
+      - name: build & push image
+        id: build_image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          platforms: ${{ steps.mode.outputs.platforms }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          tags: |
+            ghcr.io/lhns/kube-webtop-workspaces:${{ steps.mode.outputs.version }}
+            ${{ steps.mode.outputs.extra_image_tags }}
+
+      - name: cosign sign image (keyless)
+        env:
+          COSIGN_YES: "true"
+        run: cosign sign "ghcr.io/lhns/kube-webtop-workspaces@${{ steps.build_image.outputs.digest }}"
+
+      - name: generate image SBOM
+        run: |
+          syft "ghcr.io/lhns/kube-webtop-workspaces@${{ steps.build_image.outputs.digest }}" \
+            -o spdx-json=kube-webtop-workspaces-image.sbom.spdx.json
+
+      - name: cosign attach SBOM as attestation
+        env:
+          COSIGN_YES: "true"
+        run: |
+          cosign attest \
+            --predicate kube-webtop-workspaces-image.sbom.spdx.json \
+            --type spdx \
+            "ghcr.io/lhns/kube-webtop-workspaces@${{ steps.build_image.outputs.digest }}"
+
+      # ------ desktop image (NixOS) -----------------------------------------
+      # TODO: the desktop image is built with Nix, not Docker; its job is
+      # added here (or as a separate job) once it exists.
+
+      # ------ Helm chart ----------------------------------------------------
+
+      - name: package & push Helm chart
+        id: helm_push
+        env:
+          CHART_VERSION: ${{ steps.mode.outputs.chart_version }}
+          # The chart defaults image.tag to .Chart.AppVersion, so the chart
+          # always deploys the image built above.
+          APP_VERSION:   ${{ steps.mode.outputs.version }}
+        run: |
+          helm package charts/kube-webtop-workspaces \
+            --version "$CHART_VERSION" \
+            --app-version "$APP_VERSION" \
+            --destination .
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io \
+            --username "${{ github.actor }}" --password-stdin
+          helm push "kube-webtop-workspaces-${CHART_VERSION}.tgz" oci://ghcr.io/lhns/charts \
+            2>&1 | tee helm-push.log
+          DIGEST=$(grep -E '^Digest: ' helm-push.log | awk '{print $2}')
+          echo "chart_digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "chart_version=$CHART_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: cosign sign Helm chart (keyless)
+        env:
+          COSIGN_YES: "true"
+        run: cosign sign "ghcr.io/lhns/charts/kube-webtop-workspaces@${{ steps.helm_push.outputs.chart_digest }}"
+
+      - name: generate chart SBOM
+        run: |
+          syft "kube-webtop-workspaces-${{ steps.helm_push.outputs.chart_version }}.tgz" \
+            -o spdx-json=kube-webtop-workspaces-chart.sbom.spdx.json
+
+      - name: cosign attach chart SBOM as attestation
+        env:
+          COSIGN_YES: "true"
+        run: |
+          cosign attest \
+            --predicate kube-webtop-workspaces-chart.sbom.spdx.json \
+            --type spdx \
+            "ghcr.io/lhns/charts/kube-webtop-workspaces@${{ steps.helm_push.outputs.chart_digest }}"
+
+      # ------ GitHub Release ------------------------------------------------
+
+      - name: checksums for release assets
+        run: |
+          sha256sum kube-webtop-workspaces-*.tgz \
+            kube-webtop-workspaces-image.sbom.spdx.json kube-webtop-workspaces-chart.sbom.spdx.json \
+            > checksums.txt
+          cat checksums.txt
+
+      - name: attach release assets
+        if: steps.mode.outputs.mode == 'release'
+        uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            kube-webtop-workspaces-*.tgz
+            kube-webtop-workspaces-image.sbom.spdx.json
+            kube-webtop-workspaces-chart.sbom.spdx.json
+            checksums.txt

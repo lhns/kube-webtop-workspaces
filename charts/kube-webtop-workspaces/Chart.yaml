@@ -1,0 +1,10 @@
+apiVersion: v2
+name: kube-webtop-workspaces
+description: Per-user browser desktops (gateway, controller and CRD) on Kubernetes.
+type: application
+version: 0.1.0
+appVersion: 0.1.0
+kubeVersion: ">=1.30.0-0"
+keywords: [desktop, webtop, workspaces]
+sources:
+  - https://github.com/lhns/kube-webtop-workspaces

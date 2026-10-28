@@ -1,0 +1,1 @@
+{{ include "kwt.deployment" (dict "ctx" . "component" "controller" "v" .Values.controllerPod) }}

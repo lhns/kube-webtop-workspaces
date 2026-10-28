@@ -1,0 +1,1 @@
+{{ include "kwt.deployment" (dict "ctx" . "component" "gateway" "v" .Values.gatewayPod) }}

@@ -1,0 +1,124 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- $ic := .Values.networkPolicy.ingressController }}
+{{- if not (or $ic.namespaceSelector $ic.podSelector) }}
+{{- fail "networkPolicy.ingressController needs a namespaceSelector and/or podSelector; an empty one would let desktop pods reach the gateway (it trusts the Remote-User header)" }}
+{{- end }}
+{{- $desktopSel := dict "app.kubernetes.io/name" "webtop-desktop" "app.kubernetes.io/managed-by" "kube-webtop-workspaces" }}
+{{- $gwPort := include "kwt.port" .Values.gateway.addr }}
+{{- $apiPort := include "kwt.port" .Values.powerApi.addr }}
+{{- $metricsPort := include "kwt.port" .Values.metricsAddr }}
+{{- $dns := .Values.networkPolicy.dns }}
+{{- if not (or $dns.namespaceSelector $dns.podSelector) }}
+{{- fail "networkPolicy.dns needs a namespaceSelector and/or podSelector" }}
+{{- end }}
+---
+# Gateway: only the ingress controller. Desktop pods must not reach it: it trusts Remote-User.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "kwt.fullname" . }}-gateway
+  labels:
+    {{- include "kwt.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "kwt.selector" (dict "ctx" . "component" "gateway") | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - {{- with $ic.namespaceSelector }}
+          namespaceSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $ic.podSelector }}
+          podSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      ports:
+        - {port: {{ $gwPort }}, protocol: TCP}
+    {{- with .Values.networkPolicy.metricsFrom }}
+    - from:
+        {{- toYaml . | nindent 8 }}
+      ports:
+        - {port: {{ $metricsPort }}, protocol: TCP}
+    {{- end }}
+---
+# Controller: power API only from desktop pods; metrics only from networkPolicy.metricsFrom.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "kwt.fullname" . }}-controller
+  labels:
+    {{- include "kwt.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "kwt.selector" (dict "ctx" . "component" "controller") | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- toYaml $desktopSel | nindent 14 }}
+      ports:
+        - {port: {{ $apiPort }}, protocol: TCP}
+    {{- with .Values.networkPolicy.metricsFrom }}
+    - from:
+        {{- toYaml . | nindent 8 }}
+      ports:
+        - {port: {{ $metricsPort }}, protocol: TCP}
+    {{- end }}
+---
+# Desktop pods: ingress only from the gateway; egress DNS, the power API and allowCIDRs minus exceptCIDRs.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "kwt.fullname" . }}-desktop
+  labels:
+    {{- include "kwt.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- toYaml $desktopSel | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "kwt.selector" (dict "ctx" . "component" "gateway") | nindent 14 }}
+      ports:
+        - {port: {{ .Values.desktop.port }}, protocol: TCP}
+  egress:
+    - to:
+        - {{- with $dns.namespaceSelector }}
+          namespaceSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $dns.podSelector }}
+          podSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      ports:
+        - {port: 53, protocol: UDP}
+        - {port: 53, protocol: TCP}
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "kwt.selector" (dict "ctx" . "component" "controller") | nindent 14 }}
+      ports:
+        - {port: {{ $apiPort }}, protocol: TCP}
+    {{- range $allow := .Values.networkPolicy.desktopEgress.allowCIDRs }}
+    {{- $v6 := contains ":" $allow }}
+    {{- $except := list }}
+    {{- range $.Values.networkPolicy.desktopEgress.exceptCIDRs }}
+    {{- if eq (contains ":" .) $v6 }}{{ $except = append $except . }}{{ end }}
+    {{- end }}
+    - to:
+        - ipBlock:
+            cidr: {{ $allow | quote }}
+            {{- with $except }}
+            except:
+              {{- toYaml . | nindent 14 }}
+            {{- end }}
+    {{- end }}
+{{- end }}

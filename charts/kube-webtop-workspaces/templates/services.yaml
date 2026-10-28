@@ -1,0 +1,41 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "kwt.fullname" . }}-controller
+  labels:
+    {{- include "kwt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: controller
+spec:
+  selector:
+    {{- include "kwt.selector" (dict "ctx" . "component" "controller") | nindent 4 }}
+  ports:
+    - name: power-api
+      port: {{ include "kwt.port" .Values.powerApi.addr }}
+      targetPort: power-api
+    - name: metrics
+      port: {{ include "kwt.port" .Values.metricsAddr }}
+      targetPort: metrics
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "kwt.fullname" . }}-gateway
+  labels:
+    {{- include "kwt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+  {{- with .Values.gatewayService.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.gatewayService.type }}
+  selector:
+    {{- include "kwt.selector" (dict "ctx" . "component" "gateway") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.gatewayService.port }}
+      targetPort: http
+    - name: metrics
+      port: {{ include "kwt.port" .Values.metricsAddr }}
+      targetPort: metrics

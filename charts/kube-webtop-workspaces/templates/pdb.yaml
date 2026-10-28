@@ -1,0 +1,22 @@
+{{- range $c := list "controller" "gateway" }}
+{{- $v := index $.Values (printf "%sPod" $c) }}
+{{- if $v.podDisruptionBudget.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "kwt.fullname" $ }}-{{ $c }}
+  labels:
+    {{- include "kwt.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $c }}
+spec:
+  {{- if $v.podDisruptionBudget.maxUnavailable }}
+  maxUnavailable: {{ $v.podDisruptionBudget.maxUnavailable }}
+  {{- else }}
+  minAvailable: {{ $v.podDisruptionBudget.minAvailable }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "kwt.selector" (dict "ctx" $ "component" $c) | nindent 6 }}
+{{- end }}
+{{- end }}
