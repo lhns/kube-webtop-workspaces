@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -56,6 +57,9 @@ type Reconciler struct {
 	Now     func() time.Time
 	// Notify delivers events that make the reconciler look at a Desktop again (LDAP sync).
 	Notify chan event.GenericEvent
+	// startObserved is the lastStart (per desktop) whose start duration was observed, so a
+	// reconcile on a cache that has not seen our Running write yet does not observe it again.
+	startObserved sync.Map
 }
 
 // Config returns the config in use. SetConfig swaps it atomically (a reconcile keeps the one it
@@ -152,6 +156,9 @@ func (r *Reconciler) patchStatus(ctx context.Context, d, base *v1alpha1.Desktop)
 func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
 	d := &v1alpha1.Desktop{}
 	if err := r.Get(ctx, req.NamespacedName, d); err != nil {
+		if apierrors.IsNotFound(err) {
+			r.startObserved.Delete(req.Name)
+		}
 		return reconcile.Result{}, client.IgnoreNotFound(err)
 	}
 	if !d.DeletionTimestamp.IsZero() {
@@ -341,6 +348,9 @@ func (r *Reconciler) finish(ctx context.Context, d, base *v1alpha1.Desktop, pods
 		return err
 	}
 	if res.Phase == v1alpha1.PhaseRunning && prevPhase != v1alpha1.PhaseRunning && st.LastStart != nil {
+		if prev, ok := r.startObserved.Swap(d.Name, st.LastStart.Time); ok && prev.(time.Time).Equal(st.LastStart.Time) {
+			return nil
+		}
 		if secs := r.now().Sub(st.LastStart.Time).Seconds(); secs >= 0 {
 			metrics.StartDuration.Observe(secs)
 		}
