@@ -143,7 +143,8 @@ console_relay() {
 # runs systemd-suspend.service, which the image maps to session save + poweroff, so a writable
 # stand-in is enough.
 fake_sys_power() {
-  [ -e /sys/power/state ] && [ ! -w /sys/power/state ] || return 0
+  # Not `test -w`: busybox reports every file writable for root, even on a read-only mount.
+  [ -e /sys/power/state ] && awk '$5 == "/sys" && $6 ~ /(^|,)ro(,|$)/ { f = 1 } END { exit !f }' /proc/self/mountinfo || return 0
   d=/run/webtop/sys-power
   mkdir -p $d && echo "freeze mem" > $d/state && echo "s2idle [deep]" > $d/mem_sleep &&
   mount --bind $d/state /sys/power/state &&

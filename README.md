@@ -70,7 +70,8 @@ without a flake reference are lost on an image update.
 `webtop-power-hook@<target>.service` (`DefaultDependencies=no`, before `systemd-poweroff/reboot/
 halt.service`) posts the request and retries until the 200 or 60 s
 (`WEBTOP_POWER_HOOK_TIMEOUT`); it never fails the shutdown. `idle` vs `user` is a heuristic: the
-agent tracks input idleness from KWin (`ext-idle-notify-v1`); a poweroff after at least 60 s without
+agent tracks input idleness from KWin (`ext-idle-notify-v1` on the socket named by `WAYLAND_DISPLAY`
+in the user manager's environment); a poweroff after at least 60 s without
 input (`WEBTOP_IDLE_REASON_THRESHOLD`; PowerDevil's idle action needs a minute or more) is `idle`.
 A Plasma shutdown saves the session itself (restore is on by default);
 `webtop-session-save.service` saves it on a pod deletion or sleep: it calls ksmserver's
