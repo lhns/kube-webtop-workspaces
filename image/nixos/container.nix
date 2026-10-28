@@ -64,7 +64,9 @@ in
   systemd.services."serial-getty@".enable = false;
   systemd.services."console-getty".enable = false;
   systemd.services.systemd-oomd.enable = false;
-  services.logind.settings.Login = { NAutoVTs = 0; ReserveVT = 0; }; # else autovt@tty1 starts
+  # getty.target pulls in getty@tty1 from systemd's own units.
+  systemd.suppressedSystemUnits = [ "getty@.service" "autovt@.service" ];
+  services.logind.settings.Login = { NAutoVTs = 0; ReserveVT = 0; };
 
   # The desktop user owns the container (it is user-namespaced); sudo without a password.
   users.users.${config.services.webtop.user} = {

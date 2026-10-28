@@ -73,8 +73,9 @@ halt.service`) posts the request and retries until the 200 or 60 s
 agent tracks input idleness from KWin (`ext-idle-notify-v1`); a poweroff after at least 60 s without
 input (`WEBTOP_IDLE_REASON_THRESHOLD`; PowerDevil's idle action needs a minute or more) is `idle`.
 A Plasma shutdown saves the session itself (restore is on by default);
-`webtop-session-save.service` saves it on a pod deletion or sleep by calling ksmserver over the
-user's session bus. A shell `systemctl poweroff` does not save it, as on a real machine.
+`webtop-session-save.service` saves it on a pod deletion or sleep: it calls ksmserver's
+`saveCurrentSession` over the user's session bus, which writes the "saved by user" session, and
+copies that group to "saved at previous logout" in `~/.config/ksmserverrc`, the one Plasma restores. A shell `systemctl poweroff` does not save it, as on a real machine.
 
 **Boot progress and activity.** `webtop-agent run` reports the stage and progress from systemd's
 boot progress, the user's `plasma-workspace.target` and Selkies' port, then `ready`. Afterwards it

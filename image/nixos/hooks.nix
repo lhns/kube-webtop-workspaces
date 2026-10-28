@@ -15,12 +15,13 @@ let
     text = ''
       r=/persist/nix/reinstall
       export DBUS_SESSION_BUS_ADDRESS=${userBus}
+      # Best effort and in the background: Plasma's notification server may not be up yet, and a
+      # call to an unowned name can hang until the D-Bus timeout.
       notify() {
-        # Plasma's notification server may not be up yet.
-        for _ in $(seq 1 60); do
-          notify-send -a "Desktop" -i system-software-update "$1" "$2" 2>/dev/null && return
-          sleep 2
-        done
+        (for _ in $(seq 1 12); do
+          timeout 5 notify-send -a "Desktop" -i system-software-update "$1" "$2" 2>/dev/null && exit
+          sleep 5
+        done) &
       }
       notify "Desktop image updated" "Reinstalling your Nix packages in the background."
       failed=0
@@ -45,8 +46,9 @@ let
         notify "Packages reinstalled" "Your Nix packages are back."
       else
         notify "Package reinstall incomplete" "See: journalctl -u webtop-nix-reinstall"
-        exit 1
       fi
+      wait
+      exit "$failed"
     '';
   };
 in
@@ -131,11 +133,12 @@ in
     after = [ "network-online.target" "nix-daemon.socket" "webtop-session.service" ];
     unitConfig.ConditionPathExists = "/persist/nix/reinstall/pending";
     serviceConfig = {
-      Type = "oneshot";
+      # Not oneshot: multi-user.target (and so the agent's ready report) would wait for it.
+      Type = "exec";
       User = cfg.user;
       ExecStart = lib.getExe reinstall;
       # "+": as root, the records belong to root. Only after success; a failure retries next boot.
-      ExecStartPost = "+${pkgs.coreutils}/bin/rm -f /persist/nix/reinstall/pending";
+      ExecStopPost = "+${pkgs.runtimeShell} -c '[ \"$$SERVICE_RESULT\" = success ] && ${pkgs.coreutils}/bin/rm -f /persist/nix/reinstall/pending || true'";
     };
   };
   systemd.services.webtop-nix-trash = {
@@ -143,7 +146,7 @@ in
     wantedBy = [ "multi-user.target" ];
     unitConfig.ConditionPathExistsGlob = "/persist/nix/trash-*";
     serviceConfig = {
-      Type = "oneshot";
+      Type = "exec"; # see webtop-nix-reinstall
       ExecStart = "${pkgs.runtimeShell} -c '${pkgs.coreutils}/bin/rm -rf /persist/nix/trash-*'";
       Nice = 19;
       IOSchedulingClass = "idle";
