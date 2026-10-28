@@ -14,6 +14,7 @@ import (
 
 	"github.com/lhns/kube-webtop-workspaces/api/v1alpha1"
 	"github.com/lhns/kube-webtop-workspaces/internal/ldap"
+	"github.com/lhns/kube-webtop-workspaces/internal/lifecycle"
 	"github.com/lhns/kube-webtop-workspaces/internal/metrics"
 )
 
@@ -106,7 +107,7 @@ func (s *LDAPSync) SyncOnce(ctx context.Context) error {
 	for i := range list.Items {
 		d := &list.Items[i]
 		if _, ok := members[d.Spec.User]; !ok && d.Spec.PowerState == v1alpha1.PowerOn {
-			if err := stopDesktop(ctx, s.Client, d, v1alpha1.StopLDAP, now()); err != nil {
+			if err := lifecycle.Stop(ctx, s.Client, d, v1alpha1.StopLDAP, now()); err != nil {
 				errs = append(errs, err)
 				continue
 			}

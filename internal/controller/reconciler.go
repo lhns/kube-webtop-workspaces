@@ -28,6 +28,7 @@ import (
 	"github.com/lhns/kube-webtop-workspaces/api/v1alpha1"
 	"github.com/lhns/kube-webtop-workspaces/internal/config"
 	"github.com/lhns/kube-webtop-workspaces/internal/ldap"
+	"github.com/lhns/kube-webtop-workspaces/internal/lifecycle"
 	"github.com/lhns/kube-webtop-workspaces/internal/metrics"
 	"github.com/lhns/kube-webtop-workspaces/internal/names"
 	"github.com/lhns/kube-webtop-workspaces/internal/render"
@@ -136,33 +137,6 @@ func (r *Reconciler) ldapError(msg string) authResult {
 		AllowStart: r.Config().LDAP.ErrorPolicy == config.ErrorPolicyAllow}
 }
 
-// stopRecorded reports whether a stop since the last start already has a reason.
-func stopRecorded(d *v1alpha1.Desktop) bool {
-	ls := d.Status.LastStop
-	return ls != nil && (d.Status.LastStart == nil || !ls.Time.Before(d.Status.LastStart))
-}
-
-// stopDesktop records the stop reason (unless one is on record) and then sets powerState Off,
-// in that order, so a reader of Off always finds the reason.
-func stopDesktop(ctx context.Context, c client.Client, d *v1alpha1.Desktop, reason v1alpha1.StopReason, now time.Time) error {
-	if !stopRecorded(d) {
-		orig := d.DeepCopy()
-		d.Status.LastStop = &v1alpha1.LastStop{Time: metav1.NewMicroTime(now), Reason: reason}
-		if err := c.Status().Patch(ctx, d, client.MergeFrom(orig)); err != nil {
-			return fmt.Errorf("record stop: %w", err)
-		}
-		metrics.StopsTotal.WithLabelValues(string(reason)).Inc()
-	}
-	if d.Spec.PowerState != v1alpha1.PowerOff {
-		orig := d.DeepCopy()
-		d.Spec.PowerState = v1alpha1.PowerOff
-		if err := c.Patch(ctx, d, client.MergeFrom(orig)); err != nil {
-			return fmt.Errorf("set powerState Off: %w", err)
-		}
-	}
-	return nil
-}
-
 // patchStatus writes the status fields that changed since base, then moves base forward.
 func (r *Reconciler) patchStatus(ctx context.Context, d, base *v1alpha1.Desktop) error {
 	if equality.Semantic.DeepEqual(d.Status, base.Status) {
@@ -222,7 +196,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 	// 7. Clean exit of a running desktop.
 	on := d.Spec.PowerState == v1alpha1.PowerOn
 	if on && cur > 0 && cleanExit(d, pod, cfg.Controller.CleanExitCodes) {
-		if err := stopDesktop(ctx, r.Client, d, v1alpha1.StopExit, r.now()); err != nil {
+		if err := lifecycle.Stop(ctx, r.Client, d, v1alpha1.StopExit, r.now()); err != nil {
 			return reconcile.Result{}, err
 		}
 		*base = *d.DeepCopy()
@@ -233,7 +207,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 	starting := on && cur == 0
 	auth := r.authorize(ctx, d, starting)
 	if on && cur > 0 && auth.Status == metav1.ConditionFalse {
-		if err := stopDesktop(ctx, r.Client, d, v1alpha1.StopLDAP, r.now()); err != nil {
+		if err := lifecycle.Stop(ctx, r.Client, d, v1alpha1.StopLDAP, r.now()); err != nil {
 			return reconcile.Result{}, err
 		}
 		*base = *d.DeepCopy()
@@ -266,8 +240,8 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 	}
 
 	// 6. Stop recording: someone else set Off while the desktop ran.
-	if cur > 0 && want == 0 && !stopRecorded(d) {
-		if err := stopDesktop(ctx, r.Client, d, v1alpha1.StopAdmin, r.now()); err != nil {
+	if cur > 0 && want == 0 && !lifecycle.StopRecorded(d) {
+		if err := lifecycle.Stop(ctx, r.Client, d, v1alpha1.StopAdmin, r.now()); err != nil {
 			return reconcile.Result{}, err
 		}
 		*base = *d.DeepCopy()

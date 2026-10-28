@@ -23,6 +23,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/lhns/kube-webtop-workspaces/api/v1alpha1"
+	"github.com/lhns/kube-webtop-workspaces/internal/lifecycle"
 	"github.com/lhns/kube-webtop-workspaces/internal/metrics"
 	"github.com/lhns/kube-webtop-workspaces/internal/names"
 )
@@ -291,27 +292,11 @@ func (s *Server) applyPower(ctx context.Context, c *caller, req powerRequest) *h
 	return s.stop(ctx, d, v1alpha1.StopReason(req.Reason))
 }
 
-// stop records lastStop first, then powers off, so the stop is on record before the pod exits.
+// stop records lastStop before powering off, so the stop is on record before the pod exits.
 func (s *Server) stop(ctx context.Context, d *v1alpha1.Desktop, reason v1alpha1.StopReason) *httpError {
-	recorded := d.Status.LastStop != nil &&
-		(d.Status.LastStart == nil || !d.Status.LastStop.Time.Before(d.Status.LastStart))
-	if recorded && d.Spec.PowerState == v1alpha1.PowerOff {
-		return nil
-	}
-	if !recorded {
-		orig := d.DeepCopy()
-		d.Status.LastStop = &v1alpha1.LastStop{Time: metav1.NewMicroTime(s.now()), Reason: reason}
-		if err := s.Client.Status().Patch(ctx, d, client.MergeFrom(orig)); err != nil {
-			slog.Error("record lastStop", "desktop", d.Name, "err", err)
-			return fail(http.StatusServiceUnavailable, "could not record the stop")
-		}
-		metrics.StopsTotal.WithLabelValues(string(reason)).Inc()
-	}
-	orig := d.DeepCopy()
-	d.Spec.PowerState = v1alpha1.PowerOff
-	if err := s.Client.Patch(ctx, d, client.MergeFrom(orig)); err != nil {
-		slog.Error("set powerState Off", "desktop", d.Name, "err", err)
-		return fail(http.StatusServiceUnavailable, "could not power off")
+	if err := lifecycle.Stop(ctx, s.Client, d, reason, s.now()); err != nil {
+		slog.Error("stop", "desktop", d.Name, "err", err)
+		return fail(http.StatusServiceUnavailable, "could not stop the desktop")
 	}
 	return nil
 }

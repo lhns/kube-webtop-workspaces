@@ -9,6 +9,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	"github.com/lhns/kube-webtop-workspaces/api/v1alpha1"
+	"github.com/lhns/kube-webtop-workspaces/internal/lifecycle"
 	"github.com/lhns/kube-webtop-workspaces/internal/names"
 )
 
@@ -162,7 +163,7 @@ func cleanExit(d *v1alpha1.Desktop, pod *corev1.Pod, codes []int32) bool {
 	if pod == nil || d.Status.LastStart == nil {
 		return false
 	}
-	if ls := d.Status.LastStop; ls != nil && !ls.Time.Before(d.Status.LastStart) {
+	if lifecycle.StopRecorded(d) {
 		return false
 	}
 	cs := containerStatus(pod)
