@@ -77,9 +77,9 @@ type Booter struct {
 // Run polls until ready has been acknowledged by the controller, or ctx ends.
 func (b *Booter) Run(ctx context.Context) {
 	var (
-		lastPct   = -1
-		best      = 0 // reported progress never goes backwards
-		retryAt   time.Time
+		lastPct = -1
+		best    = 0 // reported progress never goes backwards
+		retryAt time.Time
 	)
 	t := time.NewTicker(b.Tick)
 	defer t.Stop()
