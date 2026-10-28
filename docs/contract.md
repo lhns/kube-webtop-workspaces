@@ -393,6 +393,7 @@ controller:
   leaderElectionID: kube-webtop-workspaces
   requireAgentReady: true
   cleanExitCodes: [0]
+  maxConcurrentReconciles: 4      # Desktops reconciled in parallel; a slow LDAP lookup blocks only one
 
 powerApi:
   addr: ":8082"

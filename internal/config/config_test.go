@@ -10,7 +10,8 @@ func TestDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	if c.Names.Prefix != "desktop-" || c.Desktop.Port != 8080 || c.LDAP.MemberAttribute != "memberOf" ||
-		!*c.Controller.RequireAgentReady || len(c.Controller.CleanExitCodes) != 1 || c.Storage.MountPath != "/persist" {
+		!*c.Controller.RequireAgentReady || len(c.Controller.CleanExitCodes) != 1 || c.Storage.MountPath != "/persist" ||
+		c.Controller.MaxConcurrentReconciles != 4 {
 		t.Fatalf("unexpected defaults: %+v", c)
 	}
 	if c.ValidateController() == nil {

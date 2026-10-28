@@ -20,6 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	crcontroller "sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -89,7 +90,8 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&v1alpha1.Desktop{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
-		Watches(&corev1.Pod{}, podToDesktop)
+		Watches(&corev1.Pod{}, podToDesktop).
+		WithOptions(crcontroller.Options{MaxConcurrentReconciles: r.Config().Controller.MaxConcurrentReconciles})
 	if r.Notify != nil {
 		b = b.WatchesRawSource(source.Channel(r.Notify, &handler.EnqueueRequestForObject{}))
 	}
@@ -119,7 +121,8 @@ func (r *Reconciler) authorize(ctx context.Context, d *v1alpha1.Desktop, startin
 	if !known && !starting {
 		return r.ldapError("no successful LDAP lookup yet")
 	}
-	// A start of a user the cache does not list: ask the directory.
+	// A start of a user the cache does not list: ask the directory. This blocks this worker for up
+	// to ldap.timeout; controller.maxConcurrentReconciles keeps other desktops reconciling meanwhile.
 	ok, err := r.Dir.IsMember(ctx, d.Spec.User)
 	if err != nil {
 		slog.Warn("ldap lookup failed", "desktop", d.Name, "err", err)

@@ -41,6 +41,8 @@ type Controller struct {
 	LeaderElectionID  string  `json:"leaderElectionID"`
 	RequireAgentReady *bool   `json:"requireAgentReady"`
 	CleanExitCodes    []int32 `json:"cleanExitCodes"`
+	// MaxConcurrentReconciles > 1 keeps a slow direct LDAP lookup from stalling other desktops.
+	MaxConcurrentReconciles int `json:"maxConcurrentReconciles"`
 }
 
 type PowerAPI struct {
@@ -175,6 +177,7 @@ func (c *Config) Default() {
 	if c.Controller.CleanExitCodes == nil {
 		c.Controller.CleanExitCodes = []int32{0}
 	}
+	def(&c.Controller.MaxConcurrentReconciles, 4)
 
 	def(&c.PowerAPI.Addr, ":8082")
 	def(&c.PowerAPI.Audience, "kube-webtop-workspaces")
@@ -240,6 +243,9 @@ func (c *Config) validate() error {
 	}
 	if len(c.Names.Prefix) > names.MaxPrefixLen || !prefixRE.MatchString(c.Names.Prefix) {
 		errs = append(errs, fmt.Errorf("names.prefix %q: must match %s and be at most %d chars", c.Names.Prefix, prefixRE, names.MaxPrefixLen))
+	}
+	if c.Controller.MaxConcurrentReconciles < 1 {
+		errs = append(errs, fmt.Errorf("controller.maxConcurrentReconciles %d: must be at least 1", c.Controller.MaxConcurrentReconciles))
 	}
 	switch c.LDAP.Membership {
 	case MembershipMemberOf, MembershipMember:
