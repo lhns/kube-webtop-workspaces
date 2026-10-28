@@ -13,10 +13,9 @@ import (
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/sysd"
 )
 
-// restorePreviousLogout restores the ksmserverrc group "saved at previous
-// logout", but ksmserver remaps that name to "saved by user" in both
-// saveCurrentSession and saveCurrentSessionAs. So we save normally, then copy
-// the "saved by user" group over the "previous logout" one ourselves.
+// Plasma restores the ksmserverrc group "saved at previous logout", but ksmserver
+// saves to "saved by user" in both saveCurrentSession and saveCurrentSessionAs.
+// So we save normally, then copy the "saved by user" group over the other one.
 const (
 	ksmService = "org.kde.ksmserver"
 	ksmPath    = "/KSMServer"

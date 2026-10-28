@@ -226,7 +226,7 @@ jobs:
         run: |
           set -euo pipefail
           for tag in $TAGS; do
-            nix run .#image.copyTo -- --digestfile digest               --dest-creds "${{ github.actor }}:${GHCR_TOKEN}" "docker://${IMAGE}:${tag}"
+            nix run .#image.copyTo -- --digestfile digest \n              --dest-creds "${{ github.actor }}:${GHCR_TOKEN}" "docker://${IMAGE}:${tag}"
             echo "pushed ${IMAGE}:${tag}" >> "$GITHUB_STEP_SUMMARY"
           done
           echo "digest=$(cat digest)" >> "$GITHUB_OUTPUT"
@@ -234,7 +234,13 @@ jobs:
       - name: cosign sign image (keyless)
         env:
           COSIGN_YES: "true"
-        run: cosign sign "${IMAGE}@${{ steps.push.outputs.digest }}"
+        run: |
+          # Rekor/Fulcio fail transiently; retry the whole call.
+          for i in 1 2 3 4 5; do
+            cosign sign "${IMAGE}@${{ steps.push.outputs.digest }}" && exit 0
+            echo "cosign sign failed (attempt $i)"; sleep $((i * 15))
+          done
+          exit 1
 
       - name: generate image SBOM
         run: syft "${IMAGE}@${{ steps.push.outputs.digest }}" -o spdx-json=kube-webtop-workspaces-desktop.sbom.spdx.json
@@ -243,7 +249,11 @@ jobs:
         env:
           COSIGN_YES: "true"
         run: |
-          cosign attest             --predicate kube-webtop-workspaces-desktop.sbom.spdx.json             --type spdx             "${IMAGE}@${{ steps.push.outputs.digest }}"
+          for i in 1 2 3 4 5; do
+            cosign attest               --predicate kube-webtop-workspaces-desktop.sbom.spdx.json               --type spdx               "${IMAGE}@${{ steps.push.outputs.digest }}" && exit 0
+            echo "cosign attest failed (attempt $i)"; sleep $((i * 15))
+          done
+          exit 1
 
       - name: attach SBOM to the release
         if: startsWith(github.ref, 'refs/tags/v')
