@@ -226,7 +226,8 @@ jobs:
         run: |
           set -euo pipefail
           for tag in $TAGS; do
-            nix run .#image.copyTo -- --digestfile digest \n              --dest-creds "${{ github.actor }}:${GHCR_TOKEN}" "docker://${IMAGE}:${tag}"
+            nix run .#image.copyTo -- --digestfile digest \
+              --dest-creds "${{ github.actor }}:${GHCR_TOKEN}" "docker://${IMAGE}:${tag}"
             echo "pushed ${IMAGE}:${tag}" >> "$GITHUB_STEP_SUMMARY"
           done
           echo "digest=$(cat digest)" >> "$GITHUB_OUTPUT"
@@ -250,7 +251,10 @@ jobs:
           COSIGN_YES: "true"
         run: |
           for i in 1 2 3 4 5; do
-            cosign attest               --predicate kube-webtop-workspaces-desktop.sbom.spdx.json               --type spdx               "${IMAGE}@${{ steps.push.outputs.digest }}" && exit 0
+            cosign attest \
+              --predicate kube-webtop-workspaces-desktop.sbom.spdx.json \
+              --type spdx \
+              "${IMAGE}@${{ steps.push.outputs.digest }}" && exit 0
             echo "cosign attest failed (attempt $i)"; sleep $((i * 15))
           done
           exit 1
