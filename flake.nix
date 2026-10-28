@@ -2,13 +2,17 @@
   description = "kube-webtop-workspaces desktop image: NixOS (systemd PID 1) with a browser-streamed Plasma desktop";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    # Pinned to the last Plasma 6.7 (KWin 6.7.5): KWin 6.8 dropped QPainter compositing from its
+    # nested-Wayland backend, so without a GPU it cannot composite (gray screen). Move on once
+    # KWin can again render without a GPU. The whole input, so there is one Qt tree.
+    nixpkgs.url = "github:NixOS/nixpkgs/102e1171e4bcef1ee2d9dce43932c8b0608aea76";
     nix2container = {
       url = "github:nlewo/nix2container";
       inputs.nixpkgs.follows = "nixpkgs";
     };
     webtop-nix = {
-      url = "github:lhns/webtop-nix";
+      # Unmerged webtop-nix PR #3 (container-fixes); back to the default branch once it is merged.
+      url = "github:lhns/webtop-nix/c2cfae3c8b7f0cb50e5516c8b1f1539a6a115d0b";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
