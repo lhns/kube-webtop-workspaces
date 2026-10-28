@@ -60,10 +60,17 @@ func (t *Tracker) Seconds() int {
 
 // Watch follows the compositor until ctx ends, reconnecting after failures
 // (KWin not up yet, or restarted). Failures only mean "not idle".
-func (t *Tracker) Watch(ctx context.Context, socket string, retry time.Duration) {
-	last := ""
+func (t *Tracker) Watch(ctx context.Context, socket func(context.Context) (string, error), retry time.Duration) {
+	last, lastPath := "", ""
 	for ctx.Err() == nil {
-		err := wayland.Dial(ctx, socket, t.Set)
+		path, err := socket(ctx) // rediscovered on every attempt: KWin may have restarted
+		if err == nil {
+			if path != lastPath {
+				log.Printf("idle: watching %s", path)
+				lastPath = path
+			}
+			err = wayland.Dial(ctx, path, t.Set)
+		}
 		if ctx.Err() != nil {
 			return // keep idle-since: the power hook reads it during shutdown
 		}

@@ -49,13 +49,17 @@ type fakeProbe struct {
 }
 
 func (f *fakeProbe) set(fn func(*fakeProbe)) { f.mu.Lock(); fn(f); f.mu.Unlock() }
-func (f *fakeProbe) System() (float64, bool, error) {
+func (f *fakeProbe) System(context.Context) (float64, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.sys, f.multiUser, f.err
 }
-func (f *fakeProbe) DesktopActive() bool { f.mu.Lock(); defer f.mu.Unlock(); return f.dt }
-func (f *fakeProbe) PortOpen() bool      { f.mu.Lock(); defer f.mu.Unlock(); return f.port }
+func (f *fakeProbe) DesktopActive(context.Context) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.dt
+}
+func (f *fakeProbe) PortOpen(context.Context) bool { f.mu.Lock(); defer f.mu.Unlock(); return f.port }
 
 type fakeSender struct {
 	mu      sync.Mutex

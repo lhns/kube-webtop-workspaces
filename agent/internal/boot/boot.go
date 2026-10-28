@@ -19,9 +19,9 @@ type Sender interface {
 // Probe observes the boot. Each method must be cheap and non-blocking for long.
 type Probe interface {
 	// System returns systemd's boot progress (0..1) and whether multi-user.target is active.
-	System() (progress float64, multiUser bool, err error)
-	DesktopActive() bool
-	PortOpen() bool
+	System(ctx context.Context) (progress float64, multiUser bool, err error)
+	DesktopActive(ctx context.Context) bool
+	PortOpen(ctx context.Context) bool
 }
 
 const (
@@ -85,8 +85,11 @@ func (b *Booter) Run(ctx context.Context) {
 	t := time.NewTicker(b.Tick)
 	defer t.Stop()
 	for {
-		sys, multiUser, err := b.Probe.System()
-		plasma, port := b.Probe.DesktopActive(), b.Probe.PortOpen()
+		sys, multiUser, err := b.Probe.System(ctx)
+		plasma, port := b.Probe.DesktopActive(ctx), b.Probe.PortOpen(ctx)
+		if ctx.Err() != nil {
+			return
+		}
 		if err != nil {
 			log.Printf("boot: systemd probe: %v", err)
 			// Don't let a broken D-Bus block readiness once the visible parts are up.

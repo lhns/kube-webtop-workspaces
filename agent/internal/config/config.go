@@ -12,7 +12,7 @@ type Config struct {
 	TokenPath        string
 	HTTPPort         int
 	StateDir         string
-	WaylandSocket    string
+	WaylandSocket    string // empty = discover from the user manager
 	User             string
 	PowerHookTimeout time.Duration
 	IdleThreshold    time.Duration
@@ -41,7 +41,7 @@ func FromEnv(getenv func(string) string) Config {
 		TokenPath:        str("WEBTOP_TOKEN_PATH", "/run/webtop/sa/token"),
 		HTTPPort:         port,
 		StateDir:         str("WEBTOP_AGENT_STATE_DIR", "/run/webtop"),
-		WaylandSocket:    str("WEBTOP_AGENT_WAYLAND_SOCKET", "/run/user/1000/wayland-0"),
+		WaylandSocket:    str("WEBTOP_AGENT_WAYLAND_SOCKET", ""),
 		User:             str("WEBTOP_AGENT_USER", "user"),
 		PowerHookTimeout: dur("WEBTOP_POWER_HOOK_TIMEOUT", 60*time.Second),
 		IdleThreshold:    dur("WEBTOP_IDLE_REASON_THRESHOLD", 60*time.Second),

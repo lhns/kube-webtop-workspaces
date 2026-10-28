@@ -14,7 +14,10 @@ const (
 )
 
 // WriteAtomic replaces path via temp file + rename so readers never see a partial write.
-func WriteAtomic(path string, data []byte) error {
+func WriteAtomic(path string, data []byte) error { return WriteAtomicMode(path, data, 0o644) }
+
+// WriteAtomicMode is WriteAtomic with an explicit file mode.
+func WriteAtomicMode(path string, data []byte, perm os.FileMode) error {
 	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*")
 	if err != nil {
 		return err
@@ -27,7 +30,7 @@ func WriteAtomic(path string, data []byte) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
+	if err := os.Chmod(tmp.Name(), perm); err != nil {
 		return err
 	}
 	return os.Rename(tmp.Name(), path)

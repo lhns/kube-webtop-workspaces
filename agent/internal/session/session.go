@@ -13,13 +13,17 @@ import (
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/sysd"
 )
 
-// The group named here is what loginMode=restorePreviousLogout restores;
-// plain saveCurrentSession writes "saved by user" instead.
+// restorePreviousLogout restores the ksmserverrc group "saved at previous
+// logout", but ksmserver remaps that name to "saved by user" in both
+// saveCurrentSession and saveCurrentSessionAs. So we save normally, then copy
+// the "saved by user" group over the "previous logout" one ourselves.
 const (
-	ksmService  = "org.kde.ksmserver"
-	ksmPath     = "/KSMServer"
-	saveMethod  = "org.kde.KSMServerInterface.saveCurrentSessionAs"
-	sessionName = "saved at previous logout"
+	ksmService = "org.kde.ksmserver"
+	ksmPath    = "/KSMServer"
+	saveMethod = "org.kde.KSMServerInterface.saveCurrentSession"
+
+	savedGroup   = "[Session: saved by user]"
+	restoreGroup = "[Session: saved at previous logout]"
 
 	saveTimeout = 30 * time.Second
 )
@@ -55,6 +59,9 @@ func Run(stateDir string) {
 		return
 	}
 	log.Print("save-session: saved")
+	if err := promoteSession(); err != nil {
+		log.Printf("save-session: %v", err)
+	}
 }
 
 func saveSession() error {
@@ -65,5 +72,5 @@ func saveSession() error {
 	defer conn.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), saveTimeout)
 	defer cancel()
-	return conn.Object(ksmService, ksmPath).CallWithContext(ctx, saveMethod, 0, sessionName).Err
+	return conn.Object(ksmService, ksmPath).CallWithContext(ctx, saveMethod, 0).Err
 }

@@ -139,6 +139,17 @@ console_relay() {
   ( while :; do cat /run/webtop/console; done ) &
 }
 
+# logind offers sleep only if /sys/power/state is writable, which it is not in a pod. Sleep itself
+# runs systemd-suspend.service, which the image maps to session save + poweroff, so a writable
+# stand-in is enough.
+fake_sys_power() {
+  [ -e /sys/power/state ] && [ ! -w /sys/power/state ] || return 0
+  d=/run/webtop/sys-power
+  mkdir -p $d && echo "freeze mem" > $d/state && echo "s2idle [deep]" > $d/mem_sleep &&
+  mount --bind $d/state /sys/power/state &&
+  { [ ! -e /sys/power/mem_sleep ] || mount --bind $d/mem_sleep /sys/power/mem_sleep; }
+}
+
 # systemd does not pass the container env to units; they read these files.
 write_env() {
   mkdir -p /run/webtop &&
@@ -163,6 +174,8 @@ fi
 step "bind $P/home on /home" bind_home
 step "console relay" console_relay
 step "write /run/webtop/env" write_env
+log "step: writable /sys/power stand-in"
+fake_sys_power || log "no /sys/power stand-in: the desktop will not offer sleep"
 
 log "exec /sbin/init"
 exec /sbin/init

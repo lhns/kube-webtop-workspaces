@@ -2,7 +2,7 @@
 //
 //	webtop-agent run                 long-running: boot/steady reports
 //	webtop-agent power-hook <target> shutdown hook (poweroff|reboot|halt)
-//	webtop-agent suspend             map suspend to "save + poweroff"
+//	webtop-agent suspend             map suspend to "mark + start poweroff.target"
 //	webtop-agent save-session        save the Plasma session on kube stop/suspend
 package main
 
@@ -73,10 +73,12 @@ func suspend(cfg config.Config) int {
 		log.Printf("suspend: %v", err)
 		return 1
 	}
-	cmd := exec.Command("systemctl", "poweroff", "--no-block")
+	// Start the target via the manager: logind refuses poweroff while this
+	// suspend operation is still in progress.
+	cmd := exec.Command("systemctl", "start", "--no-block", "--job-mode=replace-irreversibly", "poweroff.target")
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {
-		log.Printf("suspend: systemctl poweroff: %v", err)
+		log.Printf("suspend: systemctl start poweroff.target: %v", err)
 		if ee, ok := err.(*exec.ExitError); ok {
 			return ee.ExitCode()
 		}
@@ -98,10 +100,15 @@ func run(cfg config.Config) {
 
 	// Idle detection is best effort and independent of readiness.
 	tracker := idle.NewTracker(cfg.StateDir)
-	go tracker.Watch(ctx, cfg.WaylandSocket, 5*time.Second)
+	du := sysd.LookupUser(cfg.User)
+	socket := du.WaylandSocket
+	if cfg.WaylandSocket != "" {
+		socket = func(context.Context) (string, error) { return cfg.WaylandSocket, nil }
+	}
+	go tracker.Watch(ctx, socket, 5*time.Second)
 
 	(&boot.Booter{
-		Probe:  &sysd.Probe{User: cfg.User, Port: cfg.HTTPPort},
+		Probe:  &sysd.Probe{User: du, Port: cfg.HTTPPort},
 		Sender: client,
 		Tick:   time.Second,
 		Retry:  3 * time.Second,

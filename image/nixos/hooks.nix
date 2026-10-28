@@ -79,6 +79,9 @@ in
       Type = "oneshot";
       ExecStart = "${exe} power-hook %i";
       EnvironmentFile = envFile;
+      # The template's default slice conflicts with shutdown.target, which drops this start job.
+      Slice = "system.slice";
+      StandardOutput = "journal+console"; # the journal relay may be gone by now
       TimeoutStartSec = 90; # the agent itself gives up after WEBTOP_POWER_HOOK_TIMEOUT (60s)
     };
   };

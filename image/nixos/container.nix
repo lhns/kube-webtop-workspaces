@@ -40,7 +40,9 @@ in
     sandbox = false;
     trusted-users = [ "root" config.services.webtop.user ];
   };
-  systemd.services.nix-daemon.environment.NIX_CONFIG = "store = ${overlayStore}";
+  # %% : systemd would read the URL's %-escapes as unit specifiers.
+  systemd.services.nix-daemon.environment.NIX_CONFIG =
+    "store = ${lib.replaceStrings [ "%" ] [ "%%" ] overlayStore}";
   nix.checkConfig = false; # would try to open the store at build time
 
   # Journal to the container log (kubectl logs): systemd replaces PID 1's stdout, and journald's
@@ -62,6 +64,7 @@ in
   systemd.services."serial-getty@".enable = false;
   systemd.services."console-getty".enable = false;
   systemd.services.systemd-oomd.enable = false;
+  services.logind.settings.Login = { NAutoVTs = 0; ReserveVT = 0; }; # else autovt@tty1 starts
 
   # The desktop user owns the container (it is user-namespaced); sudo without a password.
   users.users.${config.services.webtop.user} = {

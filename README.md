@@ -83,13 +83,20 @@ client count changes.
 
 **Path prefix.** The gateway strips `/u/<user>` and requires the trailing slash; the Selkies web
 client loads its assets and opens `api/websockets` relative to the page's directory, so it needs no
-prefix setting (Selkies' `subfolder` stays empty).
+prefix setting. Selkies' `SELKIES_SUBFOLDER` must stay empty: it would make the server expect the
+prefix the gateway has already stripped.
+
+**Selkies settings** (`image/nixos/desktop.nix`): plain HTTP, audio from the monitor of a PipeWire
+null sink named `output` (a pod has no sound card), `XCURSOR_PATH` for pixelflux's cursor loader, and
+a wrapper that puts the libraries pixelflux dlopens on `LD_LIBRARY_PATH`. Clipboard, file transfer
+(to `~/Desktop`) and browser cursors are Selkies' defaults.
 
 **Known limits**
 
 - The Nix build sandbox is off (`pivot_root` fails with `EPERM` in the user-namespaced pod).
-- No real suspend: `/sys/power` is read-only in a pod, so sleep is mapped to session save + poweroff,
-  and Plasma offers it only if logind reports `CanSuspend`.
+- No real suspend: sleep is mapped to session save + poweroff. logind offers sleep only with a
+  writable `/sys/power/state`, which is read-only in a pod; webtop-init binds a stand-in over it
+  (best effort, logged).
 - Session restore on Wayland relaunches apps; it restores only what ksmserver can (X11 apps via
   Xwayland, apps that support KDE's session restore), not window contents of arbitrary apps.
 - The desktop user has passwordless sudo: root in the pod is unprivileged on the node (user
