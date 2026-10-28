@@ -3,6 +3,7 @@
 package gateway
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -36,6 +37,18 @@ func isReady(d *v1alpha1.Desktop) bool {
 	return d != nil && d.Status.Phase == v1alpha1.PhaseRunning && d.Status.URL != ""
 }
 
+// current re-reads the desktop: nil if it is gone, d on any other error.
+func (h *Handler) current(ctx context.Context, name string, d *v1alpha1.Desktop) *v1alpha1.Desktop {
+	cur, err := h.store.Get(ctx, name)
+	switch {
+	case err == nil:
+		return cur
+	case apierrors.IsNotFound(err):
+		return nil
+	}
+	return d
+}
+
 // serveEvents streams desktop status as SSE. It never starts the desktop; d may be nil.
 func (h *Handler) serveEvents(w http.ResponseWriter, r *http.Request, rt *route, d *v1alpha1.Desktop) {
 	fl, ok := w.(http.Flusher)
@@ -46,6 +59,7 @@ func (h *Handler) serveEvents(w http.ResponseWriter, r *http.Request, rt *route,
 	// Subscribe before the first send so a change in between is not missed.
 	wake, cancel := h.hub.Subscribe(rt.name)
 	defer cancel()
+	d = h.current(r.Context(), rt.name, d) // it may have changed since the caller read it
 
 	hd := w.Header()
 	hd.Set("Content-Type", "text/event-stream")
@@ -86,14 +100,8 @@ func (h *Handler) serveEvents(w http.ResponseWriter, r *http.Request, rt *route,
 			}
 			fl.Flush()
 		case <-wake:
-			cur, err := h.store.Get(r.Context(), rt.name)
-			if err != nil {
-				if !apierrors.IsNotFound(err) {
-					continue
-				}
-				cur = nil
-			}
-			if !send(cur) {
+			d = h.current(r.Context(), rt.name, d)
+			if !send(d) {
 				return
 			}
 		}
