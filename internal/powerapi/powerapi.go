@@ -98,8 +98,6 @@ type httpError struct {
 	msg  string
 }
 
-func (e *httpError) Error() string { return e.msg }
-
 func fail(code int, format string, a ...any) *httpError {
 	return &httpError{code: code, msg: fmt.Sprintf(format, a...)}
 }

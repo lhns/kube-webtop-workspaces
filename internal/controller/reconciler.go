@@ -174,7 +174,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 			errMsg = "user ID has no usable characters"
 		}
 		return reconcile.Result{}, r.finish(ctx, d, base, pods.Items, nil, finishArgs{
-			errMsg: errMsg, auth: authResult{Status: metav1.ConditionUnknown, Reason: "InvalidName", Message: errMsg},
+			errMsg: errMsg, auth: authResult{Status: metav1.ConditionUnknown, Reason: v1alpha1.ReasonInvalidName, Message: errMsg},
 		})
 	}
 

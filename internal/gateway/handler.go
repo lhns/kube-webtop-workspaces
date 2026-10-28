@@ -124,7 +124,6 @@ func (h *Handler) rewrite(pr *httputil.ProxyRequest) {
 	pr.Out.URL.Path = t.path
 	pr.Out.URL.RawPath = t.rawPath
 	pr.SetURL(t.url)
-	pr.Out.Host = ""
 	pr.SetXForwarded()
 	if t.trusted {
 		// Behind our trusted proxy the external scheme/host/client are in its headers.

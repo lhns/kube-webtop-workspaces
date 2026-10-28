@@ -50,6 +50,7 @@ const (
 	ReasonLDAPDisabled = "LDAPDisabled"
 	ReasonNotMember    = "NotMember"
 	ReasonLDAPError    = "LDAPError"
+	ReasonInvalidName  = "InvalidName"
 )
 
 // DesktopSpec is the desired state of a Desktop.

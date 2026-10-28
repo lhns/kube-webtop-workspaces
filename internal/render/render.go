@@ -14,7 +14,6 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
@@ -107,8 +106,6 @@ func defaultSecurityContext() *corev1.SecurityContext {
 	}
 }
 
-func quantityPtr(q resource.Quantity) *resource.Quantity { return &q }
-
 // PodTemplate is the desired pod template, without the restarted-at annotation.
 func PodTemplate(cfg *config.Config, d *v1alpha1.Desktop) corev1.PodTemplateSpec {
 	dc := cfg.Desktop
@@ -143,10 +140,10 @@ func PodTemplate(cfg *config.Config, d *v1alpha1.Desktop) corev1.PodTemplateSpec
 			ClaimName: ObjectName(cfg, d),
 		}}},
 		{Name: volRun, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{
-			Medium: corev1.StorageMediumMemory, SizeLimit: quantityPtr(dc.RunSizeLimit.DeepCopy()),
+			Medium: corev1.StorageMediumMemory, SizeLimit: ptr(dc.RunSizeLimit.DeepCopy()),
 		}}},
 		{Name: volShm, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{
-			Medium: corev1.StorageMediumMemory, SizeLimit: quantityPtr(dc.ShmSize.DeepCopy()),
+			Medium: corev1.StorageMediumMemory, SizeLimit: ptr(dc.ShmSize.DeepCopy()),
 		}}},
 		{Name: volSA, VolumeSource: corev1.VolumeSource{Projected: &corev1.ProjectedVolumeSource{
 			Sources: []corev1.VolumeProjection{{ServiceAccountToken: &corev1.ServiceAccountTokenProjection{
