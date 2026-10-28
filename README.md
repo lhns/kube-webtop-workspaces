@@ -89,9 +89,8 @@ client loads its assets and opens `api/websockets` relative to the page's direct
 prefix setting. Selkies' `SELKIES_SUBFOLDER` must stay empty: it would make the server expect the
 prefix the gateway has already stripped.
 
-**Selkies settings** (`image/nixos/desktop.nix`): plain HTTP, audio from the monitor of a PipeWire
-null sink named `output` (a pod has no sound card), `XCURSOR_PATH` for pixelflux's cursor loader, and
-a wrapper that puts the libraries pixelflux dlopens on `LD_LIBRARY_PATH`. Clipboard, file transfer
+**Selkies settings** (`image/nixos/desktop.nix`): plain HTTP; audio sink, cursor path and library wrapper come
+from webtop-nix. Clipboard, file transfer
 (to `~/Desktop`) and browser cursors are Selkies' defaults.
 
 **Known limits**
