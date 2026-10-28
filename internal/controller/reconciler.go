@@ -486,7 +486,9 @@ func (r *Reconciler) writeDeployment(ctx context.Context, d *v1alpha1.Desktop, d
 		dep.Spec.Replicas = &want
 		dep.Spec.Strategy = desired.Spec.Strategy
 		dep.Spec.Template = desired.Spec.Template
-		return desiredHash, r.Update(ctx, dep)
+		// A merge patch, not Update: no resourceVersion, so status bumps by the Deployment
+		// controller do not make the write conflict.
+		return desiredHash, r.Patch(ctx, dep, client.MergeFrom(orig))
 	}
 
 	// A running desktop: scale only.
