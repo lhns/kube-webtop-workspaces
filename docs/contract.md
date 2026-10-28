@@ -88,6 +88,12 @@ Labels on all three and on the pod template:
 | `app.kubernetes.io/instance` | desktop name |
 | `app.kubernetes.io/managed-by` | `kube-webtop-workspaces` |
 
+These are interface, not decoration: the chart's NetworkPolicies select desktop pods on
+`app.kubernetes.io/name=webtop-desktop` + `app.kubernetes.io/managed-by=kube-webtop-workspaces`
+(the desktop policy itself and the controller's power API ingress), the Service and Deployment
+select on `webtop.lhns.github.io/desktop` + `managed-by`, and the power API checks `managed-by` and
+`desktop` (section 8.1). `desktop.podLabels` and `storage.labels` cannot override them.
+
 Annotations:
 
 | key | on | value |
@@ -469,6 +475,20 @@ ClusterRole + ClusterRoleBinding.
   `leases` get/list/watch/create/update/patch.
   (ClusterRole): `tokenreviews` create.
 - **desktop** ServiceAccount: no RBAC at all; its token is used only for the power API audience.
+
+Neither role reads Secrets or ConfigMaps: the config file and `ldap.bindPasswordFile` (and
+`ldap.caFile`) are mounted files.
+
+Network (besides DNS):
+
+| component | egress | ingress |
+| --- | --- | --- |
+| gateway | API server; desktop Services on `desktop.port` | ingress controller on `gateway.addr` |
+| controller | API server; `ldap.url` when LDAP is enabled | desktop pods on `powerApi.addr` |
+| desktop | controller on `powerApi.addr` (plus whatever the chart allows) | gateway on `desktop.port` |
+
+Metrics and probes listen on `metricsAddr` and `healthAddr`. Desktop pods must not reach the gateway:
+it trusts the user header (section 7.1).
 
 ## 11. Metrics
 
