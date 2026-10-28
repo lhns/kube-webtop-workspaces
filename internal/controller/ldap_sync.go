@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"maps"
 	"sync"
 	"time"
 
@@ -33,11 +34,11 @@ func (c *MemberCache) Contains(user string) (member, loaded bool) {
 	return member, c.loaded
 }
 
-// Replace swaps in a new member set.
+// Replace swaps in a copy of set: Add writes to the cache's map while the caller still reads set.
 func (c *MemberCache) Replace(set map[string]struct{}) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.set, c.loaded = set, true
+	c.set, c.loaded = maps.Clone(set), true
 }
 
 // Add records a member confirmed by a direct lookup; the next sync replaces the set.
