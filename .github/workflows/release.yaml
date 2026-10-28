@@ -110,9 +110,7 @@ jobs:
             --type spdx \
             "ghcr.io/lhns/kube-webtop-workspaces@${{ steps.build_image.outputs.digest }}"
 
-      # ------ desktop image (NixOS) -----------------------------------------
-      # TODO: the desktop image is built with Nix, not Docker; its job is
-      # added here (or as a separate job) once it exists.
+      # The desktop image (NixOS, built with Nix) has its own job below.
 
       # ------ Helm chart ----------------------------------------------------
 
@@ -173,3 +171,82 @@ jobs:
             kube-webtop-workspaces-image.sbom.spdx.json
             kube-webtop-workspaces-chart.sbom.spdx.json
             checksums.txt
+
+  # ------ desktop image (NixOS) -------------------------------------------
+  # Built with Nix (flake.nix, nix2container) in parallel with the job above;
+  # same tag scheme. amd64 only: the Selkies/pixelflux wheels are x86_64.
+  desktop-image:
+    runs-on: ubuntu-latest
+    env:
+      IMAGE: ghcr.io/lhns/kube-webtop-workspaces-desktop
+    steps:
+      - uses: actions/checkout@v7
+
+      # The Plasma closure is several GB; the runner's preinstalled SDKs are not needed.
+      - name: free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+
+      - uses: cachix/install-nix-action@v31
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: install cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: v2.4.1
+
+      - name: install syft
+        uses: anchore/sbom-action/download-syft@v0
+        with:
+          syft-version: v1.14.0
+
+      - name: compute tags
+        id: tags
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "tags=${GITHUB_REF_NAME} latest" >> "$GITHUB_OUTPUT"
+          else
+            SHORT="${GITHUB_SHA::7}"
+            BRANCH=$(echo "${GITHUB_REF_NAME}" | tr -c 'a-zA-Z0-9-' '-' | sed 's/-\+/-/g; s/^-\|-$//g')
+            echo "tags=0.0.0-dev.${SHORT} sha-${SHORT} ${BRANCH}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: build image
+        run: nix build .#image -L
+
+      # copyTo is skopeo copy from the Nix store; layers already pushed are skipped.
+      - name: push image
+        id: push
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAGS: ${{ steps.tags.outputs.tags }}
+        run: |
+          set -euo pipefail
+          for tag in $TAGS; do
+            nix run .#image.copyTo -- --digestfile digest               --dest-creds "${{ github.actor }}:${GHCR_TOKEN}" "docker://${IMAGE}:${tag}"
+            echo "pushed ${IMAGE}:${tag}" >> "$GITHUB_STEP_SUMMARY"
+          done
+          echo "digest=$(cat digest)" >> "$GITHUB_OUTPUT"
+
+      - name: cosign sign image (keyless)
+        env:
+          COSIGN_YES: "true"
+        run: cosign sign "${IMAGE}@${{ steps.push.outputs.digest }}"
+
+      - name: generate image SBOM
+        run: syft "${IMAGE}@${{ steps.push.outputs.digest }}" -o spdx-json=kube-webtop-workspaces-desktop.sbom.spdx.json
+
+      - name: cosign attach SBOM as attestation
+        env:
+          COSIGN_YES: "true"
+        run: |
+          cosign attest             --predicate kube-webtop-workspaces-desktop.sbom.spdx.json             --type spdx             "${IMAGE}@${{ steps.push.outputs.digest }}"
+
+      - name: attach SBOM to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v3
+        with:
+          files: kube-webtop-workspaces-desktop.sbom.spdx.json

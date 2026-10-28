@@ -1,0 +1,16 @@
+# The desktop itself (webtop-nix's services.webtop), wired to the pod contract (docs/contract.md).
+{ lib, ... }:
+
+{
+  services.webtop = {
+    enable = true;
+    user = "user";
+    uid = 1000;
+    # The gateway proxies to the pod; the NetworkPolicy admits only the gateway.
+    address = "0.0.0.0";
+    port = 8080; # default; WEBTOP_HTTP_PORT overrides it at runtime (below)
+  };
+
+  # webtop-init writes SELKIES_PORT=$WEBTOP_HTTP_PORT here; EnvironmentFile wins over Environment.
+  systemd.user.services.selkies.serviceConfig.EnvironmentFile = "-/run/webtop/selkies.env";
+}
