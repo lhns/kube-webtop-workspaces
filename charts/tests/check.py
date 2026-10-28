@@ -16,6 +16,9 @@ TESTS = ROOT / "charts" / "tests"
 KUBE_VERSION = "1.31.0"
 errors = []
 
+# Desktop pod labels are interface (contract 3.1); the policies must select exactly these.
+DESKTOP_LABELS = {"app.kubernetes.io/name": "webtop-desktop", "app.kubernetes.io/managed-by": "kube-webtop-workspaces"}
+
 
 def fail(msg):
     errors.append(msg)
@@ -108,6 +111,10 @@ for name, args in cases.items():
             if np["desktop"]["spec"]["ingress"][0]["from"][0]["podSelector"]["matchLabels"][
                     "app.kubernetes.io/component"] != "gateway":
                 fail(f"{name}: desktop ingress is not limited to the gateway")
+            if np["desktop"]["spec"]["podSelector"]["matchLabels"] != DESKTOP_LABELS:
+                fail(f"{name}: desktop policy does not select the controller's desktop labels")
+            if np["controller"]["spec"]["ingress"][0]["from"][0]["podSelector"]["matchLabels"] != DESKTOP_LABELS:
+                fail(f"{name}: power API ingress is not limited to desktop pods")
             dns_ports = {(p["protocol"], p["port"]) for p in np["desktop"]["spec"]["egress"][0]["ports"]}
             if dns_ports != {("UDP", 53), ("TCP", 53)}:
                 fail(f"{name}: DNS egress must allow UDP and TCP 53, got {sorted(dns_ports)}")
