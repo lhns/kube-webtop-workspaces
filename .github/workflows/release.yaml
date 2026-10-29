@@ -241,7 +241,10 @@ jobs:
       # --no-recursive: references are fetched from cache.nixos.org, the cache holds one path.
       - name: save patched KWin
         if: steps.kwin-cache.outputs.cache-hit != 'true'
-        run: nix copy --no-recursive --to file://$HOME/kwin-cache "${{ steps.kwin.outputs.out }}"
+        # The daemon (root) created parts of the directory while substituting.
+        run: |
+          sudo chown -R "$USER" ~/kwin-cache
+          nix copy --no-recursive --to file://$HOME/kwin-cache "${{ steps.kwin.outputs.out }}"
       - uses: actions/cache/save@v6
         if: steps.kwin-cache.outputs.cache-hit != 'true'
         with:
