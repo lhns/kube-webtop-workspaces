@@ -73,7 +73,45 @@ jobs:
       # Evaluating the system realises the stock Plasma closure (webtop-nix grafts the patched KWin in).
       - name: free disk space
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+      # Same local cache of the patched KWin as the release workflow's desktop-image job.
       - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            extra-substituters = file:///home/runner/kwin-cache
+            require-sigs = false
+      - name: patched KWin store path
+        id: kwin
+        run: |
+          out=$(nix eval --raw .#kwin.outPath)
+          echo "out=$out" >> "$GITHUB_OUTPUT"
+          echo "key=kwin-$(basename "$out" | cut -d- -f1)" >> "$GITHUB_OUTPUT"
+      # Evaluating may make the nix daemon (root) create files in the cache directory; start clean so
+      # the restore, which runs as the user, can write.
+      - name: empty cache directory
+        run: |
+          sudo rm -rf ~/kwin-cache
+          mkdir ~/kwin-cache
+      - name: restore patched KWin
+        id: kwin-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/kwin-cache
+          key: ${{ steps.kwin.outputs.key }}
+      - name: build patched KWin
+        run: nix build .#kwin -L --no-link
+      # The whole closure: a binary cache refuses a path whose references it lacks. zstd keeps it small.
+      - name: save patched KWin
+        if: steps.kwin-cache.outputs.cache-hit != 'true'
+        # The daemon (root) created parts of the directory while substituting.
+        run: |
+          sudo chown -R "$USER" ~/kwin-cache
+          nix copy --to "file://$HOME/kwin-cache?compression=zstd" "${{ steps.kwin.outputs.out }}"
+      - uses: actions/cache/save@v6
+        if: steps.kwin-cache.outputs.cache-hit != 'true'
+        with:
+          path: ~/kwin-cache
+          key: ${{ steps.kwin.outputs.key }}
+
       - name: nix flake check
         run: nix flake check -L
 
