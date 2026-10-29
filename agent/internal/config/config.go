@@ -8,14 +8,15 @@ import (
 )
 
 type Config struct {
-	ControllerURL    string // empty disables the API
-	TokenPath        string
-	HTTPPort         int
-	StateDir         string
-	WaylandSocket    string // empty = discover from the user manager
-	User             string
-	PowerHookTimeout time.Duration
-	IdleThreshold    time.Duration
+	ControllerURL     string // empty disables the API
+	TokenPath         string
+	HTTPPort          int
+	StateDir          string
+	WaylandSocket     string // empty = discover from the user manager
+	User              string
+	PowerHookTimeout  time.Duration
+	IdleThreshold     time.Duration
+	CompositorTimeout time.Duration
 }
 
 // FromEnv builds a Config; getenv is os.Getenv in production.
@@ -37,13 +38,14 @@ func FromEnv(getenv func(string) string) Config {
 		port = p
 	}
 	return Config{
-		ControllerURL:    strings.TrimRight(str("WEBTOP_CONTROLLER_URL", ""), "/"),
-		TokenPath:        str("WEBTOP_TOKEN_PATH", "/run/webtop/sa/token"),
-		HTTPPort:         port,
-		StateDir:         str("WEBTOP_AGENT_STATE_DIR", "/run/webtop"),
-		WaylandSocket:    str("WEBTOP_AGENT_WAYLAND_SOCKET", ""),
-		User:             str("WEBTOP_AGENT_USER", "user"),
-		PowerHookTimeout: dur("WEBTOP_POWER_HOOK_TIMEOUT", 60*time.Second),
-		IdleThreshold:    dur("WEBTOP_IDLE_REASON_THRESHOLD", 60*time.Second),
+		ControllerURL:     strings.TrimRight(str("WEBTOP_CONTROLLER_URL", ""), "/"),
+		TokenPath:         str("WEBTOP_TOKEN_PATH", "/run/webtop/sa/token"),
+		HTTPPort:          port,
+		StateDir:          str("WEBTOP_AGENT_STATE_DIR", "/run/webtop"),
+		WaylandSocket:     str("WEBTOP_AGENT_WAYLAND_SOCKET", ""),
+		User:              str("WEBTOP_AGENT_USER", "user"),
+		PowerHookTimeout:  dur("WEBTOP_POWER_HOOK_TIMEOUT", 60*time.Second),
+		IdleThreshold:     dur("WEBTOP_IDLE_REASON_THRESHOLD", 60*time.Second),
+		CompositorTimeout: dur("WEBTOP_COMPOSITOR_TIMEOUT", 3*time.Minute),
 	}
 }

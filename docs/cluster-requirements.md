@@ -61,3 +61,8 @@ first:
 ```sh
 kubectl apply -f charts/kube-webtop-workspaces/crds/
 ```
+
+## Trying the node setup
+
+`test/manual/` runs the desktop image as a single pod without the controller, to check these
+requirements on a node: see [its README](../test/manual/README.md).
