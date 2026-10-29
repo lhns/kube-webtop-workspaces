@@ -2,13 +2,14 @@
   description = "kube-webtop-workspaces desktop image: NixOS (systemd PID 1) with a browser-streamed Plasma desktop";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    # Pinned on purpose, do not bump: Plasma 6.7 renders without a GPU, 6.8 does not (README, "Plasma pin").
+    nixpkgs.url = "github:NixOS/nixpkgs/55bfb4d7437bd4e09ab7cba58a43bd68eb310044";
     nix2container = {
       url = "github:nlewo/nix2container";
       inputs.nixpkgs.follows = "nixpkgs";
     };
     webtop-nix = {
-      url = "github:lhns/webtop-nix";
+      url = "github:lhns/webtop-nix/1cebf166d4f30b10e7aef1dfc9decff72c837ea1";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
