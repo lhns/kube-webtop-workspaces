@@ -225,12 +225,15 @@ jobs:
       - name: patched KWin store path
         id: kwin
         run: |
-          # The nix daemon (root) may have created the cache directory already.
-          mkdir -p ~/kwin-cache
-          sudo chown -R "$USER" ~/kwin-cache
           out=$(nix eval --raw .#kwin.outPath)
           echo "out=$out" >> "$GITHUB_OUTPUT"
           echo "key=kwin-$(basename "$out" | cut -d- -f1)" >> "$GITHUB_OUTPUT"
+      # Evaluating may make the nix daemon (root) create files in the cache directory; start clean so
+      # the restore, which runs as the user, can write.
+      - name: empty cache directory
+        run: |
+          sudo rm -rf ~/kwin-cache
+          mkdir ~/kwin-cache
       - name: restore patched KWin
         id: kwin-cache
         uses: actions/cache/restore@v6

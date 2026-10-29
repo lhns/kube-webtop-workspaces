@@ -9,7 +9,7 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     webtop-nix = {
-      url = "github:lhns/webtop-nix/6451f9ce576b316ff286b147fdac9c55b6235a4b";
+      url = "github:lhns/webtop-nix/f04b8f30d7efb3f1928288cd6136f3309e3e4b24";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
