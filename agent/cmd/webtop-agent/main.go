@@ -119,6 +119,8 @@ func run(cfg config.Config) {
 		Sender: client,
 		Tick:   time.Second,
 		Retry:  3 * time.Second,
+
+		CompositorTimeout: cfg.CompositorTimeout,
 	}).Run(ctx)
 	if ctx.Err() != nil {
 		return
