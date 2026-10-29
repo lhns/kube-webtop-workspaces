@@ -70,6 +70,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      # Evaluating the system realises the stock Plasma closure (webtop-nix grafts the patched KWin in).
+      - name: free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
       - uses: cachix/install-nix-action@v31
       - name: nix flake check
         run: nix flake check -L
