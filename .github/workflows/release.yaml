@@ -186,8 +186,8 @@ jobs:
       - name: free disk space
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
 
-      # The cache below is a local binary cache of the patched KWin alone; its dependencies come from
-      # cache.nixos.org. Signatures are not checked: only this repo's workflows write that cache.
+      # The cache below is a local binary cache of the patched KWin closure (the rest of the build comes from
+      # cache.nixos.org). Signatures are not checked: only this repo's workflows write that cache.
       - uses: cachix/install-nix-action@v31
         with:
           extra_nix_config: |
@@ -238,13 +238,13 @@ jobs:
         run: |
           mkdir -p ~/kwin-cache
           nix build .#kwin -L --no-link
-      # --no-recursive: references are fetched from cache.nixos.org, the cache holds one path.
+      # The whole closure: a binary cache refuses a path whose references it lacks. zstd keeps it small.
       - name: save patched KWin
         if: steps.kwin-cache.outputs.cache-hit != 'true'
         # The daemon (root) created parts of the directory while substituting.
         run: |
           sudo chown -R "$USER" ~/kwin-cache
-          nix copy --no-recursive --to file://$HOME/kwin-cache "${{ steps.kwin.outputs.out }}"
+          nix copy --to "file://$HOME/kwin-cache?compression=zstd" "${{ steps.kwin.outputs.out }}"
       - uses: actions/cache/save@v6
         if: steps.kwin-cache.outputs.cache-hit != 'true'
         with:
