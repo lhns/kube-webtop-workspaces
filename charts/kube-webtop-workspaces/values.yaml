@@ -105,10 +105,10 @@ gateway:
   groupsSeparator: ","
   adminGroup: ""
   requiredGroup: ""
-  # SECURITY: the gateway trusts userHeader/groupsHeader from whoever connects. Set this to the
-  # CIDRs of your ingress controller / gateway pods: peers outside get 403 (defence in depth next
-  # to networkPolicy), and incoming X-Forwarded-* are kept only from them. Empty = any peer is
-  # trusted and the desktop sees X-Forwarded-Proto: http.
+  # SECURITY: the gateway trusts userHeader/groupsHeader from whoever connects; the NetworkPolicy
+  # is the gate. Optional extra: peers outside these CIDRs get 403 and incoming X-Forwarded-* are
+  # kept only from them. Adds nothing if the proxy shares the pod CIDR with desktop pods. Empty =
+  # any peer is trusted and the desktop sees X-Forwarded-Proto: http.
   trustedProxyCIDRs: []
   cookieSecure: true          # false only when serving plain HTTP
 

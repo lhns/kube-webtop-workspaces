@@ -243,7 +243,7 @@ Enabled when `ldap.url` is set; otherwise every user is authorized (`LDAPDisable
 - User: header `gateway.userHeader` (default `Remote-User`). Missing → 401.
 - Groups: header `gateway.groupsHeader` (default `Remote-Groups`), split on
   `gateway.groupsSeparator` (default `,`), trimmed.
-- `gateway.requiredGroup` (optional): users not in it get 403 and nothing is created.
+- `gateway.requiredGroup` (optional): users not in it get 403 and nothing is created. Admins skip it only for `/u/<other user>/`.
 - `gateway.adminGroup` (optional): may open any desktop.
 - `gateway.trustedProxyCIDRs` (optional): if set, requests whose remote address is outside get 403.
   The gateway does not use `X-Forwarded-For` to decide this.
@@ -456,7 +456,7 @@ gateway:
   groupsSeparator: ","
   adminGroup: ""
   requiredGroup: ""
-  trustedProxyCIDRs: []          # set to the ingress controller's CIDRs, else the desktop sees X-Forwarded-Proto: http
+  trustedProxyCIDRs: []          # optional; empty = any peer trusted, desktop sees X-Forwarded-Proto: http
   cookieSecure: true
 ```
 

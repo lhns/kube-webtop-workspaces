@@ -44,8 +44,9 @@ inside a user namespace, which needs the following.
   enforcement the policies are silently ignored and desktop pods can reach the gateway.
 - `networkPolicy.ingressController` must select your ingress controller or Gateway-API data plane.
 - The gateway trusts the `Remote-User` / `Remote-Groups` headers, so the proxy in front must
-  authenticate users, overwrite those headers and strip client-supplied copies. Set
-  `gateway.trustedProxyCIDRs` to the proxy's addresses as a second barrier.
+  authenticate users, overwrite those headers and strip client-supplied copies. The
+  NetworkPolicy is the gate; `gateway.trustedProxyCIDRs` adds nothing when the proxy shares the pod
+  CIDR with the desktops.
 - Desktop egress is `0.0.0.0/0` by default. List the pod, service and node CIDRs in
   `networkPolicy.desktopEgress.exceptCIDRs` so desktops cannot reach cluster internals (the API
   server, other nodes, cluster services). DNS and the controller power API stay allowed.
