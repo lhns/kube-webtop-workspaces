@@ -1,6 +1,6 @@
 # 0008 — The user's Nix store is a local-overlay store over the image's store
 
-- Status: Proposed (pending the feasibility test)
+- Status: Accepted (2026-10-29: the feasibility test passed; the image ran Plasma in a live pod with user namespaces, writable cgroups and the overlay store)
 - Date: 2026-10-28
 
 ## Context

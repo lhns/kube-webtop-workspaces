@@ -1,6 +1,6 @@
 # 0007 — NixOS image with systemd as PID 1 in a user-namespaced pod
 
-- Status: Proposed (pending the feasibility test)
+- Status: Accepted (2026-10-29: the feasibility test passed; the image ran Plasma in a live pod with user namespaces, writable cgroups and the overlay store)
 - Date: 2026-10-28
 
 ## Context

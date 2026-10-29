@@ -205,18 +205,32 @@ Env (plus `desktop.extraEnv`):
 | --- | --- |
 | `WEBTOP_CONTROLLER_URL` | `powerApi.url` (no trailing slash) |
 | `WEBTOP_TOKEN_PATH` | `/run/webtop/sa/token` |
-| `WEBTOP_DESKTOP` | desktop name |
-| `WEBTOP_USER` | original user ID |
-| `WEBTOP_NAMESPACE` | namespace |
+| `WEBTOP_DESKTOP` | desktop name (informational) |
+| `WEBTOP_USER` | original user ID (informational) |
+| `WEBTOP_NAMESPACE` | namespace (informational) |
 | `WEBTOP_HTTP_PORT` | `desktop.port` — the web client (Selkies) must listen here, plain HTTP |
 | `WEBTOP_PERSIST_PATH` | `storage.mountPath` |
+
+The image's `webtop-init` writes every `WEBTOP_*` variable to `/run/webtop/env`, since systemd units
+do not inherit the container env. The controller and agent do not read the three informational ones;
+they are there for desktop-side units and scripts.
+
+Optional agent overrides, never set by the controller (the defaults are what ships):
+
+| Variable | Default |
+| --- | --- |
+| `WEBTOP_POWER_HOOK_TIMEOUT` | `60s`: how long the power hook retries the request |
+| `WEBTOP_IDLE_REASON_THRESHOLD` | `60s`: input idleness at poweroff that counts as `idle` |
+| `WEBTOP_AGENT_STATE_DIR` | `/run/webtop` |
+| `WEBTOP_AGENT_WAYLAND_SOCKET` | unset: the agent finds it from the user manager's `WAYLAND_DISPLAY` |
+| `WEBTOP_AGENT_USER` | `user` |
 
 **Image obligations:**
 
 - Serve the web client on `WEBTOP_HTTP_PORT`, and work under a path prefix: load assets and open the
   websocket relative to the page URL. The gateway serves admins at `/u/<name>/` (section 7.3).
-- A poweroff from inside must end PID 1 with an exit code in `controller.cleanExitCodes`. Phase 0
-  confirms the actual code and the chart sets it.
+- A poweroff from inside must end PID 1 with an exit code in `controller.cleanExitCodes`. The default `[0]` is not yet confirmed against a real
+  container exit after a poweroff; set the list to the code the image actually exits with.
 - Re-read the token file on every request (kubelet rotates it).
 
 ## 6. LDAP
