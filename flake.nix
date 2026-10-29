@@ -9,8 +9,7 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     webtop-nix = {
-      # Unmerged webtop-nix PR #3 (container-fixes); back to the default branch once it is merged.
-      url = "github:lhns/webtop-nix/c2cfae3c8b7f0cb50e5516c8b1f1539a6a115d0b";
+      url = "github:lhns/webtop-nix/1cebf166d4f30b10e7aef1dfc9decff72c837ea1";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
