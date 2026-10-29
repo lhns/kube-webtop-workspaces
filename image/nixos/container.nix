@@ -58,6 +58,10 @@ in
     };
   };
 
+  # core_pattern is a host sysctl: dumps would land in the user's home and fill the PVC.
+  systemd.settings.Manager.DefaultLimitCORE = "0";
+  systemd.user.settings.Manager.DefaultLimitCORE = "0";
+
   # No virtual consoles in a container (they restart in a loop).
   systemd.services."getty@tty1".enable = false;
   systemd.services."autovt@".enable = false;
