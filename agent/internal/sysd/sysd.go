@@ -75,8 +75,8 @@ func (p *Probe) DesktopActive(ctx context.Context) bool {
 	return err == nil
 }
 
-// Compositing reports whether KWin's Compositing.active is true. It does not
-// require a compositing type: that is "qpainter" on Plasma 6.7 and OpenGL on 6.8.
+// Compositing reports whether KWin's Compositing.active is true. The type is
+// deliberately not checked: it is qpainter on Plasma 6.7 and OpenGL on 6.8.
 func (p *Probe) Compositing(ctx context.Context) bool {
 	out, err := p.User.Busctl(ctx, "get-property", "org.kde.KWin", "/Compositor", "org.kde.kwin.Compositing", "active")
 	return err == nil && parseBusctlBool(out)

@@ -22,8 +22,7 @@ type Probe interface {
 	System(ctx context.Context) (progress float64, multiUser bool, err error)
 	DesktopActive(ctx context.Context) bool
 	PortOpen(ctx context.Context) bool
-	// Compositing reports whether KWin is compositing (a KWin that cannot composite
-	// leaves a gray screen). Errors count as not compositing.
+	// Compositing reports whether KWin is compositing; errors count as no.
 	Compositing(ctx context.Context) bool
 }
 
@@ -36,7 +35,7 @@ const (
 	StageCompositor = "Starting compositor"
 	StageReady      = "Ready"
 
-	// StageCompositorStuck is reported when everything else is up but KWin still is not compositing.
+	// StageCompositorStuck: everything else is up but KWin is still not compositing.
 	StageCompositorStuck = "Compositor not active"
 )
 
@@ -117,8 +116,7 @@ func (b *Booter) Run(ctx context.Context) {
 		best = max(best, pct)
 		pct = best
 
-		// Visible parts are up but KWin is not compositing: after the timeout say so
-		// instead of showing "Starting compositor" forever. Keep polling; it may recover.
+		// After the timeout say why instead of "Starting compositor" forever; keep polling, it may recover.
 		stuck := false
 		if multiUser && plasma && port && !compositing {
 			if waitingSince.IsZero() {

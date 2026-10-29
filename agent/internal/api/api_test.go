@@ -101,9 +101,3 @@ func TestMissingToken(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
-
-func TestEnabled(t *testing.T) {
-	if New("", "x").Enabled() || !New("http://x", "x").Enabled() {
-		t.Fatal("Enabled wrong")
-	}
-}

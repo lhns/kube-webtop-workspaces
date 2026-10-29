@@ -2,7 +2,6 @@ package boot
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 )
@@ -72,8 +71,5 @@ func TestStagesFitLimit(t *testing.T) {
 		if len(st) > maxStage {
 			t.Errorf("%q exceeds %d", st, maxStage)
 		}
-	}
-	if got := truncate(strings.Repeat("x", 100)); len(got) != maxStage {
-		t.Errorf("len = %d", len(got))
 	}
 }

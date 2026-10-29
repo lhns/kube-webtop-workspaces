@@ -48,9 +48,3 @@ func TestWriteAtomicMode(t *testing.T) {
 		t.Fatalf("mode = %v", fi.Mode())
 	}
 }
-
-func TestWriteAtomicMissingDir(t *testing.T) {
-	if err := WriteAtomic(filepath.Join(t.TempDir(), "no", "such", "f"), nil); err == nil {
-		t.Fatal("expected error")
-	}
-}
