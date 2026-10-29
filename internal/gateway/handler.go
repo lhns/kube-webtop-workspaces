@@ -207,11 +207,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	groups := h.groups(r)
-	if g := h.cfg.RequiredGroup; g != "" && !groups[g] {
+	admin := h.cfg.AdminGroup != "" && groups[h.cfg.AdminGroup]
+	if g := h.cfg.RequiredGroup; g != "" && !groups[g] && !admin {
 		h.errorPage(w, http.StatusForbidden, "No access", "Your account is not allowed to use desktops.", outDenied)
 		return
 	}
-	admin := h.cfg.AdminGroup != "" && groups[h.cfg.AdminGroup]
 
 	rt, d, ok := h.resolve(w, r, user, admin)
 	if !ok {

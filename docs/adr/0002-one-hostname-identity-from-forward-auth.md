@@ -15,7 +15,8 @@ rules, and still need something in the path that knows whether a desktop is runn
 - The user and groups come from **headers set by the cluster's forward-auth** (names configurable).
   Members of a configurable admin group may open `/u/<user>/`.
 - The gateway trusts those headers only from the ingress controller: a NetworkPolicy admits nothing
-  else (desktop pods in particular), and `trustedProxyCIDRs` adds a second check.
+  else (desktop pods in particular). `trustedProxyCIDRs` is optional and only adds a check when the
+  proxy's addresses differ from the desktops' (see the 2026-10-29 amendment).
 
 ## Consequences
 
@@ -24,3 +25,8 @@ rules, and still need something in the path that knows whether a desktop is runn
   redundantly.
 - The NetworkPolicy is part of the security model: without it, anything reaching the gateway can
   claim to be any user.
+
+## Amendment 2026-10-29
+
+`trustedProxyCIDRs` is not a second barrier in typical clusters: the ingress pods share the pod CIDR
+with the desktops. The NetworkPolicy is the gate.

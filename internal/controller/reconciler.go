@@ -197,10 +197,8 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 			return reconcile.Result{}, err
 		}
 		depExists = false
-	} else if dep.Spec.Replicas != nil {
-		cur = *dep.Spec.Replicas
 	} else {
-		cur = 1
+		cur = replicasOf(dep)
 	}
 
 	// 7. Clean exit of a running desktop.
@@ -447,10 +445,7 @@ func (r *Reconciler) writeDeployment(ctx context.Context, d *v1alpha1.Desktop, d
 	}
 
 	applied := dep.Annotations[names.AnnotationTemplateHash]
-	var cur int32 = 1
-	if dep.Spec.Replicas != nil {
-		cur = *dep.Spec.Replicas
-	}
+	cur := replicasOf(dep)
 
 	if plan.WriteTemplate {
 		orig := dep.DeepCopy()
@@ -499,6 +494,14 @@ func (r *Reconciler) writeDeployment(ctx context.Context, d *v1alpha1.Desktop, d
 		}
 	}
 	return applied, nil
+}
+
+// replicasOf is the Deployment's replicas; unset means 1.
+func replicasOf(dep *appsv1.Deployment) int32 {
+	if dep.Spec.Replicas == nil {
+		return 1
+	}
+	return *dep.Spec.Replicas
 }
 
 func stampRestart(dep *appsv1.Deployment, d *v1alpha1.Desktop) {

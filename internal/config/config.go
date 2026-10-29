@@ -62,6 +62,7 @@ type LDAP struct {
 	UserFilter         string          `json:"userFilter"`
 	UserAttribute      string          `json:"userAttribute"`
 	GroupDN            string          `json:"groupDN"`
+	AdminGroupDN       string          `json:"adminGroupDN"`
 	Membership         string          `json:"membership"`
 	MemberAttribute    string          `json:"memberAttribute"`
 	SyncInterval       metav1.Duration `json:"syncInterval"`
@@ -77,6 +78,14 @@ const (
 )
 
 func (l LDAP) Enabled() bool { return l.URL != "" }
+
+// GroupDNs lists the groups whose members may use a desktop: the desktop group and, if set, the admin group.
+func (l LDAP) GroupDNs() []string {
+	if l.AdminGroupDN == "" {
+		return []string{l.GroupDN}
+	}
+	return []string{l.GroupDN, l.AdminGroupDN}
+}
 
 type Desktop struct {
 	Image                         string                        `json:"image"`

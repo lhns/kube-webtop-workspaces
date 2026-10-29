@@ -18,9 +18,10 @@ upgrades that change the CRD.
 ## Security notes
 
 - **The gateway trusts `Remote-User` / `Remote-Groups`.** Only the authenticating proxy may reach it.
-  `networkPolicy` (on by default) admits only `networkPolicy.ingressController`; additionally set
-  **`gateway.trustedProxyCIDRs`** to the proxy's pod/node CIDRs (recommended), so any other peer gets
-  403 even if the NetworkPolicy is not enforced by the CNI.
+  `networkPolicy` (on by default) admits only `networkPolicy.ingressController`; that is the real gate.
+  `gateway.trustedProxyCIDRs` (optional) also makes the gateway refuse other peers and keep their
+  `X-Forwarded-*` only from the proxy. It adds little when the proxy shares the pod CIDR with the
+  desktops; use it with a CIDR that excludes the desktop pods (e.g. node addresses).
 - Desktop egress defaults to `0.0.0.0/0`. Put your pod, service and node ranges in
   `networkPolicy.desktopEgress.exceptCIDRs`.
 - The LDAP bind password comes from an existing Secret (`ldap.bindSecret`); there is no literal value.
@@ -45,7 +46,7 @@ unknown keys. Defaults are in `values.yaml`.
 | `powerApi.addr` / `audience` | `:8082` / `kube-webtop-workspaces` | power/report API |
 | `powerApi.url` | `""` | URL the desktop agent uses; empty: the controller Service |
 | `ldap.url` | `""` | empty disables LDAP (everyone authorized) |
-| `ldap.baseDN`, `groupDN`, `bindDN`, `userFilter`, `userAttribute`, `membership`, `memberAttribute`, `syncInterval`, `timeout`, `errorPolicy`, `startTLS`, `insecureSkipVerify` | see values.yaml | LDAP sync |
+| `ldap.baseDN`, `groupDN`, `adminGroupDN`, `bindDN`, `userFilter`, `userAttribute`, `membership`, `memberAttribute`, `syncInterval`, `timeout`, `errorPolicy`, `startTLS`, `insecureSkipVerify` | see values.yaml | LDAP sync |
 | `ldap.bindSecret.name` / `key` | `""` / `password` | existing Secret with the bind password |
 | `ldap.caSecret.name` / `key` | `""` / `ca.crt` | existing Secret with a CA bundle |
 | `desktop.image` | `""` (required) | desktop image |
@@ -58,7 +59,7 @@ unknown keys. Defaults are in `values.yaml`.
 | `desktopServiceAccount.create` | `true` | shared desktop ServiceAccount (token automount off) |
 | `storage.storageClassName`, `size`, `accessModes`, `mountPath`, `labels`, `annotations` | cluster default, `50Gi`, `[ReadWriteOnce]`, `/persist` | per-user PVC |
 | `gateway.addr`, `userHeader`, `groupsHeader`, `groupsSeparator`, `adminGroup`, `requiredGroup`, `cookieSecure` | see values.yaml | gateway identity |
-| `gateway.trustedProxyCIDRs` | `[]` | **set this**; peers outside get 403 |
+| `gateway.trustedProxyCIDRs` | `[]` | optional; peers outside get 403 (the NetworkPolicy is the gate) |
 | `controllerPod.*`, `gatewayPod.*` | replicas `2`, PDB `minAvailable: 1` | resources, scheduling, labels, extraEnv, PDB; soft node anti-affinity when `affinity` is empty |
 | `gatewayService.type` / `port` / `annotations` | `ClusterIP` / `80` | |
 | `ingress.*` | disabled | `className`, `annotations`, `hosts`, `path`, `pathType`, `tls` |

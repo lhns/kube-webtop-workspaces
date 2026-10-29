@@ -35,9 +35,21 @@ type client struct{ cfg config.LDAP }
 // New returns a Directory backed by go-ldap. Each call opens its own connection.
 func New(cfg config.LDAP) Directory { return &client{cfg: cfg} }
 
+// inGroups matches an entry whose memberAttribute names any of the groups (memberOf mode).
+func inGroups(c config.LDAP) string {
+	var b strings.Builder
+	for _, g := range c.GroupDNs() {
+		fmt.Fprintf(&b, "(%s=%s)", c.MemberAttribute, goldap.EscapeFilter(g))
+	}
+	if len(c.GroupDNs()) == 1 {
+		return b.String()
+	}
+	return "(|" + b.String() + ")"
+}
+
 // MembersFilter is the search filter listing all members in memberOf mode.
 func MembersFilter(c config.LDAP) string {
-	return fmt.Sprintf("(&%s(%s=%s))", c.UserFilter, c.MemberAttribute, goldap.EscapeFilter(c.GroupDN))
+	return fmt.Sprintf("(&%s%s)", c.UserFilter, inGroups(c))
 }
 
 // UserFilter is the filter for one user entry.
@@ -47,8 +59,7 @@ func UserFilter(c config.LDAP, user string) string {
 
 // UserMemberFilter is the filter for one user in memberOf mode.
 func UserMemberFilter(c config.LDAP, user string) string {
-	return fmt.Sprintf("(&%s(%s=%s)(%s=%s))", c.UserFilter, c.UserAttribute, goldap.EscapeFilter(user),
-		c.MemberAttribute, goldap.EscapeFilter(c.GroupDN))
+	return fmt.Sprintf("(&%s(%s=%s)%s)", c.UserFilter, c.UserAttribute, goldap.EscapeFilter(user), inGroups(c))
 }
 
 // GroupHasMemberFilter is the base-scope filter on the group entry for one member DN (member mode).
@@ -173,9 +184,13 @@ func (c *client) Members(ctx context.Context) (map[string]struct{}, error) {
 
 // membersByGroup reads the group's member DNs and maps each to its user ID.
 func (c *client) membersByGroup(conn *goldap.Conn) (map[string]struct{}, error) {
-	groups, err := c.search(conn, c.cfg.GroupDN, goldap.ScopeBaseObject, "(objectClass=*)", c.cfg.MemberAttribute)
-	if err != nil {
-		return nil, err
+	var groups []*goldap.Entry
+	for _, dn := range c.cfg.GroupDNs() {
+		es, err := c.search(conn, dn, goldap.ScopeBaseObject, "(objectClass=*)", c.cfg.MemberAttribute)
+		if err != nil {
+			return nil, err
+		}
+		groups = append(groups, es...)
 	}
 	set := map[string]struct{}{}
 	for _, g := range groups {
@@ -235,12 +250,14 @@ func (c *client) IsMember(ctx context.Context, user string) (bool, error) {
 		if _, ok := c.userIDs([]*goldap.Entry{e})[user]; !ok {
 			continue
 		}
-		groups, err := c.search(conn, c.cfg.GroupDN, goldap.ScopeBaseObject, GroupHasMemberFilter(c.cfg, e.DN), "1.1")
-		if err != nil {
-			return false, err
-		}
-		if len(groups) > 0 {
-			return true, nil
+		for _, g := range c.cfg.GroupDNs() {
+			groups, err := c.search(conn, g, goldap.ScopeBaseObject, GroupHasMemberFilter(c.cfg, e.DN), "1.1")
+			if err != nil {
+				return false, err
+			}
+			if len(groups) > 0 {
+				return true, nil
+			}
 		}
 	}
 	return false, nil
