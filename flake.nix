@@ -2,9 +2,7 @@
   description = "kube-webtop-workspaces desktop image: NixOS (systemd PID 1) with a browser-streamed Plasma desktop";
 
   inputs = {
-    # Last nixos-unstable channel revision with Plasma 6.7 (KWin 6.7.5), so the binary cache covers it.
-    # KWin 6.8 dropped QPainter compositing from its nested-Wayland backend: without a GPU it cannot
-    # composite (gray screen). Move on once KWin renders without a GPU again. Pins the whole input: one Qt tree.
+    # Pinned on purpose, do not bump: Plasma 6.7 renders without a GPU, 6.8 does not (README, "Plasma pin").
     nixpkgs.url = "github:NixOS/nixpkgs/55bfb4d7437bd4e09ab7cba58a43bd68eb310044";
     nix2container = {
       url = "github:nlewo/nix2container";

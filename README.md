@@ -17,6 +17,8 @@ One Go binary (`cmd/kube-webtop-workspaces`), run as two Deployments:
   membership. It also serves the power/report API that the in-pod agent uses to report shutdowns,
   reboots, boot progress and session activity. PVCs are never deleted by the controller.
 
+Also:
+
 - **desktop image** (`ghcr.io/lhns/kube-webtop-workspaces-desktop`, below): NixOS with systemd as
   PID 1, the Plasma desktop from [webtop-nix](https://github.com/lhns/webtop-nix) and the in-pod
   agent.
@@ -89,9 +91,14 @@ client loads its assets and opens `api/websockets` relative to the page's direct
 prefix setting. Selkies' `SELKIES_SUBFOLDER` must stay empty: it would make the server expect the
 prefix the gateway has already stripped.
 
-**Selkies settings** (`image/nixos/desktop.nix`): plain HTTP; audio sink, cursor path and library wrapper come
-from webtop-nix. Clipboard, file transfer
-(to `~/Desktop`) and browser cursors are Selkies' defaults.
+**Selkies settings** (`image/nixos/desktop.nix`): plain HTTP; audio sink, cursor path and library
+wrapper come from webtop-nix. Clipboard, file transfer (to `~/Desktop`) and browser cursors are
+Selkies' defaults.
+
+**Plasma pin.** `flake.nix` pins the whole `nixpkgs` input (one Qt tree) to a nixos-unstable revision
+with Plasma/KWin 6.7.5. KWin 6.8 dropped QPainter (software) compositing from its nested Wayland
+backend, so without a GPU it shows a gray screen. The input is locked to a commit, so
+`nix flake update` cannot move it. Change the rev only once KWin composites without a GPU again.
 
 **Known limits**
 
