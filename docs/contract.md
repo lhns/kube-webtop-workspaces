@@ -225,8 +225,8 @@ Enabled when `ldap.url` is set; otherwise every user is authorized (`LDAPDisable
 
 - Membership modes (`ldap.membership`):
   - `memberOf` (default): members = entries under `ldap.baseDN` matching
-    `(&<userFilter>(<memberAttribute>=<groupDN>))`; `memberAttribute` defaults to `memberOf`.
-  - `member`: read `ldap.groupDN`'s `memberAttribute` (default `member`) DNs; each DN's
+    `(&<userFilter>(<memberAttribute>=<groupDN>))` (`adminGroupDN`, if set, is OR-ed in); `memberAttribute` defaults to `memberOf`.
+  - `member`: read `ldap.groupDN`'s (and `adminGroupDN`'s, if set) `memberAttribute` (default `member`) DNs; each DN's
     `userAttribute` is the user ID.
 - `userAttribute` (default `uid`) is the user ID compared with `spec.user` (case-sensitive).
 - Sync every `ldap.syncInterval` (default 5m), leader only: users not in the set get
@@ -243,7 +243,7 @@ Enabled when `ldap.url` is set; otherwise every user is authorized (`LDAPDisable
 - User: header `gateway.userHeader` (default `Remote-User`). Missing → 401.
 - Groups: header `gateway.groupsHeader` (default `Remote-Groups`), split on
   `gateway.groupsSeparator` (default `,`), trimmed.
-- `gateway.requiredGroup` (optional): users not in it get 403 and nothing is created. Admins skip it only for `/u/<other user>/`.
+- `gateway.requiredGroup` (optional): users not in it get 403 and nothing is created. Members of `adminGroup` pass it.
 - `gateway.adminGroup` (optional): may open any desktop.
 - `gateway.trustedProxyCIDRs` (optional): if set, requests whose remote address is outside get 403.
   The gateway does not use `X-Forwarded-For` to decide this.
@@ -412,6 +412,7 @@ ldap:
   userFilter: "(objectClass=person)"
   userAttribute: uid
   groupDN: ""
+  adminGroupDN: ""               # optional: its members are authorized too
   membership: memberOf            # memberOf | member
   memberAttribute: ""             # default memberOf / member by mode
   syncInterval: 5m

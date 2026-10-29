@@ -47,6 +47,8 @@ ldap:
   userFilter: "(objectClass=person)"
   userAttribute: uid
   groupDN: ""
+  # Optional second group whose members may also use a desktop (the gateway admin group).
+  adminGroupDN: ""
   membership: memberOf        # memberOf | member
   memberAttribute: ""         # default: memberOf / member by mode
   syncInterval: 5m

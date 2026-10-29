@@ -33,6 +33,17 @@ func TestFilters(t *testing.T) {
 	}
 }
 
+func TestFiltersAdminGroup(t *testing.T) {
+	c := cfg()
+	c.AdminGroupDN = "cn=admin,ou=groups,dc=example,dc=org"
+	if got, want := MembersFilter(c), "(&(objectClass=person)(|(memberOf=cn=webtop,ou=groups,dc=example,dc=org)(memberOf=cn=admin,ou=groups,dc=example,dc=org)))"; got != want {
+		t.Errorf("members: %s", got)
+	}
+	if got, want := UserMemberFilter(c, "alice"), "(&(objectClass=person)(uid=alice)(|(memberOf=cn=webtop,ou=groups,dc=example,dc=org)(memberOf=cn=admin,ou=groups,dc=example,dc=org)))"; got != want {
+		t.Errorf("user+member: %s", got)
+	}
+}
+
 func TestFiltersEscape(t *testing.T) {
 	c := cfg()
 	if got, want := UserFilter(c, "a)(uid=*"), `(&(objectClass=person)(uid=a\29\28uid=\2a))`; got != want {

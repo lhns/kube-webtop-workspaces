@@ -95,6 +95,7 @@
         "userFilter": {"type": "string"},
         "userAttribute": {"type": "string"},
         "groupDN": {"type": "string"},
+        "adminGroupDN": {"type": "string"},
         "membership": {"enum": ["memberOf", "member"]},
         "memberAttribute": {"type": "string"},
         "syncInterval": {"type": "string"},

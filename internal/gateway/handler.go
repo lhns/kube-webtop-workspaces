@@ -208,19 +208,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	groups := h.groups(r)
 	admin := h.cfg.AdminGroup != "" && groups[h.cfg.AdminGroup]
-	missingRequired := h.cfg.RequiredGroup != "" && !groups[h.cfg.RequiredGroup]
-	// Admins may open other users' desktops without requiredGroup; their own still needs it.
-	if missingRequired && !(admin && strings.HasPrefix(r.URL.EscapedPath(), "/u/")) {
+	if g := h.cfg.RequiredGroup; g != "" && !groups[g] && !admin {
 		h.errorPage(w, http.StatusForbidden, "No access", "Your account is not allowed to use desktops.", outDenied)
 		return
 	}
 
 	rt, d, ok := h.resolve(w, r, user, admin)
 	if !ok {
-		return
-	}
-	if missingRequired && d.Spec.User == user {
-		h.errorPage(w, http.StatusForbidden, "No access", "Your account is not allowed to use desktops.", outDenied)
 		return
 	}
 
