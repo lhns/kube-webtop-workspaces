@@ -20,8 +20,12 @@ case "$sys" in running|degraded) ok systemd_is_system_running "$sys";; *) bad sy
 findmnt /persist >/dev/null && ok persist_mounted "$(findmnt -n -o SOURCE,FSTYPE /persist)" || bad persist_mounted
 { findmnt /nix/store && findmnt /nix/var/nix; } >/dev/null && ok nix_overlay_mounted || bad nix_overlay_mounted
 
-# A Wayland (konsole) and an X11 (xmessage) client must both get a window; kwin lists them.
-uid=1000
+# A Wayland (konsole) and an X11 (konsole on xcb) client must both get a window; kwin lists them.
+# The session bus only talks to its own user, so the probe runs as "user" (uid 1000).
+G=$(mktemp /tmp/check-gui.XXXX); chmod 755 "$G"
+cat > "$G" <<'GUI'
+PATH=/run/current-system/sw/bin:$PATH
+uid=$(id -u)
 export XDG_RUNTIME_DIR=/run/user/$uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus
 D=$(mktemp -d /run/user/$uid/check.XXXX)
 cat > "$D/list.js" <<'JS'
@@ -30,18 +34,20 @@ for (var i = 0; i < ws.length; i++) { var w = ws[i]; if (w.normalWindow || w.dia
 JS
 env -u DISPLAY WAYLAND_DISPLAY=wayland-0 QT_QPA_PLATFORM=wayland timeout 25 konsole --separate -p tabtitle=CHECK-WAYLAND -e sleep 20 >"$D/k.log" 2>&1 &
 XA=$(ls /run/user/$uid/xauth_* 2>/dev/null | head -1)
-env -u WAYLAND_DISPLAY DISPLAY=:0 XAUTHORITY="$XA" timeout 25 xmessage -center "CHECK-X11" >"$D/x.log" 2>&1 &
+env -u WAYLAND_DISPLAY DISPLAY=:0 XAUTHORITY="$XA" QT_QPA_PLATFORM=xcb timeout 25 konsole --separate -p tabtitle=CHECK-X11 -e sleep 20 >"$D/x.log" 2>&1 &
 sleep 6
 id=$(qdbus org.kde.KWin /Scripting org.kde.kwin.Scripting.loadScript "$D/list.js" checklist)
 since=$(date '+%Y-%m-%d %H:%M:%S')
 qdbus org.kde.KWin /Scripting/Script$id org.kde.kwin.Script.run >/dev/null
 sleep 1
 qdbus org.kde.KWin /Scripting org.kde.kwin.Scripting.unloadScript checklist >/dev/null
-wins=$(journalctl --user --since "$since" --no-pager -o cat 2>/dev/null | grep CHECKWIN)
-echo "$wins" | sed 's/^/      /'
-echo "$wins" | grep -qi konsole && ok wayland_window || bad wayland_window
-echo "$wins" | grep -qi xmessage && ok x11_window || bad x11_window
+journalctl --user --since "$since" --no-pager -o cat 2>/dev/null | grep CHECKWIN
 pkill -f 'CHECK-'; rm -rf "$D"
+GUI
+wins=$(runuser -u user -- sh "$G"); rm -f "$G"
+echo "$wins" | sed 's/^/      /'
+echo "$wins" | grep -q CHECK-WAYLAND && ok wayland_window || bad wayland_window
+echo "$wins" | grep -q CHECK-X11 && ok x11_window || bad x11_window
 
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]
