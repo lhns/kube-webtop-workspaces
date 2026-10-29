@@ -225,6 +225,9 @@ jobs:
       - name: patched KWin store path
         id: kwin
         run: |
+          # The nix daemon (root) may have created the cache directory already.
+          mkdir -p ~/kwin-cache
+          sudo chown -R "$USER" ~/kwin-cache
           out=$(nix eval --raw .#kwin.outPath)
           echo "out=$out" >> "$GITHUB_OUTPUT"
           echo "key=kwin-$(basename "$out" | cut -d- -f1)" >> "$GITHUB_OUTPUT"
@@ -235,9 +238,7 @@ jobs:
           path: ~/kwin-cache
           key: ${{ steps.kwin.outputs.key }}
       - name: build patched KWin
-        run: |
-          mkdir -p ~/kwin-cache
-          nix build .#kwin -L --no-link
+        run: nix build .#kwin -L --no-link
       # The whole closure: a binary cache refuses a path whose references it lacks. zstd keeps it small.
       - name: save patched KWin
         if: steps.kwin-cache.outputs.cache-hit != 'true'
