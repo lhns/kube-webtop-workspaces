@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: webtop-test
+  # The desktop needs SYS_ADMIN and an unmasked /proc; PSA baseline/restricted reject it.
+  labels:
+    pod-security.kubernetes.io/enforce: privileged

@@ -1,0 +1,55 @@
+# One desktop pod without the controller. Keep the pod spec in step with PodTemplate in
+# internal/render/render.go.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: desktop-test
+  labels: {app: desktop-test}
+spec:
+  runtimeClassName: cgroup-writable  # the RuntimeClass from docs/cluster-requirements.md
+  hostUsers: false
+  automountServiceAccountToken: false
+  enableServiceLinks: false
+  terminationGracePeriodSeconds: 120
+  restartPolicy: Never
+  containers:
+    - name: desktop
+      image: desktop  # replaced by kustomization.yaml `images`
+      imagePullPolicy: IfNotPresent
+      ports: [{name: http, containerPort: 8080, protocol: TCP}]
+      env:
+        # No controller runs: power calls to this URL time out.
+        - {name: WEBTOP_CONTROLLER_URL, value: "http://webtop-controller.webtop-test.svc:8081"}
+        - {name: WEBTOP_TOKEN_PATH, value: /run/webtop/sa/token}
+        - {name: WEBTOP_DESKTOP, value: desktop-test}
+        - {name: WEBTOP_USER, value: tester}
+        - {name: WEBTOP_NAMESPACE, value: webtop-test}
+        - {name: WEBTOP_HTTP_PORT, value: "8080"}
+        - {name: WEBTOP_PERSIST_PATH, value: /persist}
+      readinessProbe:
+        tcpSocket: {port: 8080}
+        periodSeconds: 5
+      securityContext:
+        runAsUser: 0
+        runAsNonRoot: false
+        procMount: Unmasked
+        appArmorProfile: {type: Unconfined}
+        seccompProfile: {type: RuntimeDefault}
+        capabilities:
+          add: [SYS_ADMIN, SYS_NICE]
+      volumeMounts:
+        - {name: data, mountPath: /persist}
+        - {name: run, mountPath: /run}
+        - {name: shm, mountPath: /dev/shm}
+        - {name: webtop-sa, mountPath: /run/webtop/sa, readOnly: true}
+  volumes:
+    - name: data
+      persistentVolumeClaim: {claimName: desktop-test-persist}
+    - name: run
+      emptyDir: {medium: Memory, sizeLimit: 256Mi}
+    - name: shm
+      emptyDir: {medium: Memory, sizeLimit: 1Gi}
+    - name: webtop-sa
+      projected:
+        sources:
+          - serviceAccountToken: {path: token, audience: webtop-test, expirationSeconds: 3600}
