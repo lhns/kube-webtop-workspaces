@@ -5,7 +5,7 @@ import (
 	"errors"
 	"os/exec"
 	"os/user"
-	"path/filepath"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -35,9 +35,19 @@ func LookupUser(name string) User {
 
 // Systemctl runs `systemctl --user args...` as the user, bounded by a timeout.
 func (u User) Systemctl(ctx context.Context, args ...string) ([]byte, error) {
+	return u.run(ctx, "systemctl", args...)
+}
+
+// Busctl runs `busctl --user args...` as the user, bounded by a timeout. The user
+// bus is /run/user/<uid>/bus; running as the user avoids D-Bus auth as root.
+func (u User) Busctl(ctx context.Context, args ...string) ([]byte, error) {
+	return u.run(ctx, "busctl", args...)
+}
+
+func (u User) run(ctx context.Context, name string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, systemctlTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "systemctl", append([]string{"--user"}, args...)...)
+	cmd := exec.CommandContext(ctx, name, append([]string{"--user"}, args...)...)
 	cmd.Env = []string{
 		"XDG_RUNTIME_DIR=/run/user/" + strconv.FormatUint(uint64(u.UID), 10),
 		"PATH=/run/current-system/sw/bin:/usr/local/bin:/usr/bin:/bin",
@@ -53,12 +63,18 @@ func (u User) WaylandSocket(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	for _, line := range strings.Split(string(out), "\n") {
+	return waylandSocketFromEnv(string(out), u.UID)
+}
+
+// waylandSocketFromEnv extracts the socket path from `systemctl show-environment` output.
+func waylandSocketFromEnv(out string, uid uint32) (string, error) {
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
 		if v, ok := strings.CutPrefix(line, "WAYLAND_DISPLAY="); ok && v != "" {
-			if filepath.IsAbs(v) {
+			if path.IsAbs(v) {
 				return v, nil
 			}
-			return "/run/user/" + strconv.FormatUint(uint64(u.UID), 10) + "/" + v, nil
+			return "/run/user/" + strconv.FormatUint(uint64(uid), 10) + "/" + v, nil
 		}
 	}
 	return "", errors.New("WAYLAND_DISPLAY not in the user manager environment")

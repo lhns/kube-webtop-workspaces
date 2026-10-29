@@ -115,10 +115,11 @@ func run(cfg config.Config) {
 	go tracker.Watch(ctx, socket, 5*time.Second)
 
 	(&boot.Booter{
-		Probe:  &sysd.Probe{User: du, Port: cfg.HTTPPort},
-		Sender: client,
-		Tick:   time.Second,
-		Retry:  3 * time.Second,
+		Probe:             &sysd.Probe{User: du, Port: cfg.HTTPPort},
+		Sender:            client,
+		Tick:              time.Second,
+		Retry:             3 * time.Second,
+		CompositorTimeout: cfg.CompositorTimeout,
 	}).Run(ctx)
 	if ctx.Err() != nil {
 		return

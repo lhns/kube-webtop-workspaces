@@ -20,21 +20,24 @@ func TestCompute(t *testing.T) {
 	tests := []struct {
 		sys              float64
 		mu, plasma, port bool
+		comp             bool
 		stage            string
 		pct              int
 		ready            bool
 	}{
-		{0, false, false, false, StageSystem, 10, false},
-		{0.5, false, false, false, StageSystem, 30, false},
-		{1, false, false, false, StageSystem, 50, false},
-		{0.2, true, false, false, StagePlasma, 50, false},
-		{0.2, true, true, false, StageStreaming, 80, false},
-		{0.2, true, false, true, StagePlasma, 70, false},
-		{0.2, true, true, true, StageReady, 100, true},
-		{7, false, true, true, StageSystem, 99, false}, // clamped input
+		{0, false, false, false, false, StageSystem, 10, false},
+		{0.5, false, false, false, false, StageSystem, 30, false},
+		{1, false, false, false, false, StageSystem, 50, false},
+		{0.2, true, false, false, false, StagePlasma, 50, false},
+		{0.2, true, true, false, false, StageStreaming, 75, false},
+		{0.2, true, false, true, false, StagePlasma, 65, false},
+		{0.2, true, true, true, false, StageCompositor, 90, false},
+		{0.2, true, true, true, true, StageReady, 100, true},
+		{0.2, true, true, false, true, StageStreaming, 85, false},
+		{7, false, true, true, true, StageSystem, 99, false},
 	}
 	for _, tc := range tests {
-		stage, pct, ready := Compute(tc.sys, tc.mu, tc.plasma, tc.port)
+		stage, pct, ready := Compute(tc.sys, tc.mu, tc.plasma, tc.port, tc.comp)
 		if stage != tc.stage || pct != tc.pct || ready != tc.ready {
 			t.Errorf("%+v: got %q %d %v", tc, stage, pct, ready)
 		}
@@ -42,10 +45,10 @@ func TestCompute(t *testing.T) {
 }
 
 type fakeProbe struct {
-	mu                  sync.Mutex
-	sys                 float64
-	multiUser, dt, port bool
-	err                 error
+	mu                        sync.Mutex
+	sys                       float64
+	multiUser, dt, port, comp bool
+	err                       error
 }
 
 func (f *fakeProbe) set(fn func(*fakeProbe)) { f.mu.Lock(); fn(f); f.mu.Unlock() }
@@ -58,6 +61,11 @@ func (f *fakeProbe) DesktopActive(context.Context) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.dt
+}
+func (f *fakeProbe) Compositing(context.Context) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.comp
 }
 func (f *fakeProbe) PortOpen(context.Context) bool { f.mu.Lock(); defer f.mu.Unlock(); return f.port }
 
@@ -113,6 +121,7 @@ func TestBootMonotonicAndOrdered(t *testing.T) {
 	step(func(f *fakeProbe) { f.dt = true }, 4)
 	step(func(f *fakeProbe) { f.dt = false }, 4) // plasma flaps: progress held
 	step(func(f *fakeProbe) { f.dt, f.port = true, true }, 5)
+	step(func(f *fakeProbe) { f.comp = true }, 6)
 	<-done
 
 	got := s.snapshot()
@@ -127,7 +136,7 @@ func TestBootMonotonicAndOrdered(t *testing.T) {
 			stages = append(stages, r.Stage)
 		}
 	}
-	want := []string{StageSystem, StagePlasma, StageStreaming, StageReady}
+	want := []string{StageSystem, StagePlasma, StageStreaming, StageCompositor, StageReady}
 	if strings.Join(stages, "|") != strings.Join(want, "|") {
 		t.Fatalf("stages = %v", stages)
 	}
@@ -137,7 +146,7 @@ func TestBootMonotonicAndOrdered(t *testing.T) {
 }
 
 func TestBootProbeErrorStillReady(t *testing.T) {
-	p := &fakeProbe{err: context.DeadlineExceeded, dt: true, port: true}
+	p := &fakeProbe{err: context.DeadlineExceeded, dt: true, port: true, comp: true}
 	s := &fakeSender{}
 	(&Booter{Probe: p, Sender: s, Tick: time.Millisecond, Retry: time.Millisecond}).Run(context.Background())
 	if r := s.snapshot(); len(r) == 0 || r[len(r)-1].Ready == nil {
@@ -163,7 +172,7 @@ func TestReadyRetriedOn409(t *testing.T) {
 	tok := filepath.Join(t.TempDir(), "token")
 	os.WriteFile(tok, []byte("t"), 0o644)
 
-	p := &fakeProbe{multiUser: true, dt: true, port: true}
+	p := &fakeProbe{multiUser: true, dt: true, port: true, comp: true}
 	b := &Booter{Probe: p, Sender: api.New(srv.URL, tok), Tick: time.Millisecond, Retry: time.Millisecond}
 	b.Run(context.Background())
 	mu.Lock()

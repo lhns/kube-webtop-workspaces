@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/godbus/dbus/v5"
@@ -72,6 +73,19 @@ func property(ctx context.Context, o dbus.BusObject, iface, name string) (dbus.V
 func (p *Probe) DesktopActive(ctx context.Context) bool {
 	_, err := p.User.Systemctl(ctx, "is-active", "--quiet", "plasma-workspace.target")
 	return err == nil
+}
+
+// Compositing reports whether KWin's Compositing.active is true. The type is
+// deliberately not checked: it is qpainter on Plasma 6.7 and OpenGL on 6.8.
+func (p *Probe) Compositing(ctx context.Context) bool {
+	out, err := p.User.Busctl(ctx, "get-property", "org.kde.KWin", "/Compositor", "org.kde.kwin.Compositing", "active")
+	return err == nil && parseBusctlBool(out)
+}
+
+// parseBusctlBool parses busctl's `b true` output.
+func parseBusctlBool(out []byte) bool {
+	f := strings.Fields(string(out))
+	return len(f) == 2 && f[0] == "b" && f[1] == "true"
 }
 
 // PortOpen reports whether the streaming server accepts TCP connections.

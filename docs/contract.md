@@ -221,6 +221,7 @@ Optional agent overrides, never set by the controller (the defaults are what shi
 | --- | --- |
 | `WEBTOP_POWER_HOOK_TIMEOUT` | `60s`: how long the power hook retries the request |
 | `WEBTOP_IDLE_REASON_THRESHOLD` | `60s`: input idleness at poweroff that counts as `idle` |
+| `WEBTOP_COMPOSITOR_TIMEOUT` | `3m`: how long KWin may stay non-compositing, once the target and the web port are up, before the agent reports the stuck stage `Compositor not active` |
 | `WEBTOP_AGENT_STATE_DIR` | `/run/webtop` |
 | `WEBTOP_AGENT_WAYLAND_SOCKET` | unset: the agent finds it from the user manager's `WAYLAND_DISPLAY` |
 | `WEBTOP_AGENT_USER` | `user` |
@@ -382,6 +383,8 @@ Reports from a pod whose UID ≠ `status.podUID` → `409`, ignored; right after
 controller may not have recorded it yet, so the agent retries a 409 (every few seconds). `ready: true` sets `agentReady`.
 `stage`/`bootProgress` are only applied before ready. `stage` is free text for the boot page, at
 most 64 characters (longer → `400`); it never becomes a metric label value (section 11). Response `204`.
+
+**Readiness:** the agent reports `ready: true` only when `multi-user.target` and the user's `plasma-workspace.target` are active, the web port accepts connections, and KWin is compositing (D-Bus `org.kde.KWin` `/Compositor` `org.kde.kwin.Compositing.active` on the user bus; any compositing type counts). While KWin is not compositing the stage is `Starting compositor`; after `WEBTOP_COMPOSITOR_TIMEOUT` it becomes `Compositor not active` (the agent keeps polling and still turns ready if KWin recovers).
 
 **Agent cadence:** during boot on every stage change (≤ 1/s); after ready every 30 s, and
 immediately when `connectedClients` changes.
