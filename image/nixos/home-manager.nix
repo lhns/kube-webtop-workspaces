@@ -11,8 +11,12 @@ let
     inherit home;
     stateVersion = config.system.stateVersion;
   };
-  flakeFile = pkgs.replaceVars ../home-manager/flake.nix vars;
-  homeFile = pkgs.replaceVars ../home-manager/home.nix vars;
+  # toFile, not replaceVars: home.nix is also imported below, which needs a plain path (no IFD).
+  render = name: builtins.toFile name (lib.replaceStrings
+    (map (n: "@${n}@") (lib.attrNames vars)) (lib.attrValues vars)
+    (builtins.readFile ../home-manager/${name}));
+  flakeFile = render "flake.nix";
+  homeFile = render "home.nix";
   dir = "${home}/.config/home-manager";
   marker = "${home}/.local/state/webtop/home-manager-template";
 in

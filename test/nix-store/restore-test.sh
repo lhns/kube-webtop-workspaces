@@ -37,12 +37,13 @@ mk() {
     }"
 }
 
-# Image stores: hard-linked store, copied DB (sqlite writes in place).
+# Image stores, on tmpfs: copying or hard-linking from the container's own overlayfs is slow.
 L1=$(mk l1); L2=$(mk l2); L3=$(mk l3)
 nix copy --to file:///subst "$L2"
 for s in A B; do
+  mkdir -p /lower$s && mount -t tmpfs -o mode=755 tmpfs /lower$s
   mkdir -p /lower$s/nix/var/nix
-  cp -al /nix/store /lower$s/nix/store
+  cp -a /nix/store /lower$s/nix/store
   cp -a /nix/var/nix/db /lower$s/nix/var/nix/db
 done
 nix store delete --store local?root=/lowerA "$L3" >/dev/null

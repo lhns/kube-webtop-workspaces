@@ -1,9 +1,10 @@
+# shellcheck shell=bash
 # After an image update, copy the users' live store paths out of the store overlays webtop-init set
 # aside ($N/trash-*, newest first) into the new store (ADR 0008). Runs as root, against the daemon.
 # Paths the new image's store has are skipped; those only the old image's store had are substituted;
 # the rest is copied from the old upper. Roots it cannot restore are left to webtop-nix-reinstall.
 # Exit: 0 all restored, 1 some roots not restored, 2 skipped (no old overlay, or not enough space).
-set -uo pipefail
+set -euo pipefail # as writeShellApplication runs it
 
 N=${WEBTOP_NIX_PERSIST:-/persist/nix}
 HOMES=${WEBTOP_HOMES:-/home}
