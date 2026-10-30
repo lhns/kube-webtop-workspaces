@@ -1,0 +1,53 @@
+# home-manager for the desktop user: the image's copy resolves from the system registry, a starter
+# flake is created on first boot, and its generation is prebuilt into the image.
+{ config, lib, pkgs, nixpkgs, home-manager, ... }:
+
+let
+  cfg = config.services.webtop;
+  system = pkgs.stdenv.hostPlatform.system;
+  home = config.users.users.${cfg.user}.home;
+  vars = {
+    user = cfg.user;
+    inherit home;
+    stateVersion = config.system.stateVersion;
+  };
+  flakeFile = pkgs.replaceVars ../home-manager/flake.nix vars;
+  homeFile = pkgs.replaceVars ../home-manager/home.nix vars;
+  dir = "${home}/.config/home-manager";
+  marker = "${home}/.local/state/webtop/home-manager-template";
+in
+{
+  # CLI and modules from one source; the template's `home-manager` input resolves to it.
+  nix.registry.home-manager.flake = home-manager;
+  environment.systemPackages = [ home-manager.packages.${system}.home-manager ];
+
+  # So the first `home-manager switch` of the unchanged template builds nothing. Only helps while
+  # the template is unchanged.
+  system.extraDependencies = [
+    (home-manager.lib.homeManagerConfiguration {
+      pkgs = nixpkgs.legacyPackages.${system};
+      modules = [ homeFile ];
+    }).activationPackage
+  ];
+
+  # Once: the marker keeps the template from coming back after the user deletes it.
+  systemd.services.webtop-home-manager-template = {
+    description = "Create the starter home-manager flake";
+    wantedBy = [ "multi-user.target" ];
+    before = [ "webtop-session.service" ];
+    unitConfig.ConditionPathExists = [ "!${dir}" "!${marker}" ];
+    serviceConfig = {
+      Type = "oneshot";
+      User = cfg.user;
+      ExecStart = pkgs.writeShellScript "webtop-home-manager-template" ''
+        set -e
+        export PATH=${lib.makeBinPath [ pkgs.coreutils ]}
+        mkdir -p ${dir} ${builtins.dirOf marker}
+        cp ${flakeFile} ${dir}/flake.nix
+        cp ${homeFile} ${dir}/home.nix
+        chmod u+w ${dir}/flake.nix ${dir}/home.nix
+        touch ${marker}
+      '';
+    };
+  };
+}

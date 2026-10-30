@@ -8,13 +8,18 @@
       url = "github:nlewo/nix2container";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # The users' home-manager flakes resolve it from the system registry (image/nixos/home-manager.nix).
+    home-manager = {
+      url = "github:nix-community/home-manager";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     webtop-nix = {
       url = "github:lhns/webtop-nix/3f85b63c6bb5cba2baa4820e3b2a147bf6ff029b";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
 
-  outputs = { self, nixpkgs, nix2container, webtop-nix, ... }:
+  outputs = { self, nixpkgs, nix2container, home-manager, webtop-nix, ... }:
     let
       system = "x86_64-linux";
       pkgs = nixpkgs.legacyPackages.${system};
@@ -24,12 +29,13 @@
 
       nixos = nixpkgs.lib.nixosSystem {
         inherit system;
-        specialArgs = { inherit agent; };
+        specialArgs = { inherit agent nixpkgs home-manager; };
         modules = [
           webtop-nix.nixosModules.webtop
           ./image/nixos/container.nix
           ./image/nixos/desktop.nix
           ./image/nixos/hooks.nix
+          ./image/nixos/home-manager.nix
         ];
       };
       toplevel = nixos.config.system.build.toplevel;

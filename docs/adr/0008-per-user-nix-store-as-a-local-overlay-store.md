@@ -32,3 +32,9 @@ store at another path than `/nix/store` cannot use binary caches.
 
 Only the Nix daemon opens the overlay store; all clients, root included, go through it. The build
 sandbox is off, because `pivot_root` fails in the user-namespaced pod.
+
+## Amendment 2026-10-30
+
+An image update keeps the old overlay until the users' live paths (GC roots, profiles, home-manager
+generations) are copied into the new store after boot; paths only the old image had are substituted.
+Nothing runs at shutdown; the reinstall remains the fallback.
