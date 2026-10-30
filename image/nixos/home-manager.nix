@@ -20,6 +20,10 @@ let
   dir = "${home}/.config/home-manager";
   marker = "${home}/.local/state/webtop/home-manager-template";
   pinned = [ "nixpkgs" "home-manager" ];
+  template = home-manager.lib.homeManagerConfiguration {
+    pkgs = nixpkgs.legacyPackages.${system};
+    modules = [ homeFile ];
+  };
   upstream = lib.importJSON "${flake-registry}/flake-registry.json";
 in
 {
@@ -34,14 +38,9 @@ in
   });
   environment.systemPackages = [ home-manager.packages.${system}.home-manager ];
 
-  # So the first `home-manager switch` of the unchanged template builds nothing. Only helps while
-  # the template is unchanged.
-  system.extraDependencies = [
-    (home-manager.lib.homeManagerConfiguration {
-      pkgs = nixpkgs.legacyPackages.${system};
-      modules = [ homeFile ];
-    }).activationPackage
-  ];
+  # So `home-manager switch` of the unchanged template builds nothing: the generation and the news
+  # file it also builds.
+  system.extraDependencies = [ template.activationPackage template.config.news.json.output ];
 
   # Once: the marker keeps the template from coming back after the user deletes it.
   systemd.services.webtop-home-manager-template = {
