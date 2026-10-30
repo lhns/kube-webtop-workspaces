@@ -77,7 +77,7 @@ for d in "${olds[@]}"; do
   unset size
 done
 
-avail_kib=$(df -Pk "$N" | awk 'NR == 2 { print $4 }')
+avail_kib=$(df -k --output=avail "$N" | tail -n 1)
 if [ "$((need_kib + RESERVE_KIB))" -gt "$avail_kib" ]; then
   log "not enough space: need ${need_kib} KiB + ${RESERVE_KIB} KiB reserve, ${avail_kib} KiB free"
   exit 2

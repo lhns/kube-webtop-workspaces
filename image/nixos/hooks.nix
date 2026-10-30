@@ -25,7 +25,7 @@ let
 
   restore = pkgs.writeShellApplication {
     name = "webtop-nix-restore";
-    runtimeInputs = with pkgs; [ coreutils findutils gnugrep gawk config.nix.package ];
+    runtimeInputs = with pkgs; [ coreutils findutils gnugrep config.nix.package ];
     text = builtins.readFile ../webtop-nix-restore.sh;
   };
 

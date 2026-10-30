@@ -12,11 +12,12 @@ for f in /root/.nix-profile/bin/*; do
   case ":$bins:" in *":$d:"*) ;; *) bins="$bins:$d" ;; esac
 done
 # The profile's links break once /nix/var/nix is rebound; use the store paths directly.
-export PATH="${bins#:}:$(echo /nix/store/*-util-linux-minimal-*-bin/bin):$(echo /nix/store/*-util-linux-minimal-*-mount/bin):$(echo /nix/store/*-busybox-*/bin)"
+export PATH="${bins#:}:$(echo /nix/store/*-util-linux-minimal-*-bin/bin):$(echo /nix/store/*-util-linux-minimal-*-mount/bin)"
 umask 022
 export NIX_CONFIG="experimental-features = nix-command local-overlay-store read-only-local-store
 sandbox = false
 substituters =
+require-sigs = false
 max-jobs = 1"
 
 RESTORE=/src/image/webtop-nix-restore.sh
@@ -41,13 +42,14 @@ mk() {
 L1=$(mk l1); L2=$(mk l2); L3=$(mk l3)
 nix copy --to file:///subst "$L2"
 for s in A B; do
+  mountpoint -q /lower$s && continue # rerun in the same container
   mkdir -p /lower$s && mount -t tmpfs -o mode=755 tmpfs /lower$s
   mkdir -p /lower$s/nix/var/nix
   cp -a /nix/store /lower$s/nix/store
   cp -a /nix/var/nix/db /lower$s/nix/var/nix/db
+  if [ $s = A ]; then gone=$L3; else gone=$L2; fi
+  nix store delete --store "local?root=/lower$s" "$gone" >/dev/null
 done
-nix store delete --store local?root=/lowerA "$L3" >/dev/null
-nix store delete --store local?root=/lowerB "$L2" >/dev/null
 
 # boot <A|B> <cmd...>: one pod boot: overlay /nix/store, /nix/var/nix on the volume, a daemon.
 cat > /boot.sh <<'EOF'
@@ -105,8 +107,7 @@ echo "== 1: update, l2 substitutable"
 fresh_volume
 update 1000000001
 restore "NIX_CONFIG=\"\$NIX_CONFIG
-substituters = file:///subst
-require-sigs = false\" bash $RESTORE; echo rc=\$? > /rc
+substituters = file:///subst\" bash $RESTORE; echo rc=\$? > /rc
   cat $H/.local/state/nix/profiles/profile/f > /out1; cat $H/proj/result/f > /out2
   nix-store --check-validity $Ua $Ub $Uc $L2 && echo valid > /out3
   nix store gc >/dev/null 2>&1; nix-store --check-validity $Ua $Uc && echo rooted > /out5" || true
@@ -138,8 +139,7 @@ update 1000000001
 boot B true
 update 1000000002
 restore "NIX_CONFIG=\"\$NIX_CONFIG
-substituters = file:///subst
-require-sigs = false\" bash $RESTORE; echo rc=\$? > /rc; cat $H/.local/state/nix/profiles/profile/f > /out1" || true
+substituters = file:///subst\" bash $RESTORE; echo rc=\$? > /rc; cat $H/.local/state/nix/profiles/profile/f > /out1" || true
 [ "$(cat /rc)" = rc=0 ] || die "restore exit: $(cat /rc)"; ok "restore exits 0"
 grep -q "^ua " /out1 || die "profile content"; ok "restored from the older overlay"
 
