@@ -1,6 +1,6 @@
 {
   inputs = {
-    # The image's nixpkgs through the system registry: no download, relocked automatically after an image update.
+    # nixpkgs and home-manager are the image's (its flake registry): no download; relocked after image updates.
     nixpkgs.url = "nixpkgs";
     home-manager = {
       url = "home-manager";

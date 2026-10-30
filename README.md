@@ -69,8 +69,9 @@ locally without a flake reference are lost only if they cannot be restored.
 
 **home-manager.** On first boot, only if `~/.config/home-manager` is absent (and once), a starter
 flake is created there (`image/home-manager/`). Its `nixpkgs` and `home-manager` inputs come from the
-image through the system registry (no download), and the template's generation is prebuilt into the
-image. Edit `home.nix` and run `home-manager switch`. Building a changed config may substitute build
+image (no download): flake inputs resolve indirect refs through the global registry only, so the image
+sets `flake-registry` to the upstream registry with its own `nixpkgs` and `home-manager` pins in front.
+The template's generation is prebuilt into the image. Edit `home.nix` and run `home-manager switch`. Building a changed config may substitute build
 tools from cache.nixos.org. A flake in a git repo ignores untracked files (`git add` them). After an
 image update the template's image-registry inputs are relocked automatically.
 

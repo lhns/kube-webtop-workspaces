@@ -13,13 +13,18 @@
       url = "github:nix-community/home-manager";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # Upstream global flake registry, baked in with the image's own pins (image/nixos/home-manager.nix).
+    flake-registry = {
+      url = "github:NixOS/flake-registry";
+      flake = false;
+    };
     webtop-nix = {
       url = "github:lhns/webtop-nix/3f85b63c6bb5cba2baa4820e3b2a147bf6ff029b";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
 
-  outputs = { self, nixpkgs, nix2container, home-manager, webtop-nix, ... }:
+  outputs = { self, nixpkgs, nix2container, home-manager, flake-registry, webtop-nix, ... }:
     let
       system = "x86_64-linux";
       pkgs = nixpkgs.legacyPackages.${system};
@@ -29,7 +34,7 @@
 
       nixos = nixpkgs.lib.nixosSystem {
         inherit system;
-        specialArgs = { inherit agent nixpkgs home-manager; };
+        specialArgs = { inherit agent nixpkgs home-manager flake-registry; };
         modules = [
           webtop-nix.nixosModules.webtop
           ./image/nixos/container.nix

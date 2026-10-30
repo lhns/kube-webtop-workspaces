@@ -1,5 +1,21 @@
 {
   "nodes": {
+    "flake-registry": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1789428769,
+        "narHash": "sha256-qhIiRTjzwr65WpepkXWGmA4Wwl/PD/gfr3mQqeYORBY=",
+        "owner": "NixOS",
+        "repo": "flake-registry",
+        "rev": "46ea0f17cf6777e156a2be6ae802d9f95d93dd5e",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "repo": "flake-registry",
+        "type": "github"
+      }
+    },
     "home-manager": {
       "inputs": {
         "nixpkgs": [
@@ -58,6 +74,7 @@
     },
     "root": {
       "inputs": {
+        "flake-registry": "flake-registry",
         "home-manager": "home-manager",
         "nix2container": "nix2container",
         "nixpkgs": "nixpkgs",

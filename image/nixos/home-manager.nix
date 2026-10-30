@@ -1,6 +1,6 @@
-# home-manager for the desktop user: the image's copy resolves from the system registry, a starter
-# flake is created on first boot, and its generation is prebuilt into the image.
-{ config, lib, pkgs, nixpkgs, home-manager, ... }:
+# home-manager for the desktop user: the image's copy resolves from the registry, a starter flake is
+# created on first boot, and its generation is prebuilt into the image.
+{ config, lib, pkgs, nixpkgs, home-manager, flake-registry, ... }:
 
 let
   cfg = config.services.webtop;
@@ -19,10 +19,19 @@ let
   homeFile = render "home.nix";
   dir = "${home}/.config/home-manager";
   marker = "${home}/.local/state/webtop/home-manager-template";
+  pinned = [ "nixpkgs" "home-manager" ];
+  upstream = lib.importJSON "${flake-registry}/flake-registry.json";
 in
 {
   # CLI and modules from one source; the template's `home-manager` input resolves to it.
   nix.registry.home-manager.flake = home-manager;
+  # Flake inputs resolve indirect refs through the global registry only, not nix.registry, so the
+  # image's pins replace the upstream global registry's entries for them (offline, no download).
+  nix.settings.flake-registry = pkgs.writeText "flake-registry.json" (builtins.toJSON {
+    version = 2;
+    flakes = map (id: { from = { type = "indirect"; inherit id; }; to = config.nix.registry.${id}.to; }) pinned
+      ++ lib.filter (e: !lib.elem e.from.id pinned) upstream.flakes;
+  });
   environment.systemPackages = [ home-manager.packages.${system}.home-manager ];
 
   # So the first `home-manager switch` of the unchanged template builds nothing. Only helps while
