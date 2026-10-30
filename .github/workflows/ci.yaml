@@ -233,7 +233,7 @@ jobs:
   controller-image:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    needs: [meta, unit, agent, integration, trivy-fs, helm] # TEMP
+    needs: [meta, unit, agent, integration, trivy-fs, helm, nixpkgs-sync]
     permissions:
       contents: read
       packages: write
@@ -313,7 +313,7 @@ jobs:
   desktop-image:
     runs-on: ubuntu-latest
     timeout-minutes: 90
-    needs: [meta, unit, agent, integration, trivy-fs, helm] # TEMP
+    needs: [meta, unit, agent, integration, trivy-fs, helm, nixpkgs-sync]
     permissions:
       contents: read
       packages: write

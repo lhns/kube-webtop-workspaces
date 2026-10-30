@@ -35,14 +35,14 @@ while :; do
     echo "::error::the container exited during boot"; exit 1
   fi
   if grep -q '"ready":true' "$reports"; then
-    echo "agent reported Ready after $SECONDS s"; break
+    echo "agent reported Ready after $SECONDS s; reports received:"; sed 's/^/  /' "$reports"; break
   fi
   stage=$(tail -n1 "$reports" | sed 's/^[^ ]* //')
   [ "$stage" = "$last" ] || { echo "[$SECONDS s] $stage"; last=$stage; }
   if [ $SECONDS -ge $deadline ]; then
     echo "::error::the agent did not report Ready within ${timeout}s (last: ${last:-nothing})"; exit 1
   fi
-  sleep 5
+  sleep 2
 done
 
 # The agent's own probes, once more and independently.
@@ -52,4 +52,6 @@ in_session systemctl --user is-active --quiet plasma-workspace.target \
   || { echo "::error::plasma-workspace.target is not active"; exit 1; }
 code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/ || true)
 case $code in 2??|3??|401) echo "Selkies answers HTTP $code" ;; *) echo "::error::Selkies port answers HTTP $code"; exit 1 ;; esac
+echo "systemd: $(docker exec desktop-boot systemctl is-system-running || true)"
+in_session sh -c 'ps -u user -o args= | grep "[k]win_wayland"' | cut -c1-160 || true
 echo "boot test passed"
