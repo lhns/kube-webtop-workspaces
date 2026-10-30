@@ -37,7 +37,9 @@ Built from `flake.nix` with nix2container: `nix build .#image`, then
 | `image/webtop-init` | entrypoint (static busybox): mounts, then `exec /sbin/init` |
 | `image/nixos/container.nix` | NixOS as a container, Nix store settings, journal relay |
 | `image/nixos/desktop.nix` | `services.webtop` (webtop-nix) wired to the pod contract |
-| `image/nixos/hooks.nix` | agent units: power hook, session save, suspend, image-update reinstall |
+| `image/nixos/hooks.nix` | agent units: power hook, session save, suspend, image-update restore and reinstall |
+| `image/nixos/home-manager.nix` | home-manager from the image (registry, CLI), starter flake unit, prebuilt generation |
+| `image/webtop-nix-restore.sh` | copies the users' paths from the old store overlay into the new one |
 | `agent/` | in-pod agent (Go, its own module; packaged by `image/agent.nix`) |
 
 **Entrypoint.** `webtop-init` makes `/` rprivate, binds the image's `/nix` read-only at
@@ -54,11 +56,24 @@ the image's store (with its own DB) and whose upper and DB are on the volume; cl
 use the daemon. The user's packages (`nix profile`, home-manager) cost only what they add.
 An image update changes the lower store, which the overlay store forbids: webtop-init compares
 `/webtop-image-stamp` (a hash of the image's store paths) with `/persist/nix/lower-stamp`, and on a
-change records each user's profile manifest, moves the old upper/DB aside and starts fresh.
-`webtop-nix-reinstall.service` then reinstalls the recorded flake packages (by locked URL) and runs
-`home-manager switch --flake ~/.config/home-manager` if that flake exists, with a desktop
-notification; `webtop-nix-trash.service` deletes the old upper. Paths built locally and installed
-without a flake reference are lost on an image update.
+change records each user's profile manifest, moves the old upper/DB to `/persist/nix/trash-*`, starts
+fresh and keeps the old GC roots. After boot, in the background (no shutdown step),
+`webtop-nix-restore.service` (`image/webtop-nix-restore.sh`) copies the users' live paths (profiles,
+home-manager generations, GC roots) from the kept overlay into the new store; paths only the old image
+had are substituted. It skips when there is no room (free space after the copy must stay above a
+reserve). Only then `webtop-nix-trash.service` deletes the old overlay, and
+`webtop-nix-reinstall.service` runs for what did not come back (roots that depend on image-only paths
+such as the patched KWin, or no network): it reinstalls the recorded flake packages (by locked URL) and
+runs `home-manager switch --flake ~/.config/home-manager`, with desktop notifications. Packages built
+locally without a flake reference are lost only if they cannot be restored.
+
+**home-manager.** On first boot, only if `~/.config/home-manager` is absent (and once), a starter
+flake is created there (`image/home-manager/`). Its `nixpkgs` and `home-manager` inputs come from the
+image (no download): flake inputs resolve indirect refs through the global registry only, so the image
+sets `flake-registry` to the upstream registry with its own `nixpkgs` and `home-manager` pins in front.
+The template's generation is prebuilt into the image. Edit `home.nix` and run `home-manager switch`. Building a changed config may substitute build
+tools from cache.nixos.org. A flake in a git repo ignores untracked files (`git add` them). After an
+image update the template's image-registry inputs are relocked automatically.
 
 **Power.** The agent reports stops to the controller before PID 1 exits (contract section 8.2):
 
@@ -119,6 +134,7 @@ the `desktop-image` job caches it (`packages.x86_64-linux.kwin`, keyed by its st
 make generate   # deepcopy, CRD (config/crd), RBAC (config/rbac)
 make build vet
 make test       # unit + envtest; setup-envtest downloads kube-apiserver/etcd
+test/nix-store/run.sh  # image-update store restore against real overlay stores (privileged docker)
 ```
 
 envtest has no Windows binaries. On Windows, run the tests in a Linux container:

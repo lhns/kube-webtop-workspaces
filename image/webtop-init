@@ -2,9 +2,12 @@
 # Container entrypoint (static busybox): per-user overlay /nix/store and /home on the volume, then
 # exec systemd. Layout under /persist:
 #   nix/upper, nix/work   overlay upper/work of /nix/store (lower: the image's store)
-#   nix/var               /nix/var/nix of the overlay store (its DB holds only upper paths)
+#   nix/var               /nix/var/nix of the overlay store (its DB holds the upper paths and the
+#                         lower paths they reference)
 #   nix/lower-stamp       stamp of the lower store the upper was built against
-#   nix/reinstall/        what to reinstall after an image update (webtop-nix-reinstall.service)
+#   nix/reinstall/        after an image update: manifests, and the `pending` / `restore` markers
+#   nix/trash-*/          the previous overlay, kept until webtop-nix-restore.service has copied the
+#                         users' paths out of it (webtop-nix-trash.service deletes it)
 #   home                  /home
 # WEBTOP_INIT_DEBUG=1        a failing step parks the container (shell / sleep) instead of exiting.
 # WEBTOP_INIT_SKIP_OVERLAY=1 skips the store overlay (boots on the image's store alone).
@@ -76,9 +79,9 @@ profile_target() {
 }
 
 # The overlay store forbids a changed lower store. When the image's store differs from the one the
-# upper was built on: record each user's Nix profile manifest, move upper/work/var aside (deleted
-# after boot by webtop-nix-trash.service) and start on a fresh upper; webtop-nix-reinstall.service
-# reinstalls from the records.
+# upper was built on: record each user's Nix profile manifest (fallback), move upper/work/var to
+# trash-<epoch> and start on a fresh upper. webtop-nix-restore.service copies the users' paths back
+# from the trash; webtop-nix-reinstall.service reinstalls what did not come back.
 check_stamp() {
   new=$(cat "$STAMP_FILE") || return 1
   old=$(cat "$N/lower-stamp" 2>/dev/null)
@@ -103,21 +106,25 @@ check_stamp() {
         fi
       done
     fi
-    # Its generations point into the old upper, and nix cannot extend a dangling profile.
-    mkdir -p "$r/old-profiles-$ts" && mv "$home/.local/state/nix/profiles" "$r/old-profiles-$ts/$u" || return 1
-    rm -f "$home/.nix-profile"
   done
-  touch "$r/pending"
   mkdir -p "$N/trash-$ts" || return 1
   for d in upper work var; do
     if [ -e "$N/$d" ]; then mv "$N/$d" "$N/trash-$ts/$d" || return 1; fi
   done
+  # The users' profile links dangle until the restore; their GC roots come back at once so the
+  # restored paths are never collectable.
+  mkdir -p "$N/var" || return 1
+  for d in gcroots profiles; do
+    if [ -d "$N/trash-$ts/var/$d" ]; then cp -a "$N/trash-$ts/var/$d" "$N/var/$d" || return 1; fi
+  done
+  touch "$r/pending" "$r/restore"
   echo "$new" > "$N/lower-stamp"
 }
 
 prepare_persist() {
   # The upper DB is NOT seeded from the image: the overlay store reads lower paths from the lower
-  # store's own DB (/.lower/nix/var/nix/db) and keeps only upper-added paths in this one.
+  # store's own DB (/.lower/nix/var/nix/db). This one holds the upper paths and the lower paths
+  # they reference.
   mkdir -p "$N/upper" "$N/work" "$N/var" "$P/home"
 }
 

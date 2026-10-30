@@ -1,6 +1,6 @@
 # The in-pod agent (agent/) and the units that tie the desktop's power actions, boot progress and
 # activity to the controller's power/report API (docs/contract.md, section 8).
-{ config, lib, pkgs, agent, ... }:
+{ config, lib, pkgs, agent, home-manager, ... }:
 
 let
   cfg = config.services.webtop;
@@ -9,41 +9,111 @@ let
   envFile = "-/run/webtop/env";
   userBus = "unix:path=/run/user/${uid}/bus";
 
+  hmPackage = home-manager.packages.${pkgs.stdenv.hostPlatform.system}.home-manager;
+
+  # Best effort and in the background: Plasma's notification server may not be up yet, and a call
+  # to an unowned name can hang until the D-Bus timeout. $NOTIFY_PREFIX runs it as the user (root).
+  notifyFn = ''
+    notify() {
+      (for _ in $(seq 1 12); do
+        # shellcheck disable=SC2086
+        timeout 5 ''${NOTIFY_PREFIX:-} notify-send -a "Desktop" -i system-software-update "$1" "$2" 2>/dev/null && exit
+        sleep 5
+      done) &
+    }
+  '';
+
+  restore = pkgs.writeShellApplication {
+    name = "webtop-nix-restore";
+    runtimeInputs = with pkgs; [ coreutils findutils gnugrep config.nix.package ];
+    text = builtins.readFile ../webtop-nix-restore.sh;
+  };
+
+  # Root. Any restore exit code is fine: what did not come back is left to the reinstall.
+  restoreUnit = pkgs.writeShellApplication {
+    name = "webtop-nix-restore-unit";
+    runtimeInputs = with pkgs; [ coreutils util-linux libnotify systemd restore ];
+    text = ''
+      export NOTIFY_PREFIX="runuser -u ${cfg.user} -- env DBUS_SESSION_BUS_ADDRESS=${userBus}"
+      ${notifyFn}
+      notify "Desktop image updated" "Restoring your Nix packages in the background."
+      webtop-nix-restore || echo "webtop-nix-restore exit $?"
+      # Not reached when the unit is stopped: the marker stays and the restore resumes next boot.
+      rm -f /persist/nix/reinstall/restore
+      systemctl start --no-block webtop-nix-trash.service webtop-nix-reinstall.service
+      wait
+    '';
+  };
+
   reinstall = pkgs.writeShellApplication {
     name = "webtop-nix-reinstall";
-    runtimeInputs = with pkgs; [ coreutils gnused jq config.nix.package home-manager libnotify git ];
+    runtimeInputs = with pkgs; [ coreutils gnused jq config.nix.package hmPackage libnotify git ];
     text = ''
       r=/persist/nix/reinstall
       export DBUS_SESSION_BUS_ADDRESS=${userBus}
-      # Best effort and in the background: Plasma's notification server may not be up yet, and a
-      # call to an unowned name can hang until the D-Bus timeout.
-      notify() {
-        (for _ in $(seq 1 12); do
-          timeout 5 notify-send -a "Desktop" -i system-software-update "$1" "$2" 2>/dev/null && exit
-          sleep 5
-        done) &
-      }
-      notify "Desktop image updated" "Reinstalling your Nix packages in the background."
+      ${notifyFn}
       failed=0
-      manifest="$r/$USER.manifest.json"
-      if [ -f "$manifest" ]; then
-        # Manifest v2 has an array of elements, v3 a map. Installed by locked URL: same versions.
-        refs=$(jq -r '.elements | to_entries[] | .value | select(.url != null and .attrPath != null)
-                      | "\(.url)#\(.attrPath)"' "$manifest")
-        for ref in $refs; do
-          echo "reinstalling $ref"
-          nix profile install "$ref" || { echo "failed: $ref"; failed=1; }
+      profiles="$HOME/.local/state/nix/profiles"
+      old="$profiles.old-$(date +%s)"
+      # Dangling links (their generations were not restored) are moved aside: nix cannot extend them.
+      aside() {
+        mkdir -p "$old"
+        for l in "$@"; do
+          if [ -L "$l" ]; then mv "$l" "$old/"; fi
         done
-        jq -r '.elements | to_entries[] | .value | select(.url == null) | .storePaths[]?' "$manifest" \
-          | sed 's/^/not reinstallable (no flake reference): /'
+      }
+
+      p="$profiles/profile"
+      manifest="$r/$USER.manifest.json"
+      if [ -L "$p" ] && [ -e "$p" ]; then
+        echo "nix profile restored"
+      else
+        if [ -L "$p" ]; then
+          aside "$p" "$profiles"/profile-*-link
+        fi
+        if [ -L "$HOME/.nix-profile" ] && [ ! -e "$HOME/.nix-profile" ]; then rm -f "$HOME/.nix-profile"; fi
+        if [ -f "$manifest" ]; then
+          # Manifest v2 has an array of elements, v3 a map. Installed by locked URL: same versions.
+          refs=$(jq -r '.elements | to_entries[] | .value | select(.url != null and .attrPath != null)
+                        | "\(.url)#\(.attrPath)"' "$manifest")
+          for ref in $refs; do
+            echo "reinstalling $ref"
+            nix profile install "$ref" || { echo "failed: $ref"; failed=1; }
+          done
+          jq -r '.elements | to_entries[] | .value | select(.url == null) | .storePaths[]?' "$manifest" \
+            | sed 's/^/not reinstallable (no flake reference): /'
+        fi
       fi
+
       hm="$HOME/.config/home-manager"
       if [ -f "$hm/flake.nix" ]; then
-        echo "home-manager switch --flake $hm"
-        home-manager switch --flake "$hm" || failed=1
+        # Root inputs resolved through the image's registry are locked to the old image's store
+        # paths; relock those that are gone.
+        stale=()
+        if [ -f "$hm/flake.lock" ]; then
+          while IFS=$'\t' read -r name path; do
+            if [ ! -e "$path" ]; then stale+=("$name"); fi
+          done < <(jq -r '. as $l | .nodes.root.inputs | to_entries[] | select(.value | type == "string")
+                          | .key as $k | $l.nodes[.value]
+                          | select(.original.type == "indirect" and .locked.type == "path")
+                          | [$k, .locked.path] | @tsv' "$hm/flake.lock")
+        fi
+        if [ "''${#stale[@]}" -gt 0 ]; then
+          echo "relocking stale inputs: ''${stale[*]}"
+          nix flake update --flake "$hm" "''${stale[@]}" || failed=1
+        fi
+        g="$profiles/home-manager"
+        if [ -L "$g" ] && [ -e "$g" ]; then
+          echo "home-manager generation restored"
+        else
+          aside "$g" "$profiles"/home-manager-*-link
+          echo "home-manager switch --flake $hm"
+          home-manager switch --flake "$hm" || failed=1
+        fi
       fi
+
       if [ "$failed" = 0 ]; then
-        notify "Packages reinstalled" "Your Nix packages are back."
+        notify "Packages restored" "Your Nix packages are back."
       else
         notify "Package reinstall incomplete" "See: journalctl -u webtop-nix-reinstall"
       fi
@@ -124,19 +194,38 @@ in
     AllowSuspendThenHibernate = "no";
   };
 
-  # Image updates (webtop-init): reinstall the recorded profile and run home-manager, then delete
-  # the old store overlay.
+  # Image updates (webtop-init keeps the old store overlay in trash-*): the restore unit copies the
+  # users' paths from it into the new store, then removes the marker and starts the trash cleanup
+  # and the reinstall, which covers what did not come back. All three wait for the marker to go.
+  systemd.services.webtop-nix-restore = {
+    description = "Restore the user's Nix store paths after an image update";
+    wantedBy = [ "multi-user.target" ];
+    wants = [ "network-online.target" ];
+    after = [ "network-online.target" "nix-daemon.socket" ];
+    unitConfig.ConditionPathExists = "/persist/nix/reinstall/restore";
+    serviceConfig = {
+      # Not oneshot: multi-user.target (and so the agent's ready report) would wait for it.
+      Type = "exec";
+      ExecStart = lib.getExe restoreUnit;
+      Nice = 10;
+      # A stopped restore must not eat the termination grace period; it resumes next boot.
+      TimeoutStopSec = 10;
+    };
+  };
   systemd.services.webtop-nix-reinstall = {
     description = "Reinstall the user's Nix packages after an image update";
     wantedBy = [ "multi-user.target" ];
     wants = [ "network-online.target" ];
     after = [ "network-online.target" "nix-daemon.socket" "webtop-session.service" ];
-    unitConfig.ConditionPathExists = "/persist/nix/reinstall/pending";
+    unitConfig.ConditionPathExists = [
+      "/persist/nix/reinstall/pending"
+      "!/persist/nix/reinstall/restore"
+    ];
     serviceConfig = {
-      # Not oneshot: multi-user.target (and so the agent's ready report) would wait for it.
-      Type = "exec";
+      Type = "exec"; # see webtop-nix-restore
       User = cfg.user;
       ExecStart = lib.getExe reinstall;
+      TimeoutStopSec = 10;
       # "+": as root, the records belong to root. Only after success; a failure retries next boot.
       ExecStopPost = "+${pkgs.runtimeShell} -c '[ \"$$SERVICE_RESULT\" = success ] && ${pkgs.coreutils}/bin/rm -f /persist/nix/reinstall/pending || true'";
     };
@@ -144,9 +233,12 @@ in
   systemd.services.webtop-nix-trash = {
     description = "Delete store overlays left by an image update";
     wantedBy = [ "multi-user.target" ];
-    unitConfig.ConditionPathExistsGlob = "/persist/nix/trash-*";
+    unitConfig = {
+      ConditionPathExistsGlob = "/persist/nix/trash-*";
+      ConditionPathExists = "!/persist/nix/reinstall/restore"; # the restore reads from them
+    };
     serviceConfig = {
-      Type = "exec"; # see webtop-nix-reinstall
+      Type = "exec"; # see webtop-nix-restore
       ExecStart = "${pkgs.runtimeShell} -c '${pkgs.coreutils}/bin/rm -rf /persist/nix/trash-*'";
       Nice = 19;
       IOSchedulingClass = "idle";

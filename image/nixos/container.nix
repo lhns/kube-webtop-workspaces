@@ -85,6 +85,6 @@ in
 
   environment.systemPackages = with pkgs; [
     util-linux procps iproute2 findutils gnugrep file lsof
-    git jq curl wget htop home-manager libnotify
+    git jq curl wget htop libnotify
   ];
 }
