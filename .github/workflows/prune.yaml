@@ -1,0 +1,39 @@
+name: prune ghcr
+
+# Weekly cleanup of old dev versions (see .github/scripts/prune-ghcr.sh for the rules). It only lists
+# what it would delete until a manual run sets dry-run=false or the repo variable PRUNE_ENABLED is "true".
+# actions/delete-package-versions has no dry run and matches container versions by digest, not tag,
+# so it cannot express "keep release tags, the last 10 dev versions".
+on:
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: List only, delete nothing
+        type: boolean
+        default: true
+  # Runs the dry run when this workflow changes.
+  pull_request:
+    paths: ['.github/workflows/prune.yaml', '.github/scripts/prune-ghcr.sh']
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: prune
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - name: prune
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Only a schedule with PRUNE_ENABLED, or a manual run with dry-run unchecked, deletes.
+          DRY_RUN: ${{ (github.event_name == 'schedule' && vars.PRUNE_ENABLED != 'true') || (github.event_name == 'workflow_dispatch' && inputs.dry-run) || github.event_name == 'pull_request' }}
+        run: .github/scripts/prune-ghcr.sh | tee -a "$GITHUB_STEP_SUMMARY"

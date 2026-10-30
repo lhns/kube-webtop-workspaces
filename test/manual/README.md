@@ -11,7 +11,7 @@ controller URL that does not exist and time out. Everything else works.
 The node setup in [docs/cluster-requirements.md](../../docs/cluster-requirements.md): user
 namespaces, a writable-cgroup RuntimeClass (`pod.yaml` uses `cgroup-writable`; edit it to match),
 and a StorageClass. Pick the image in `kustomization.yaml` (`images`); pin a digest for a
-reproducible test. The `latest` tag exists only after a release; until then use `main`, `sha-<sha7>` or `0.0.0-dev.<sha7>`. Add a `nodeSelector` to `pod.yaml` to test a specific node.
+reproducible test. The `latest` tag exists only after a release; until then use `main`, `sha-<sha7>` or `0.0.0-dev.<sha7>` (published from main only). Add a `nodeSelector` to `pod.yaml` to test a specific node.
 
 ## Run
 

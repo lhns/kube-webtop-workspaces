@@ -143,6 +143,16 @@ tar -cf - --exclude=.git . | docker run -i --rm -v kww-gocache:/root/.cache -v k
   sh -c 'mkdir /src && tar -xf - -C /src && cd /src && make test'
 ```
 
+## CI and releases
+
+`ci.yaml` checks every PR; a push to `main` or a `vX.Y.Z` tag then publishes, only when every check is
+green. `main` publishes `0.0.0-dev.<sha7>`; a tag publishes images `vX.Y.Z` (and `latest`) and chart
+`X.Y.Z`. The `desktop-image` job also builds the image on PRs and boots it under docker
+(`.github/scripts/boot-test.sh`): it passes only when the agent reports Ready, which needs KWin
+compositing. `nixpkgs-sync` requires the nixpkgs in `flake.lock` to equal the one webtop-nix locks at
+the pinned commit. `prune.yaml` lists old dev versions weekly and deletes them only with the repo
+variable `PRUNE_ENABLED=true`.
+
 ## License
 
 Apache-2.0
