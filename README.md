@@ -99,7 +99,7 @@ Selkies' defaults.
 nested under Selkies: [webtop-nix](https://github.com/lhns/webtop-nix) grafts a patched KWin (LinuxServer's
 software-presentation patch) over the stock one (`services.webtop.kwinSoftwarePresentation`, its ADR 0004).
 Plasma is otherwise plain nixpkgs, so `nix flake update` moves it; the patch only applies to KWin 6.8.x,
-and the evaluation fails on another minor version. Building that KWin takes about an hour, so
+and the evaluation fails on another minor version. Building that KWin takes 25–45 minutes on a GitHub runner, so
 the `desktop-image` job caches it (`packages.x86_64-linux.kwin`, keyed by its store path).
 
 **Known limits**

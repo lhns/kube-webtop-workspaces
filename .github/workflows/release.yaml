@@ -220,7 +220,7 @@ jobs:
             echo "tags=0.0.0-dev.${SHORT} sha-${SHORT} ${BRANCH}" >> "$GITHUB_OUTPUT"
           fi
 
-      # The patched KWin (webtop-nix) is about an hour of build; restore it by its store path, which
+      # The patched KWin (webtop-nix) is 25–45 minutes of build on a GitHub runner; restore it by its store path, which
       # changes with the patch, nixpkgs and flake.lock. The image build then finds it in the store.
       - name: patched KWin store path
         id: kwin
