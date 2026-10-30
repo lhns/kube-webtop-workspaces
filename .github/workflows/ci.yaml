@@ -1,17 +1,86 @@
 name: ci
 
+# Checks on every PR and on main; publishing (controller image, desktop image, chart) is a job of the
+# same workflow, so it runs only when every check is green:
+#   - push to main:  0.0.0-dev.<sha7> (images also sha-<sha7> and main)
+#   - tag vX.Y.Z:    images vX.Y.Z (+ latest unless a prerelease), chart X.Y.Z; a GitHub Release gets the SBOMs
+#   - manual run with publish=true: as main, from any ref (to try the publish path)
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
-    branches: [main]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish dev versions of this ref
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
+# PR runs are superseded by a newer push. Never cancel main or a tag: it may be mid-publish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CONTROLLER_IMAGE: ghcr.io/lhns/kube-webtop-workspaces
+  DESKTOP_IMAGE: ghcr.io/lhns/kube-webtop-workspaces-desktop
+
 jobs:
+  # What this run publishes, if anything. Every other job reads it from here.
+  meta:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      publish: ${{ steps.m.outputs.publish }}
+      version: ${{ steps.m.outputs.version }}
+      chart_version: ${{ steps.m.outputs.chart_version }}
+      platforms: ${{ steps.m.outputs.platforms }}
+      controller_tags: ${{ steps.m.outputs.controller_tags }}
+      desktop_tags: ${{ steps.m.outputs.desktop_tags }}
+    steps:
+      - id: m
+        env:
+          MANUAL_PUBLISH: ${{ inputs.publish }}
+        run: |
+          set -euo pipefail
+          publish=false
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] \
+              || { echo "::error::tag $GITHUB_REF_NAME is not vMAJOR.MINOR.PATCH[-prerelease]"; exit 1; }
+            publish=true
+            version=$GITHUB_REF_NAME
+            chart_version=${version#v}
+            platforms=linux/amd64,linux/arm64
+            tags="$version"
+            # A prerelease is not "latest".
+            [[ "$version" == *-* ]] || tags="$tags latest"
+          else
+            if [[ ( "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF" == refs/heads/main ) || "$MANUAL_PUBLISH" == true ]]; then
+              publish=true
+            fi
+            short=${GITHUB_SHA::7}
+            version=0.0.0-dev.$short
+            chart_version=$version
+            platforms=linux/amd64
+            tags="$version sha-$short"
+            [[ "$GITHUB_REF" != refs/heads/main ]] || tags="$tags main"
+          fi
+          {
+            echo "publish=$publish"
+            echo "version=$version"
+            echo "chart_version=$chart_version"
+            echo "platforms=$platforms"
+            echo "controller_tags=$(for t in $tags; do echo "$CONTROLLER_IMAGE:$t"; done | paste -sd,)"
+            echo "desktop_tags=$tags"
+          } | tee -a "$GITHUB_OUTPUT"
+
   unit:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -45,6 +114,7 @@ jobs:
   # The in-pod agent is its own Go module (agent/), which `./...` above does not reach.
   agent:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: agent
@@ -64,59 +134,31 @@ jobs:
       - name: go.mod tidy
         run: go mod tidy && git diff --exit-code go.mod go.sum
 
-  # Evaluates the desktop image (the whole NixOS system) and builds the agent package, which checks
-  # its vendorHash. The image itself is built by the release workflow.
-  nix:
+  # The desktop image's NixOS system and webtop-nix must share one nixpkgs (one Qt tree, one store
+  # closure): kww's locked nixpkgs has to be the one webtop-nix locks at the commit kww pins.
+  nixpkgs-sync:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
-      # Evaluating the system realises the stock Plasma closure (webtop-nix grafts the patched KWin in).
-      - name: free disk space
-        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-      # Same local cache of the patched KWin as the release workflow's desktop-image job.
-      - uses: cachix/install-nix-action@v31
-        with:
-          extra_nix_config: |
-            extra-substituters = file:///home/runner/kwin-cache
-            require-sigs = false
-      - name: patched KWin store path
-        id: kwin
+      - name: compare locked nixpkgs revisions
         run: |
-          out=$(nix eval --raw .#kwin.outPath)
-          echo "out=$out" >> "$GITHUB_OUTPUT"
-          echo "key=kwin-$(basename "$out" | cut -d- -f1)" >> "$GITHUB_OUTPUT"
-      # Evaluating may make the nix daemon (root) create files in the cache directory; start clean so
-      # the restore, which runs as the user, can write.
-      - name: empty cache directory
-        run: |
-          sudo rm -rf ~/kwin-cache
-          mkdir ~/kwin-cache
-      - name: restore patched KWin
-        id: kwin-cache
-        uses: actions/cache/restore@v6
-        with:
-          path: ~/kwin-cache
-          key: ${{ steps.kwin.outputs.key }}
-      - name: build patched KWin
-        run: nix build .#kwin -L --no-link
-      # The whole closure: a binary cache refuses a path whose references it lacks. zstd keeps it small.
-      - name: save patched KWin
-        if: steps.kwin-cache.outputs.cache-hit != 'true'
-        # The daemon (root) created parts of the directory while substituting.
-        run: |
-          sudo chown -R "$USER" ~/kwin-cache
-          nix copy --to "file://$HOME/kwin-cache?compression=zstd" "${{ steps.kwin.outputs.out }}"
-      - uses: actions/cache/save@v6
-        if: steps.kwin-cache.outputs.cache-hit != 'true'
-        with:
-          path: ~/kwin-cache
-          key: ${{ steps.kwin.outputs.key }}
-
-      - name: nix flake check
-        run: nix flake check -L
+          set -euo pipefail
+          # The node a flake's root input "nixpkgs" points to is not necessarily called "nixpkgs".
+          rev() { jq -r '.nodes[.nodes.root.inputs.nixpkgs].locked.rev'; }
+          ours=$(rev < flake.lock)
+          pin=$(jq -r '.nodes["webtop-nix"].locked | "\(.owner)/\(.repo) \(.rev)"' flake.lock)
+          theirs=$(curl -sSfL --retry 3 "https://raw.githubusercontent.com/${pin% *}/${pin#* }/flake.lock" | rev)
+          echo "kww:        $ours"
+          echo "webtop-nix: $theirs (${pin})"
+          if [ "$ours" != "$theirs" ]; then
+            echo "::error::nixpkgs differs from webtop-nix. Update both to the same rev (nix flake update nixpkgs, then re-pin webtop-nix)."
+            exit 1
+          fi
 
   integration:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: unit
     steps:
       - uses: actions/checkout@v7
@@ -134,31 +176,9 @@ jobs:
       - name: integration tests (envtest)
         run: make test
 
-  docker:
-    runs-on: ubuntu-latest
-    needs: unit
-    steps:
-      - uses: actions/checkout@v7
-      - uses: docker/setup-buildx-action@v4
-      - name: build image (no push)
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          push: false
-          load: true
-          tags: ghcr.io/lhns/kube-webtop-workspaces:ci
-      - name: trivy image scan
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: ghcr.io/lhns/kube-webtop-workspaces:ci
-          format: table
-          severity: CRITICAL,HIGH
-          exit-code: '1'
-          ignore-unfixed: true
-          vuln-type: 'os,library'
-
   trivy-fs:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: unit
     steps:
       - uses: actions/checkout@v7
@@ -175,6 +195,7 @@ jobs:
 
   helm:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: unit
     steps:
       - uses: actions/checkout@v7
@@ -206,3 +227,250 @@ jobs:
         run: |
           python3 -c "import yaml" 2>/dev/null || pip install --quiet pyyaml
           python3 charts/tests/check.py
+
+  # ------ controller image ---------------------------------------------------
+  # Built once: the scanned image's layers are the ones pushed (same builder, so the second step is a cache hit).
+  controller-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [meta, unit, agent, integration, trivy-fs, helm] # TEMP
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - name: build image (amd64, no push)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: false
+          load: true
+          tags: ${{ env.CONTROLLER_IMAGE }}:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: trivy image scan
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.CONTROLLER_IMAGE }}:ci
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+
+      # ------ publish (main, tags) ------
+      - name: log in to ghcr
+        if: needs.meta.outputs.publish == 'true'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: push image
+        id: push
+        if: needs.meta.outputs.publish == 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          platforms: ${{ needs.meta.outputs.platforms }}
+          cache-from: type=gha
+          tags: ${{ needs.meta.outputs.controller_tags }}
+      - name: install cosign
+        if: needs.meta.outputs.publish == 'true'
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: v2.4.1
+      - name: install syft
+        if: needs.meta.outputs.publish == 'true'
+        uses: anchore/sbom-action/download-syft@v0
+        with:
+          syft-version: v1.14.0
+      - name: sign image, SBOM attestation
+        if: needs.meta.outputs.publish == 'true'
+        env:
+          COSIGN_YES: "true"
+          REF: ${{ env.CONTROLLER_IMAGE }}@${{ steps.push.outputs.digest }}
+        run: |
+          cosign sign "$REF"
+          syft "$REF" -o spdx-json=kube-webtop-workspaces-image.sbom.spdx.json
+          cosign attest --predicate kube-webtop-workspaces-image.sbom.spdx.json --type spdx "$REF"
+          echo "controller image: \`$REF\`" >> "$GITHUB_STEP_SUMMARY"
+      - name: upload SBOM
+        if: needs.meta.outputs.publish == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: controller-sbom
+          path: kube-webtop-workspaces-image.sbom.spdx.json
+
+  # ------ desktop image (NixOS) ----------------------------------------------
+  # Built with Nix (flake.nix, nix2container); amd64 only: the Selkies/pixelflux wheels are x86_64.
+  # A cold KWin build is 25-45 minutes; the rest is cache.nixos.org and the image layers.
+  desktop-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    needs: [meta, unit, agent, integration, trivy-fs, helm] # TEMP
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v7
+      # The Plasma closure is several GB, and the image is loaded into docker as well.
+      - name: free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL \
+            /usr/local/.ghcup /usr/share/swift /usr/local/share/powershell
+          sudo docker image prune --all --force > /dev/null
+          df -h /
+      - uses: ./.github/actions/kwin-cache
+
+      - name: nix flake check
+        run: nix flake check -L
+      - name: build image
+        run: nix build .#image -L
+
+      # Boots the image under docker and waits for the agent's Ready, which needs KWin compositing.
+      - name: load image into docker
+        run: nix run .#image.copyToDockerDaemon
+      - name: boot test
+        timeout-minutes: 20
+        run: .github/scripts/boot-test.sh ${{ env.DESKTOP_IMAGE }}:dev 900
+      - name: boot diagnostics
+        if: failure()
+        run: |
+          docker ps -a
+          docker logs desktop-boot 2>&1 | tail -n 200 || true
+          echo "::group::journal (system)"
+          docker exec desktop-boot journalctl -b --no-pager 2>&1 | tail -n 500 || true
+          echo "::endgroup::"
+          echo "::group::journal (user 1000)"
+          docker exec desktop-boot journalctl _UID=1000 --no-pager 2>&1 | tail -n 300 || true
+          echo "::endgroup::"
+          docker exec desktop-boot ps -eo user,pid,args 2>&1 | grep -E 'kwin|plasma|selkies|webtop' || true
+      - name: stop test container
+        if: always()
+        run: docker rm -f desktop-boot || true
+
+      # ------ publish (main, tags) ------
+      # copyTo is skopeo copy from the Nix store; layers already pushed are skipped.
+      - name: push image
+        id: push
+        if: needs.meta.outputs.publish == 'true'
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAGS: ${{ needs.meta.outputs.desktop_tags }}
+        run: |
+          set -euo pipefail
+          for tag in $TAGS; do
+            nix run .#image.copyTo -- --digestfile digest \
+              --dest-creds "${{ github.actor }}:${GHCR_TOKEN}" "docker://${DESKTOP_IMAGE}:${tag}"
+            echo "pushed ${DESKTOP_IMAGE}:${tag}" >> "$GITHUB_STEP_SUMMARY"
+          done
+          echo "digest=$(cat digest)" >> "$GITHUB_OUTPUT"
+          echo "desktop image: \`${DESKTOP_IMAGE}@$(cat digest)\`" >> "$GITHUB_STEP_SUMMARY"
+      - name: install cosign
+        if: needs.meta.outputs.publish == 'true'
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: v2.4.1
+      - name: install syft
+        if: needs.meta.outputs.publish == 'true'
+        uses: anchore/sbom-action/download-syft@v0
+        with:
+          syft-version: v1.14.0
+      - name: cosign sign image (keyless)
+        if: needs.meta.outputs.publish == 'true'
+        env:
+          COSIGN_YES: "true"
+        run: |
+          # Rekor/Fulcio fail transiently; retry the whole call.
+          for i in 1 2 3 4 5; do
+            cosign sign "${DESKTOP_IMAGE}@${{ steps.push.outputs.digest }}" && exit 0
+            echo "cosign sign failed (attempt $i)"; sleep $((i * 15))
+          done
+          exit 1
+      - name: generate image SBOM
+        if: needs.meta.outputs.publish == 'true'
+        run: syft "${DESKTOP_IMAGE}@${{ steps.push.outputs.digest }}" -o spdx-json=kube-webtop-workspaces-desktop.sbom.spdx.json
+      # No attestation: Rekor rejects the SBOM of the Nix closure. It is published as a file only.
+      - name: upload SBOM
+        if: needs.meta.outputs.publish == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-sbom
+          path: kube-webtop-workspaces-desktop.sbom.spdx.json
+
+  # ------ Helm chart and GitHub Release --------------------------------------
+  chart:
+    if: needs.meta.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # After both images, so a published chart never points at a missing one.
+    needs: [meta, controller-image, desktop-image]
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: azure/setup-helm@v5
+        with:
+          version: v3.16.3
+      - name: install cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: v2.4.1
+      - name: install syft
+        uses: anchore/sbom-action/download-syft@v0
+        with:
+          syft-version: v1.14.0
+      - name: package & push chart
+        id: helm_push
+        env:
+          CHART_VERSION: ${{ needs.meta.outputs.chart_version }}
+          # The chart defaults image.tag to .Chart.AppVersion, so it deploys the controller image built above.
+          APP_VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          helm package charts/kube-webtop-workspaces \
+            --version "$CHART_VERSION" \
+            --app-version "$APP_VERSION" \
+            --destination .
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io \
+            --username "${{ github.actor }}" --password-stdin
+          helm push "kube-webtop-workspaces-${CHART_VERSION}.tgz" oci://ghcr.io/lhns/charts \
+            2>&1 | tee helm-push.log
+          DIGEST=$(grep -E '^Digest: ' helm-push.log | awk '{print $2}')
+          echo "chart_digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "chart: \`ghcr.io/lhns/charts/kube-webtop-workspaces:${CHART_VERSION}@${DIGEST}\`" >> "$GITHUB_STEP_SUMMARY"
+      - name: sign chart, SBOM attestation
+        env:
+          COSIGN_YES: "true"
+          REF: ghcr.io/lhns/charts/kube-webtop-workspaces@${{ steps.helm_push.outputs.chart_digest }}
+        run: |
+          cosign sign "$REF"
+          syft "kube-webtop-workspaces-${{ needs.meta.outputs.chart_version }}.tgz" \
+            -o spdx-json=kube-webtop-workspaces-chart.sbom.spdx.json
+          cosign attest --predicate kube-webtop-workspaces-chart.sbom.spdx.json --type spdx "$REF"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: '*-sbom'
+          merge-multiple: true
+      - name: checksums for release assets
+        run: |
+          sha256sum kube-webtop-workspaces-*.tgz kube-webtop-workspaces-*.sbom.spdx.json > checksums.txt
+          cat checksums.txt
+      - name: attach release assets
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            kube-webtop-workspaces-*.tgz
+            kube-webtop-workspaces-*.sbom.spdx.json
+            checksums.txt
