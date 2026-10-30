@@ -157,6 +157,15 @@ jobs:
             exit 1
           fi
 
+  # image/webtop-nix-restore.sh against real local-overlay stores in a privileged nixos/nix container.
+  nix-store:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - name: store restore test
+        run: test/nix-store/run.sh
+
   integration:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -234,7 +243,7 @@ jobs:
   controller-image:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    needs: [meta, unit, agent, integration, trivy-fs, helm, nixpkgs-sync]
+    needs: [meta, unit, agent, integration, trivy-fs, helm, nixpkgs-sync, nix-store]
     permissions:
       contents: read
       packages: write
@@ -314,7 +323,7 @@ jobs:
   desktop-image:
     runs-on: ubuntu-latest
     timeout-minutes: 90
-    needs: [meta, unit, agent, integration, trivy-fs, helm, nixpkgs-sync]
+    needs: [meta, unit, agent, integration, trivy-fs, helm, nixpkgs-sync, nix-store]
     permissions:
       contents: read
       packages: write
