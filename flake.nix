@@ -2,14 +2,14 @@
   description = "kube-webtop-workspaces desktop image: NixOS (systemd PID 1) with a browser-streamed Plasma desktop";
 
   inputs = {
-    # Pinned on purpose, do not bump: Plasma 6.7 renders without a GPU, 6.8 does not (README, "Plasma pin").
-    nixpkgs.url = "github:NixOS/nixpkgs/55bfb4d7437bd4e09ab7cba58a43bd68eb310044";
+    # One nixpkgs (one Qt tree). KWin 6.8 needs webtop-nix's software-presentation patch to render without a GPU (README, "KWin patch").
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     nix2container = {
       url = "github:nlewo/nix2container";
       inputs.nixpkgs.follows = "nixpkgs";
     };
     webtop-nix = {
-      url = "github:lhns/webtop-nix/1cebf166d4f30b10e7aef1dfc9decff72c837ea1";
+      url = "github:lhns/webtop-nix/3f85b63c6bb5cba2baa4820e3b2a147bf6ff029b";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
@@ -63,6 +63,8 @@
 
       packages.${system} = {
         inherit toplevel agent;
+        # The patched KWin the system grafts in; CI builds and caches it ahead of the image.
+        kwin = nixos.pkgs.kwinSoftwarePresentation;
         image = n2c.buildImage {
           name = "ghcr.io/lhns/kube-webtop-workspaces-desktop";
           tag = "dev";
