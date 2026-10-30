@@ -20,9 +20,10 @@ on:
 permissions:
   contents: read
 
-# PR runs are superseded by a newer push. Never cancel main or a tag: it may be mid-publish.
+# PR runs are superseded by a newer push. Main and tags get a group per commit, so no run is
+# cancelled mid-publish or replaced while queued.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -342,6 +343,9 @@ jobs:
       - name: boot test
         timeout-minutes: 20
         run: .github/scripts/boot-test.sh ${{ env.DESKTOP_IMAGE }}:dev 900
+      - name: boot test (compositing off must be caught)
+        timeout-minutes: 15
+        run: .github/scripts/boot-test.sh ${{ env.DESKTOP_IMAGE }}:dev 600 gray
       - name: boot diagnostics
         if: failure()
         run: |
