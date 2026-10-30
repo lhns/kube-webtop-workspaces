@@ -31,6 +31,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: prune
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Only a schedule with PRUNE_ENABLED, or a manual run with dry-run unchecked, deletes.
