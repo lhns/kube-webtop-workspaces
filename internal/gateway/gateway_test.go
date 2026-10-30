@@ -574,6 +574,9 @@ func TestProxy(t *testing.T) {
 		if got.Header.Get("X-Forwarded-Prefix") != "" {
 			t.Errorf("prefix header set: %q", got.Header.Get("X-Forwarded-Prefix"))
 		}
+		if got.Host != "example.com" {
+			t.Errorf("upstream Host = %q, want the external host", got.Host)
+		}
 		if got.Header.Get("X-Forwarded-Host") != "example.com" || got.Header.Get("X-Forwarded-Proto") != "http" || got.Header.Get("X-Forwarded-For") == "" {
 			t.Errorf("forwarded headers: %v", got.Header)
 		}
@@ -851,5 +854,13 @@ func TestPagesAreSelfContained(t *testing.T) {
 	}
 	if !strings.Contains(body, `new EventSource("/.webtop/events")`) {
 		t.Errorf("boot page has no EventSource: %s", body)
+	}
+}
+
+func TestStageText(t *testing.T) {
+	for in, want := range map[string]string{"": "Starting", "CreatingContainer": "Creating container", "Booting": "Booting", "Loading Plasma": "Loading Plasma"} {
+		if got := stageText(in); got != want {
+			t.Errorf("stageText(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

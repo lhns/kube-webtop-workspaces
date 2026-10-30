@@ -125,6 +125,8 @@ func (h *Handler) rewrite(pr *httputil.ProxyRequest) {
 	pr.Out.URL.Path = t.path
 	pr.Out.URL.RawPath = t.rawPath
 	pr.SetURL(t.url)
+	// Keep the external Host: Selkies rejects websocket upgrades whose Origin does not match it.
+	pr.Out.Host = pr.In.Host
 	pr.SetXForwarded()
 	if t.trusted {
 		// Behind our trusted proxy the external scheme/host/client are in its headers.
@@ -444,12 +446,8 @@ func (h *Handler) notRunning(w http.ResponseWriter, r *http.Request, rt *route, 
 
 func (h *Handler) bootPage(w http.ResponseWriter, rt *route, d *v1alpha1.Desktop) {
 	h.count(outBoot)
-	stage := d.Status.Stage
-	if stage == "" {
-		stage = "Starting"
-	}
 	writePage(w, http.StatusOK, "boot", pageData{
-		Title: "Starting your desktop", Stage: stage, Progress: d.Status.BootProgress,
+		Title: "Starting your desktop", Stage: stageText(d.Status.Stage), Progress: d.Status.BootProgress,
 		Message: d.Status.Message, EventsURL: rt.base + reservedPrefix + "/events",
 	})
 }

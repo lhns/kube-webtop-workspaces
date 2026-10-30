@@ -27,7 +27,7 @@ func eventOf(d *v1alpha1.Desktop) statusEvent {
 		return statusEvent{Authorized: true}
 	}
 	return statusEvent{
-		Phase: string(d.Status.Phase), Stage: d.Status.Stage, BootProgress: d.Status.BootProgress,
+		Phase: string(d.Status.Phase), Stage: stageText(d.Status.Stage), BootProgress: d.Status.BootProgress,
 		Message: d.Status.Message, Authorized: !authorizedFalse(d),
 	}
 }
@@ -106,4 +106,16 @@ func (h *Handler) serveEvents(w http.ResponseWriter, r *http.Request, rt *route,
 			}
 		}
 	}
+}
+
+// stageText is the boot page's wording for the controller's stage values; the agent's
+// free-text stages pass through.
+func stageText(stage string) string {
+	switch stage {
+	case "":
+		return "Starting"
+	case "CreatingContainer":
+		return "Creating container"
+	}
+	return stage
 }
