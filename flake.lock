@@ -88,17 +88,17 @@
         ]
       },
       "locked": {
-        "lastModified": 1793352021,
-        "narHash": "sha256-P+3NvNa+e99lAcb9VBd6idPG73585klQzmuMJlN5qkw=",
+        "lastModified": 1793353501,
+        "narHash": "sha256-CcE5GcAOqn7wCG7yrX8zwMDTGyFAjZeIK38QjmWk7/M=",
         "owner": "lhns",
         "repo": "webtop-nix",
-        "rev": "fca68bc35eac4417295923c3222b23e91c79324d",
+        "rev": "f2fa74bd529a0f9fa52094c18561f42913374d53",
         "type": "github"
       },
       "original": {
         "owner": "lhns",
         "repo": "webtop-nix",
-        "rev": "fca68bc35eac4417295923c3222b23e91c79324d",
+        "rev": "f2fa74bd529a0f9fa52094c18561f42913374d53",
         "type": "github"
       }
     }
