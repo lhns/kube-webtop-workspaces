@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -39,12 +40,14 @@ func Scheme() (*runtime.Scheme, error) {
 	return s, nil
 }
 
-// CacheOptions restricts the cache to the namespace, and pods to the desktop pods.
+// CacheOptions restricts the cache to the namespace, pods to the desktop pods and events to pod events.
 func CacheOptions(cfg *config.Config) cache.Options {
 	return cache.Options{
 		DefaultNamespaces: map[string]cache.Config{cfg.Namespace: {}},
 		ByObject: map[client.Object]cache.ByObject{
 			&corev1.Pod{}: {Label: labels.SelectorFromSet(labels.Set{names.LabelManagedBy: names.ManagedBy})},
+			// Only Pod events are listed and watched; the reconciler reads them by pod UID.
+			&corev1.Event{}: {Field: fields.SelectorFromSet(fields.Set{"involvedObject.kind": "Pod"})},
 		},
 	}
 }

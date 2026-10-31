@@ -38,3 +38,33 @@ func TestRBACNeverDeletesPVCs(t *testing.T) {
 		}
 	}
 }
+
+// The reconciler reads and watches pod events for the boot stages (docs/contract.md, section 3.4).
+func TestRBACReadsEvents(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "config", "rbac", "controller", "role.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var role rbacv1.ClusterRole
+	if err := yaml.Unmarshal(data, &role); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, rule := range role.Rules {
+		if slices.Contains(rule.Resources, "events") && slices.Contains(rule.APIGroups, "") {
+			for _, v := range rule.Verbs {
+				got[v] = true
+			}
+		}
+	}
+	for _, v := range []string{"list", "watch"} {
+		if !got[v] {
+			t.Errorf("controller role cannot %s events", v)
+		}
+	}
+	for _, v := range []string{"delete", "deletecollection", "update", "*"} {
+		if got[v] {
+			t.Errorf("controller role may %s events", v)
+		}
+	}
+}

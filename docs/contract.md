@@ -57,6 +57,7 @@ Desktop whose name is not `sanitize(spec.user)`.
 | `observedRestartAt` | time | last `spec.restartRequestedAt` the controller applied |
 | `connectedClients` | int | from the agent |
 | `idleSeconds` | int | from the agent |
+| `imagePull` | `{image, startedAt?, lastSizeBytes?, lastDurationSeconds?}` | the desktop image's pulls, for the boot page's download estimate (section 3.4); kept while off |
 | `observedGeneration` | int | |
 | `conditions` | `[]metav1.Condition` | `Authorized`, `Ready` |
 
@@ -158,12 +159,28 @@ Only the leader reconciles. Status is written with merge patches of the fields i
 | `Off`, pod exists | `Stopping` | `Stopping` |
 | `On`, no pod yet | `Starting` | `Scheduling` |
 | pod unschedulable | `Starting` | `Scheduling` (+ `message`) |
-| container waiting (`ContainerCreating`, pulling) | `Starting` | `CreatingContainer` |
+| container waiting (`ContainerCreating`), a `Pulling` event of the pod has no later `Pulled` | `Starting` | `PullingImage` |
+| container waiting, a `FailedAttachVolume` event has no later `SuccessfulAttachVolume` (and no pull is running) | `Starting` | `AttachingVolume` |
+| container waiting, otherwise | `Starting` | `CreatingContainer` |
 | `ErrImagePull`/`ImagePullBackOff`/`CrashLoopBackOff`/`CreateContainerConfigError` | `Error` | the waiting reason (+ `message`) |
 | container running, no agent report | `Starting` | `Booting` |
 | agent reported, not ready | `Starting` | agent's `stage` (free text, ≤ 64 characters) |
 | pod `Ready` and (`agentReady` or `controller.requireAgentReady=false`) | `Running` | `Ready`, progress 100 |
 | invalid name / foreign PVC | `Error` | `Error` |
+
+The three waiting stages all have progress 15. The events are those of the current pod (by
+`involvedObject.uid`), read from a cache restricted to the desktop namespace and to events about
+pods, with an index on the pod UID; events with the reasons `Pulling`, `Pulled`,
+`FailedAttachVolume` and `SuccessfulAttachVolume` of a desktop pod trigger a reconcile of its
+Desktop. Event order is by `lastTimestamp` (then `eventTime`, `firstTimestamp`); a tie ends the
+failure or pull.
+
+**Image pull record.** While a pod exists the controller keeps `status.imagePull` for the desktop
+container's image reference: `startedAt` is the `Pulling` event's time while that pull runs; a
+kubelet `Pulled` message `Successfully pulled image "<ref>" in <duration> (…). Image size: <n> bytes.`
+sets `lastDurationSeconds` and `lastSizeBytes` (the first duration; "already present on machine" is
+no pull). A record of another image ref is dropped. While pulling an image with no recorded
+duration, the numbers of any other Desktop that recorded the same ref are used.
 
 ## 4. Usernames
 
@@ -270,6 +287,7 @@ Enabled when `ldap.url` is set; otherwise every user is authorized (`LDAPDisable
 | `/u/<user>/…` | desktop `sanitize(<user>)`; allowed for that desktop's own user and admins. Unknown → 404; admins never create desktops |
 | everything else | the caller's own desktop |
 | `<base>/.webtop/events` | SSE, never proxied |
+| `<base>/.webtop/reload.js` | the script injected into the desktop's page (section 7.3), never proxied |
 | `<base>/.webtop/start` | POST start, never proxied |
 | `/.webtop/healthz` | not used; probes are on `gateway.healthAddr` (`/healthz`, `/readyz`) |
 
@@ -288,6 +306,18 @@ prefix is stripped and `X-Forwarded-Prefix: /u/<user>` is set. `X-Forwarded-Host
 `X-Forwarded-Proto` and `X-Forwarded-For` are set; incoming values are kept (For: appended) only
 from a peer in `trustedProxyCIDRs`, and an incoming `X-Forwarded-Prefix` is always dropped. The user and groups headers are passed through.
 Desktop state comes from a `Desktop` informer; the gateway reads no core resources.
+
+**Reload script.** In the response to a navigation (section 7.4) `GET` that is `200` with
+`Content-Type: text/html`, no `Content-Encoding` and at most 4 MiB, the gateway inserts
+`<script src="<base>/.webtop/reload.js" nonce="…" defer></script>` before `</head>` (else before
+`</body>`; neither → unchanged) and sets `Content-Length`. For navigations `Accept-Encoding` is not
+forwarded, so the transport's own gzip is decoded and the page arrives readable; a response that
+is encoded anyway is left alone. A `Content-Security-Policy` of the desktop is loosened for the
+script only: its nonce is added to `script-src` (and `script-src-elem`), `'self'` to `connect-src`
+(both derived from `default-src` when that is all there is, `'none'` replaced); a policy that
+restricts neither is unchanged. The script opens `<base>/.webtop/events?watch=1` and reloads the
+tab when the desktop leaves `Running` or `podUID` changes after the tab saw `Running`; it reconnects
+with backoff (1 s to 30 s) and never reloads for a state it did not see go away.
 
 ### 7.4 Navigation
 
@@ -323,7 +353,13 @@ data: {}
 ```
 
 `status` on connect and on every change; a `: ping` comment every 15 s; `ready` once phase is
-`Running`, then the stream ends.
+`Running`, then the stream ends (unless the request has `?watch=1`: then no `ready`, the stream stays
+open). `podUID` is added when set. While the stage is `PullingImage` and the pull has a start time,
+`status` carries `"pull": {"elapsedSeconds", "sizeBytes"?, "lastDurationSeconds"?}`; `elapsedSeconds`
+is computed by the gateway, and the boot page ticks it locally and shows "about N%" (elapsed /
+last duration, at most 95) as an estimate, only when `lastDurationSeconds` is known. Stage texts:
+`CreatingContainer` "Creating container", `PullingImage` "Downloading image", `AttachingVolume`
+"Waiting for volume".
 
 **Off page / start:** a form `POST <base>/.webtop/start` with field `csrf`. CSRF is a double-submit
 cookie: the page sets cookie `webtop_csrf` (random 32 bytes, base64url, `HttpOnly`, `SameSite=Strict`,
@@ -491,7 +527,7 @@ ClusterRole + ClusterRoleBinding.
 - **gateway** (Role): `desktops` get/list/watch/create/patch. Nothing else.
 - **controller** (Role): `desktops` get/list/watch/update/patch; `desktops/status` get/update/patch;
   `deployments`, `services` get/list/watch/create/update/patch; `persistentvolumeclaims`
-  get/list/watch/create/patch (**no delete**); `pods` get/list/watch; `events` create/patch;
+  get/list/watch/create/patch (**no delete**); `pods` get/list/watch; `events` create/patch/list/watch;
   `leases` get/list/watch/create/update/patch.
   (ClusterRole): `tokenreviews` create.
 - **desktop** ServiceAccount: no RBAC at all; its token is used only for the power API audience.

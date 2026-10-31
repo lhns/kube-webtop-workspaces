@@ -19,6 +19,8 @@ const (
 	stageStopping          = "Stopping"
 	stageScheduling        = "Scheduling"
 	stageCreatingContainer = "CreatingContainer"
+	stageAttachingVolume   = "AttachingVolume"
+	stagePullingImage      = "PullingImage"
 	stageBooting           = "Booting"
 	stageReady             = "Ready"
 	stageError             = "Error"
@@ -36,7 +38,7 @@ const (
 // what the pod reports never sets label values.
 func metricStage(stage string) string {
 	switch stage {
-	case stageStopped, stageStopping, stageScheduling, stageCreatingContainer, stageBooting, stageReady, stageError:
+	case stageStopped, stageStopping, stageScheduling, stageCreatingContainer, stageAttachingVolume, stagePullingImage, stageBooting, stageReady, stageError:
 		return stage
 	}
 	if slices.Contains(waitingErrors, stage) {
@@ -66,6 +68,9 @@ type statusInput struct {
 	AgentReported bool
 	AgentStage    string
 	AgentProgress int32
+	// AttachFailing and Pulling come from the events of Pod; they refine the waiting container.
+	AttachFailing bool
+	Pulling       bool
 }
 
 type statusResult struct {
@@ -99,6 +104,12 @@ func computeStatus(in statusInput) statusResult {
 	if cs == nil || cs.State.Waiting != nil {
 		if cs != nil && slices.Contains(waitingErrors, cs.State.Waiting.Reason) {
 			return statusResult{Phase: v1alpha1.PhaseError, Stage: cs.State.Waiting.Reason, Message: cs.State.Waiting.Message}
+		}
+		switch {
+		case in.Pulling: // volumes are attached before the kubelet pulls, so a running pull wins
+			return starting(stagePullingImage, progressCreating, "")
+		case in.AttachFailing:
+			return starting(stageAttachingVolume, progressCreating, "")
 		}
 		return starting(stageCreatingContainer, progressCreating, "")
 	}

@@ -858,7 +858,7 @@ func TestPagesAreSelfContained(t *testing.T) {
 }
 
 func TestStageText(t *testing.T) {
-	for in, want := range map[string]string{"": "Starting", "CreatingContainer": "Creating container", "Booting": "Booting", "Loading Plasma": "Loading Plasma"} {
+	for in, want := range map[string]string{"": "Starting", "CreatingContainer": "Creating container", "PullingImage": "Downloading image", "AttachingVolume": "Waiting for volume", "Booting": "Booting", "Loading Plasma": "Loading Plasma"} {
 		if got := stageText(in); got != want {
 			t.Errorf("stageText(%q) = %q, want %q", in, got, want)
 		}

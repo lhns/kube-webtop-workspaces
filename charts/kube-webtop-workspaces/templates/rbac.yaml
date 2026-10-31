@@ -11,7 +11,7 @@ metadata:
     {{- include "kwt.labels" . | nindent 4 }}
     app.kubernetes.io/component: controller
 rules:
-  - {apiGroups: [""], resources: [events], verbs: [create, patch]}
+  - {apiGroups: [""], resources: [events], verbs: [create, list, patch, watch]}
   - {apiGroups: [""], resources: [persistentvolumeclaims], verbs: [create, get, list, patch, watch]}
   - {apiGroups: [""], resources: [pods], verbs: [get, list, watch]}
   - {apiGroups: [""], resources: [services], verbs: [create, get, list, patch, update, watch]}

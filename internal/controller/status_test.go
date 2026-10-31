@@ -64,6 +64,18 @@ func TestComputeStatus(t *testing.T) {
 			statusResult{Phase: "Starting", Stage: "CreatingContainer", Progress: 15}},
 		{"pod initializing", statusInput{Run: true, Pod: waiting("PodInitializing")},
 			statusResult{Phase: "Starting", Stage: "CreatingContainer", Progress: 15}},
+		{"waiting, pull running", statusInput{Run: true, Pod: waiting("ContainerCreating"), Pulling: true},
+			statusResult{Phase: "Starting", Stage: "PullingImage", Progress: 15}},
+		{"waiting, volume attach failing", statusInput{Run: true, Pod: waiting("ContainerCreating"), AttachFailing: true},
+			statusResult{Phase: "Starting", Stage: "AttachingVolume", Progress: 15}},
+		{"pull wins over a stale attach failure", statusInput{Run: true, Pod: waiting("ContainerCreating"), Pulling: true, AttachFailing: true},
+			statusResult{Phase: "Starting", Stage: "PullingImage", Progress: 15}},
+		{"no container status yet, pulling", statusInput{Run: true, Pod: mkPod(nil), Pulling: true},
+			statusResult{Phase: "Starting", Stage: "PullingImage", Progress: 15}},
+		{"pull error beats pulling", statusInput{Run: true, Pod: waiting("ErrImagePull"), Pulling: true},
+			statusResult{Phase: "Error", Stage: "ErrImagePull", Message: "m"}},
+		{"running ignores stale pull events", statusInput{Run: true, Pod: runningPod, RequireAgentReady: true, Pulling: true, AttachFailing: true},
+			statusResult{Phase: "Starting", Stage: "Booting", Progress: 25}},
 		{"ErrImagePull", statusInput{Run: true, Pod: waiting("ErrImagePull")},
 			statusResult{Phase: "Error", Stage: "ErrImagePull", Message: "m"}},
 		{"ImagePullBackOff", statusInput{Run: true, Pod: waiting("ImagePullBackOff")},
@@ -100,7 +112,7 @@ func TestComputeStatus(t *testing.T) {
 
 func TestMetricStage(t *testing.T) {
 	for in, want := range map[string]string{
-		"Scheduling": "Scheduling", "Ready": "Ready", "ImagePullBackOff": "ImagePullBackOff",
+		"Scheduling": "Scheduling", "Ready": "Ready", "PullingImage": "PullingImage", "AttachingVolume": "AttachingVolume", "ImagePullBackOff": "ImagePullBackOff",
 		"Starting Plasma": "Booting", "": "Booting",
 	} {
 		if got := metricStage(in); got != want {

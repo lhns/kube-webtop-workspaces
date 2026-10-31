@@ -101,7 +101,7 @@ ldap: {url: "ldap://fake", baseDN: "dc=x", groupDN: "cn=g,dc=x"}
 		panic(err)
 	}
 	dir := &fakeDir{members: map[string]struct{}{}}
-	for _, u := range []string{"alice", "bob", "carol", "dave", "erin", "frank", "grace"} {
+	for _, u := range []string{"alice", "bob", "carol", "dave", "erin", "frank", "grace", "heidi"} {
 		dir.members[u] = struct{}{}
 	}
 	rec, syncer, err := Setup(mgr, cfg, dir)
@@ -491,5 +491,59 @@ func TestInvalidNameIsError(t *testing.T) {
 	eventually(t, "phase Error", func() bool { return getDesktop(t, "wrong").Status.Phase == v1alpha1.PhaseError })
 	consistently(t, "nothing created", time.Second, func() bool {
 		return tryDeployment("wrong") == nil
+	})
+}
+
+// Kubelet events of the pod refine the stage while the container waits, and a completed pull
+// is recorded for the download estimate.
+func TestPodEventsRefineStage(t *testing.T) {
+	needEnv(t)
+	createDesktop(t, "heidi", true)
+	waitRunning(t, "heidi")
+	ctx := context.Background()
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "desktop-heidi-x", Namespace: testNS, Labels: names.Labels("heidi")},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "desktop", Image: "img:1"}}},
+	}
+	if err := suite.c.Create(ctx, pod); err != nil {
+		t.Fatal(err)
+	}
+	pod.Status.ContainerStatuses = []corev1.ContainerStatus{{
+		Name: "desktop", Image: "img:1", ImageID: "",
+		State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ContainerCreating"}},
+	}}
+	if err := suite.c.Status().Update(ctx, pod); err != nil {
+		t.Fatal(err)
+	}
+	mkEvent := func(name, reason, msg string, at time.Time) {
+		t.Helper()
+		e := &corev1.Event{
+			ObjectMeta:     metav1.ObjectMeta{Name: name, Namespace: testNS},
+			InvolvedObject: corev1.ObjectReference{Kind: "Pod", Namespace: testNS, Name: pod.Name, UID: pod.UID},
+			Reason:         reason, Message: msg, Type: corev1.EventTypeNormal,
+			FirstTimestamp: metav1.NewTime(at), LastTimestamp: metav1.NewTime(at),
+		}
+		if err := suite.c.Create(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stage := func() string { return getDesktop(t, "heidi").Status.Stage }
+	now := time.Now()
+
+	eventually(t, "CreatingContainer without events", func() bool { return stage() == "CreatingContainer" })
+	mkEvent("heidi-attach", "FailedAttachVolume", "AttachVolume.Attach failed", now.Add(-30*time.Second))
+	eventually(t, "AttachingVolume", func() bool { return stage() == "AttachingVolume" })
+	mkEvent("heidi-attached", "SuccessfulAttachVolume", "attached", now.Add(-20*time.Second))
+	mkEvent("heidi-pulling", "Pulling", `Pulling image "img:1"`, now.Add(-10*time.Second))
+	eventually(t, "PullingImage with startedAt", func() bool {
+		ip := getDesktop(t, "heidi").Status.ImagePull
+		return stage() == "PullingImage" && ip != nil && ip.StartedAt != nil && ip.Image == "img:1"
+	})
+	mkEvent("heidi-pulled", "Pulled", `Successfully pulled image "img:1" in 9m13.252s (9m13.252s including waiting). Image size: 3745009478 bytes.`, now)
+	eventually(t, "pull recorded, stage back to CreatingContainer", func() bool {
+		ip := getDesktop(t, "heidi").Status.ImagePull
+		return stage() == "CreatingContainer" && ip != nil && ip.StartedAt == nil &&
+			ip.LastDurationSeconds == 553 && ip.LastSizeBytes == 3745009478
 	})
 }

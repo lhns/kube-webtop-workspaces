@@ -77,6 +77,22 @@ type LastStop struct {
 	Reason StopReason       `json:"reason"`
 }
 
+// ImagePull is what the controller knows about pulling the desktop image, for the boot page's
+// download estimate.
+type ImagePull struct {
+	// Image is the image reference the fields below are about.
+	Image string `json:"image"`
+	// StartedAt is when the kubelet started the pull that is still running.
+	// +optional
+	StartedAt *metav1.Time `json:"startedAt,omitempty"`
+	// LastSizeBytes is the size the kubelet reported for the last completed pull of Image.
+	// +optional
+	LastSizeBytes int64 `json:"lastSizeBytes,omitempty"`
+	// LastDurationSeconds is how long that pull took.
+	// +optional
+	LastDurationSeconds int64 `json:"lastDurationSeconds,omitempty"`
+}
+
 // DesktopStatus is the observed state of a Desktop.
 type DesktopStatus struct {
 	// +optional
@@ -88,6 +104,9 @@ type DesktopStatus struct {
 	// +kubebuilder:validation:Maximum=100
 	// +optional
 	BootProgress int32 `json:"bootProgress,omitempty"`
+	// ImagePull records image pulls of the desktop pod; kept while the desktop is off.
+	// +optional
+	ImagePull *ImagePull `json:"imagePull,omitempty"`
 	// Message gives detail for Error or an unauthorized desktop.
 	// +optional
 	Message string `json:"message,omitempty"`

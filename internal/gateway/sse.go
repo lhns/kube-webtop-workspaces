@@ -20,16 +20,35 @@ type statusEvent struct {
 	BootProgress int32  `json:"bootProgress"`
 	Message      string `json:"message"`
 	Authorized   bool   `json:"authorized"`
+	// PodUID tells a tab that watches a running desktop that the pod was replaced.
+	PodUID string `json:"podUID,omitempty"`
+	// Pull is set while the image is being downloaded.
+	Pull *pullEvent `json:"pull,omitempty"`
 }
 
-func eventOf(d *v1alpha1.Desktop) statusEvent {
+// pullEvent is the boot page's download line. Elapsed is computed here, from the cluster's
+// clock, so a browser with a skewed clock still ticks from the right start.
+type pullEvent struct {
+	ElapsedSeconds      int64 `json:"elapsedSeconds"`
+	SizeBytes           int64 `json:"sizeBytes,omitempty"`
+	LastDurationSeconds int64 `json:"lastDurationSeconds,omitempty"`
+}
+
+func eventOf(d *v1alpha1.Desktop, now time.Time) statusEvent {
 	if d == nil {
 		return statusEvent{Authorized: true}
 	}
-	return statusEvent{
+	ev := statusEvent{
 		Phase: string(d.Status.Phase), Stage: stageText(d.Status.Stage), BootProgress: d.Status.BootProgress,
-		Message: d.Status.Message, Authorized: !authorizedFalse(d),
+		Message: d.Status.Message, Authorized: !authorizedFalse(d), PodUID: d.Status.PodUID,
 	}
+	if ip := d.Status.ImagePull; ip != nil && d.Status.Stage == stagePullingImage && ip.StartedAt != nil {
+		ev.Pull = &pullEvent{
+			ElapsedSeconds: max(0, int64(now.Sub(ip.StartedAt.Time).Seconds())),
+			SizeBytes:      ip.LastSizeBytes, LastDurationSeconds: ip.LastDurationSeconds,
+		}
+	}
+	return ev
 }
 
 // isReady matches the proxy condition, so a "ready" reload never lands on a boot page.
@@ -67,17 +86,19 @@ func (h *Handler) serveEvents(w http.ResponseWriter, r *http.Request, rt *route,
 	hd.Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 
+	// watch keeps the stream open when the desktop is ready: a tab showing the desktop follows it.
+	watch := r.URL.Query().Get("watch") != ""
 	var last string
 	// send writes a status event if it changed, then ready; false ends the stream.
 	send := func(d *v1alpha1.Desktop) bool {
-		b, _ := json.Marshal(eventOf(d))
+		b, _ := json.Marshal(eventOf(d, h.now()))
 		if s := string(b); s != last {
 			last = s
 			if _, err := fmt.Fprintf(w, "event: status\ndata: %s\n\n", b); err != nil {
 				return false
 			}
 		}
-		if isReady(d) {
+		if isReady(d) && !watch {
 			_, _ = fmt.Fprint(w, "event: ready\ndata: {}\n\n")
 			fl.Flush()
 			return false
@@ -116,6 +137,10 @@ func stageText(stage string) string {
 		return "Starting"
 	case "CreatingContainer":
 		return "Creating container"
+	case stagePullingImage:
+		return "Downloading image"
+	case "AttachingVolume":
+		return "Waiting for volume"
 	}
 	return stage
 }
