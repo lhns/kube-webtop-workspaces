@@ -14,6 +14,8 @@
       SELKIES_ENABLE_HTTPS = "false";
       XCURSOR_THEME = "breeze_cursors";
       XCURSOR_SIZE = "24";
+      # Start at 30 fps: software x264 on shared CPUs keeps up; the client may still raise it.
+      SELKIES_FRAMERATE = "30,8-240";
     };
   };
 
