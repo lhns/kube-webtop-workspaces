@@ -23,11 +23,32 @@ button{font:inherit;padding:.6rem 1.6rem;margin-top:1rem;cursor:pointer}
 <h1>Starting your desktop</h1>
 <p id="stage">{{.Stage}}</p>
 <div class="bar"><div id="bar" style="width:{{.Progress}}%"></div></div>
+<p id="pull"></p>
 <p id="msg">{{.Message}}</p>
 <noscript><p>Enable JavaScript or reload this page to follow the progress.</p></noscript>
 <script>
 (function(){
   var stage=document.getElementById("stage"),bar=document.getElementById("bar"),msg=document.getElementById("msg");
+  var pullEl=document.getElementById("pull"),pull=null,pullAt=0,pullTimer=null;
+  function dur(s){var m=Math.floor(s/60);return m>0?m+"m "+(s%60)+"s":s+"s"}
+  function size(b){return b>=1e9?(b/1e9).toFixed(1)+" GB":Math.round(b/1e6)+" MB"}
+  // Elapsed ticks from when the server said it, not from the browser's idea of the start time.
+  function showPull(){
+    var secs=pull.elapsedSeconds+Math.round((Date.now()-pullAt)/1000);
+    var t=[];
+    if(pull.sizeBytes){t.push(size(pull.sizeBytes))}
+    t.push(dur(secs)+" elapsed");
+    if(pull.lastDurationSeconds){
+      t.push("about "+Math.min(95,Math.floor(secs*100/pull.lastDurationSeconds))+"% (estimate from an earlier download)");
+    }
+    pullEl.textContent=t.join(" \u00b7 ");
+  }
+  function setPull(p){
+    pull=p;pullAt=Date.now();
+    if(!p){pullEl.textContent="";if(pullTimer){clearInterval(pullTimer);pullTimer=null}return}
+    showPull();
+    if(!pullTimer){pullTimer=setInterval(showPull,1000)}
+  }
   var idleTimer=null;
   var es=new EventSource({{.EventsURL}});
   es.addEventListener("status",function(e){
@@ -35,6 +56,7 @@ button{font:inherit;padding:.6rem 1.6rem;margin-top:1rem;cursor:pointer}
     if(s.stage){stage.textContent=s.stage}
     bar.style.width=(s.bootProgress||0)+"%";
     msg.textContent=s.message||"";
+    setPull(s.pull||null);
     // Stopped or stopping while this page is open: reload to get the right page.
     if(s.phase==="Off"||s.phase==="Stopping"){
       if(!idleTimer){idleTimer=setTimeout(function(){location.reload()},30000)}

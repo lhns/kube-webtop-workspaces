@@ -15,13 +15,12 @@ import (
 
 // Stages of docs/contract.md, section 3.4.
 const (
-	stageStopped           = "Stopped"
-	stageStopping          = "Stopping"
-	stageScheduling        = "Scheduling"
-	stageCreatingContainer = "CreatingContainer"
-	stageBooting           = "Booting"
-	stageReady             = "Ready"
-	stageError             = "Error"
+	stageStopped    = "Stopped"
+	stageStopping   = "Stopping"
+	stageScheduling = "Scheduling"
+	stageBooting    = "Booting"
+	stageReady      = "Ready"
+	stageError      = "Error"
 )
 
 // Boot progress before the agent reports its own.
@@ -36,7 +35,7 @@ const (
 // what the pod reports never sets label values.
 func metricStage(stage string) string {
 	switch stage {
-	case stageStopped, stageStopping, stageScheduling, stageCreatingContainer, stageBooting, stageReady, stageError:
+	case stageStopped, stageStopping, stageScheduling, v1alpha1.StageCreatingContainer, v1alpha1.StageAttachingVolume, v1alpha1.StagePullingImage, stageBooting, stageReady, stageError:
 		return stage
 	}
 	if slices.Contains(waitingErrors, stage) {
@@ -66,6 +65,9 @@ type statusInput struct {
 	AgentReported bool
 	AgentStage    string
 	AgentProgress int32
+	// AttachFailing and Pulling come from the events of Pod; they refine the waiting container.
+	AttachFailing bool
+	Pulling       bool
 }
 
 type statusResult struct {
@@ -100,7 +102,13 @@ func computeStatus(in statusInput) statusResult {
 		if cs != nil && slices.Contains(waitingErrors, cs.State.Waiting.Reason) {
 			return statusResult{Phase: v1alpha1.PhaseError, Stage: cs.State.Waiting.Reason, Message: cs.State.Waiting.Message}
 		}
-		return starting(stageCreatingContainer, progressCreating, "")
+		switch {
+		case in.Pulling: // volumes are attached before the kubelet pulls, so a running pull wins
+			return starting(v1alpha1.StagePullingImage, progressCreating, "")
+		case in.AttachFailing:
+			return starting(v1alpha1.StageAttachingVolume, progressCreating, "")
+		}
+		return starting(v1alpha1.StageCreatingContainer, progressCreating, "")
 	}
 	if cs.State.Running == nil {
 		return starting(stageBooting, progressBooting, "") // terminated, restart pending

@@ -42,7 +42,7 @@ import (
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create;patch
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch;list;watch
 // +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;watch;create;update;patch
 
 // Reconciler reconciles Desktops (docs/contract.md, section 3.2).
@@ -79,11 +79,28 @@ func (r *Reconciler) now() time.Time {
 // SetupWithManager wires the watches: Desktops, owned Deployments and Services, desktop pods.
 func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 	podToDesktop := handler.EnqueueRequestsFromMapFunc(func(_ context.Context, o client.Object) []reconcile.Request {
-		d := o.GetLabels()[names.LabelDesktop]
-		if d == "" {
+		return podToDesktopRequests(o)
+	})
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &corev1.Event{}, eventPodUIDIndex, func(o client.Object) []string {
+		if uid := o.(*corev1.Event).InvolvedObject.UID; uid != "" {
+			return []string{string(uid)}
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	// An event of a desktop pod, found through the cached pod, wakes its Desktop. Only the
+	// reasons that change the stage or the image pull record are worth a reconcile.
+	eventToDesktop := handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, o client.Object) []reconcile.Request {
+		e := o.(*corev1.Event)
+		if !relevantReason(e.Reason) || e.InvolvedObject.Kind != "Pod" {
 			return nil
 		}
-		return []reconcile.Request{{NamespacedName: types.NamespacedName{Namespace: o.GetNamespace(), Name: d}}}
+		var pod corev1.Pod
+		if err := r.Get(ctx, types.NamespacedName{Namespace: e.Namespace, Name: e.InvolvedObject.Name}, &pod); err != nil || pod.UID != e.InvolvedObject.UID {
+			return nil
+		}
+		return podToDesktopRequests(&pod)
 	})
 	b := ctrl.NewControllerManagedBy(mgr).
 		Named("desktop").
@@ -91,11 +108,20 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
 		Watches(&corev1.Pod{}, podToDesktop).
+		Watches(&corev1.Event{}, eventToDesktop).
 		WithOptions(crcontroller.Options{MaxConcurrentReconciles: r.Config().Controller.MaxConcurrentReconciles})
 	if r.Notify != nil {
 		b = b.WatchesRawSource(source.Channel(r.Notify, &handler.EnqueueRequestForObject{}))
 	}
 	return b.Complete(r)
+}
+
+func podToDesktopRequests(pod client.Object) []reconcile.Request {
+	d := pod.GetLabels()[names.LabelDesktop]
+	if d == "" {
+		return nil
+	}
+	return []reconcile.Request{{NamespacedName: types.NamespacedName{Namespace: pod.GetNamespace(), Name: d}}}
 }
 
 // authResult is the outcome of the authorization step.
@@ -175,6 +201,14 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		return reconcile.Result{}, err
 	}
 	pod := newestPod(pods.Items)
+	var ev podEvents
+	if pod != nil {
+		var evs corev1.EventList
+		if err := r.List(ctx, &evs, client.InNamespace(d.Namespace), client.MatchingFields{eventPodUIDIndex: string(pod.UID)}); err != nil {
+			return reconcile.Result{}, err
+		}
+		ev = summarizeEvents(evs.Items)
+	}
 
 	// 1. Validate.
 	var errMsg string
@@ -281,7 +315,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 	}
 
 	return result, r.finish(ctx, d, base, pods.Items, pod, finishArgs{
-		on: on, want: want, auth: auth, errMsg: pvcErr, appliedHash: applied, desiredHash: desiredHash,
+		on: on, want: want, auth: auth, errMsg: pvcErr, appliedHash: applied, desiredHash: desiredHash, events: ev,
 	})
 }
 
@@ -292,6 +326,7 @@ type finishArgs struct {
 	errMsg      string
 	appliedHash string
 	desiredHash string
+	events      podEvents
 }
 
 // finish computes and patches the status (step 8).
@@ -318,12 +353,20 @@ func (r *Reconciler) finish(ctx context.Context, d, base *v1alpha1.Desktop, pods
 		AgentReported:     st.LastReportTime != nil,
 		AgentStage:        st.Stage,
 		AgentProgress:     st.BootProgress,
+		AttachFailing:     a.events.AttachFailing,
+		Pulling:           a.events.Pulling,
 	}
 	if a.on && a.want == 0 && a.errMsg == "" {
 		in.Note = a.auth.Message
 	}
 	res := computeStatus(in)
 	st.Phase, st.Stage, st.Message, st.BootProgress = res.Phase, res.Stage, res.Message, res.Progress
+
+	if pod != nil {
+		if ip := r.nextImagePull(ctx, d.Namespace, st.ImagePull, desktopImage(pod), a.events, res.Stage == v1alpha1.StagePullingImage); ip != nil {
+			st.ImagePull = ip
+		}
+	}
 
 	st.URL = render.ServiceURL(r.Config(), d)
 	if a.appliedHash != "" {

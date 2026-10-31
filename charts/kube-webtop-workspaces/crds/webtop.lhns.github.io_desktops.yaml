@@ -167,6 +167,31 @@ spec:
               idleSeconds:
                 format: int64
                 type: integer
+              imagePull:
+                description: ImagePull records image pulls of the desktop pod; kept
+                  while the desktop is off.
+                properties:
+                  image:
+                    description: Image is the image reference the fields below are
+                      about.
+                    type: string
+                  lastDurationSeconds:
+                    description: LastDurationSeconds is how long that pull took.
+                    format: int64
+                    type: integer
+                  lastSizeBytes:
+                    description: LastSizeBytes is the size the kubelet reported for
+                      the last completed pull of Image.
+                    format: int64
+                    type: integer
+                  startedAt:
+                    description: StartedAt is when the kubelet started the pull that
+                      is still running.
+                    format: date-time
+                    type: string
+                required:
+                - image
+                type: object
               lastReportTime:
                 format: date-time
                 type: string

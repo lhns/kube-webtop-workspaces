@@ -56,6 +56,7 @@ type Handler struct {
 	trusted []*net.IPNet
 	secure  bool
 	ping    time.Duration
+	now     func() time.Time // time.Now; tests replace it
 	proxy   *httputil.ReverseProxy
 }
 
@@ -69,6 +70,7 @@ type proxyTarget struct {
 	prefix  string // X-Forwarded-Prefix, empty if none
 	trusted bool   // peer is a configured trusted proxy: its X-Forwarded-* are kept
 	failed  bool   // set by proxyError
+	inject  bool   // top-level page load: the response may get the reload script
 }
 
 // route is the resolved request path.
@@ -88,6 +90,7 @@ func NewHandler(o Options) (*Handler, error) {
 		cfg: o.Config, ns: o.Namespace, store: o.Store, hub: o.Hub, m: o.Metrics, log: o.Log,
 		secure: o.Config.CookieSecure == nil || *o.Config.CookieSecure,
 		ping:   o.PingInterval,
+		now:    time.Now,
 	}
 	if h.ping <= 0 {
 		h.ping = pingInterval
@@ -112,10 +115,11 @@ func NewHandler(o Options) (*Handler, error) {
 		}
 	}
 	h.proxy = &httputil.ReverseProxy{
-		Rewrite:       h.rewrite,
-		Transport:     rt,
-		FlushInterval: -1,
-		ErrorHandler:  h.proxyError,
+		Rewrite:        h.rewrite,
+		Transport:      rt,
+		FlushInterval:  -1,
+		ModifyResponse: h.modifyResponse,
+		ErrorHandler:   h.proxyError,
 	}
 	return h, nil
 }
@@ -139,6 +143,11 @@ func (h *Handler) rewrite(pr *httputil.ProxyRequest) {
 		if v := pr.In.Header.Values("X-Forwarded-For"); len(v) > 0 {
 			pr.Out.Header.Set("X-Forwarded-For", strings.Join(v, ", ")+", "+pr.Out.Header.Get("X-Forwarded-For"))
 		}
+	}
+	if t.inject {
+		// An uncompressed page can be rewritten. The Transport asks for gzip on its own and
+		// decodes it, so the hop to the desktop stays compressed.
+		pr.Out.Header.Del("Accept-Encoding")
 	}
 	pr.Out.Header.Del("X-Forwarded-Prefix")
 	if t.prefix != "" {
@@ -229,6 +238,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			h.serveEvents(w, r, rt, d)
+		case reloadPath:
+			if r.Method != http.MethodGet && r.Method != http.MethodHead {
+				h.methodNotAllowed(w, http.MethodGet)
+				return
+			}
+			h.serveReloadScript(w, r)
 		case reservedPrefix + "/start":
 			if r.Method != http.MethodPost {
 				h.methodNotAllowed(w, http.MethodPost)
@@ -350,7 +365,8 @@ func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, rt *route, 
 		h.errorPage(w, http.StatusBadGateway, "Desktop unreachable", "The desktop has no valid address.", outError)
 		return
 	}
-	t := &proxyTarget{url: target, path: r.URL.Path, rawPath: r.URL.RawPath, trusted: trusted}
+	t := &proxyTarget{url: target, path: r.URL.Path, rawPath: r.URL.RawPath, trusted: trusted,
+		inject: r.Method == http.MethodGet && IsNavigation(r)}
 	if rt.prefixed {
 		t.path, t.rawPath, t.prefix = rt.rest, rt.restEsc, rt.base
 		if t.rawPath == t.path {
