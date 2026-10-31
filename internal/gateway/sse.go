@@ -26,8 +26,9 @@ type statusEvent struct {
 	Pull *pullEvent `json:"pull,omitempty"`
 }
 
-// pullEvent is the boot page's download line. Elapsed is computed here, from the cluster's
-// clock, so a browser with a skewed clock still ticks from the right start.
+// pullEvent is the boot page's download line. Elapsed is computed here, so a browser with a
+// skewed clock still ticks from the right start. It changes on every send, which is fine: a
+// send happens only on a wake, and the page restarts its ticker from it.
 type pullEvent struct {
 	ElapsedSeconds      int64 `json:"elapsedSeconds"`
 	SizeBytes           int64 `json:"sizeBytes,omitempty"`
@@ -42,7 +43,7 @@ func eventOf(d *v1alpha1.Desktop, now time.Time) statusEvent {
 		Phase: string(d.Status.Phase), Stage: stageText(d.Status.Stage), BootProgress: d.Status.BootProgress,
 		Message: d.Status.Message, Authorized: !authorizedFalse(d), PodUID: d.Status.PodUID,
 	}
-	if ip := d.Status.ImagePull; ip != nil && d.Status.Stage == stagePullingImage && ip.StartedAt != nil {
+	if ip := d.Status.ImagePull; ip != nil && d.Status.Stage == v1alpha1.StagePullingImage && ip.StartedAt != nil {
 		ev.Pull = &pullEvent{
 			ElapsedSeconds: max(0, int64(now.Sub(ip.StartedAt.Time).Seconds())),
 			SizeBytes:      ip.LastSizeBytes, LastDurationSeconds: ip.LastDurationSeconds,
@@ -135,11 +136,11 @@ func stageText(stage string) string {
 	switch stage {
 	case "":
 		return "Starting"
-	case "CreatingContainer":
+	case v1alpha1.StageCreatingContainer:
 		return "Creating container"
-	case stagePullingImage:
+	case v1alpha1.StagePullingImage:
 		return "Downloading image"
-	case "AttachingVolume":
+	case v1alpha1.StageAttachingVolume:
 		return "Waiting for volume"
 	}
 	return stage

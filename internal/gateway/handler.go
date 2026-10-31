@@ -29,9 +29,6 @@ import (
 const (
 	reservedPrefix = "/.webtop"
 	pingInterval   = 15 * time.Second
-
-	// stagePullingImage is the controller stage while the image downloads (docs/contract.md, 3.4).
-	stagePullingImage = "PullingImage"
 )
 
 // Options configure a Handler.

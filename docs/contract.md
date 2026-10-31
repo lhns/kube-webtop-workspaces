@@ -309,13 +309,12 @@ Desktop state comes from a `Desktop` informer; the gateway reads no core resourc
 
 **Reload script.** In the response to a navigation (section 7.4) `GET` that is `200` with
 `Content-Type: text/html`, no `Content-Encoding` and at most 4 MiB, the gateway inserts
-`<script src="<base>/.webtop/reload.js" nonce="…" defer></script>` before `</head>` (else before
-`</body>`; neither → unchanged) and sets `Content-Length`. For navigations `Accept-Encoding` is not
-forwarded, so the transport's own gzip is decoded and the page arrives readable; a response that
-is encoded anyway is left alone. A `Content-Security-Policy` of the desktop is loosened for the
-script only: its nonce is added to `script-src` (and `script-src-elem`), `'self'` to `connect-src`
-(both derived from `default-src` when that is all there is, `'none'` replaced); a policy that
-restricts neither is unchanged. The script opens `<base>/.webtop/events?watch=1` and reloads the
+`<script src="<base>/.webtop/reload.js" defer></script>` before `</head>` (else before
+`</body>`; neither → unchanged), sets `Content-Length` and drops `ETag` and `Last-Modified`. For
+navigations `Accept-Encoding` is not forwarded, so the transport's own gzip is decoded and the page
+arrives readable; a response that is encoded anyway is left alone. The desktop's
+`Content-Security-Policy` is not changed: a policy that blocks the script or `connect-src 'self'`
+would stop the reload (Selkies sends only `frame-ancestors`). The script opens `<base>/.webtop/events?watch=1` and reloads the
 tab when the desktop leaves `Running` or `podUID` changes after the tab saw `Running`; it reconnects
 with backoff (1 s to 30 s) and never reloads for a state it did not see go away.
 

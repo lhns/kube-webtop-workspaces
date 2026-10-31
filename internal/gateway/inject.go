@@ -4,15 +4,12 @@ package gateway
 
 import (
 	"bytes"
-	"crypto/rand"
 	_ "embed"
-	"encoding/base64"
 	"html"
 	"io"
 	"mime"
 	"net/http"
 	"strconv"
-	"strings"
 )
 
 // maxInjectBody bounds how much of an HTML response is buffered; a bigger one is passed on as is.
@@ -40,6 +37,8 @@ func (h *Handler) serveReloadScript(w http.ResponseWriter, r *http.Request) {
 
 // modifyResponse adds the reload script to the desktop's top-level HTML document. It leaves
 // everything else alone: other content types, compressed bodies, non-200 answers, oversized pages.
+// A Content-Security-Policy of the desktop is not touched; one that blocks this script or its
+// status stream (Selkies sends only frame-ancestors) would need a nonce and connect-src 'self'.
 func (h *Handler) modifyResponse(resp *http.Response) error {
 	t, _ := resp.Request.Context().Value(ctxKey{}).(*proxyTarget)
 	if t == nil || !t.inject || resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Encoding") != "" {
@@ -62,11 +61,12 @@ func (h *Handler) modifyResponse(resp *http.Response) error {
 	}
 	_ = resp.Body.Close()
 
-	nonce := newNonce()
-	tag := `<script src="` + html.EscapeString(t.prefix+reloadPath) + `" nonce="` + nonce + `" defer></script>`
+	tag := `<script src="` + html.EscapeString(t.prefix+reloadPath) + `" defer></script>`
 	if out, ok := insertBefore(body, tag, "</head>", "</body>"); ok {
 		body = out
-		relaxCSP(resp.Header, nonce)
+		// The body no longer matches the desktop's validators.
+		resp.Header.Del("ETag")
+		resp.Header.Del("Last-Modified")
 	}
 	resp.Body = io.NopCloser(bytes.NewReader(body))
 	resp.ContentLength = int64(len(body))
@@ -87,90 +87,4 @@ func insertBefore(body []byte, tag string, markers ...string) ([]byte, bool) {
 		}
 	}
 	return body, false
-}
-
-func newNonce() string {
-	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	return base64.StdEncoding.EncodeToString(b)
-}
-
-// relaxCSP lets the injected script run under a Content-Security-Policy of the desktop: the
-// script by nonce (works with 'strict-dynamic', unlike a host source) and its status stream by
-// connect-src 'self'. Nothing else is loosened, and a policy without script or connect
-// restrictions stays as it is.
-func relaxCSP(h http.Header, nonce string) {
-	vals := h.Values("Content-Security-Policy")
-	if len(vals) == 0 {
-		return
-	}
-	out := make([]string, len(vals))
-	for i, v := range vals {
-		out[i] = relaxPolicy(v, nonce)
-	}
-	h["Content-Security-Policy"] = out
-}
-
-func relaxPolicy(policy, nonce string) string {
-	var names []string
-	dirs := map[string][]string{}
-	for _, d := range strings.Split(policy, ";") {
-		f := strings.Fields(d)
-		if len(f) == 0 {
-			continue
-		}
-		name := strings.ToLower(f[0])
-		if _, dup := dirs[name]; dup {
-			continue // the first occurrence counts
-		}
-		names = append(names, name)
-		dirs[name] = f[1:]
-	}
-	// add appends src to a directive, or creates it from default-src when only that restricts.
-	add := func(name, src string, covered func([]string) bool) {
-		srcs, ok := dirs[name]
-		if !ok {
-			def, hasDef := dirs["default-src"]
-			if !hasDef {
-				return
-			}
-			srcs = def
-			names = append(names, name)
-		}
-		if covered(srcs) {
-			dirs[name] = srcs
-			return
-		}
-		kept := make([]string, 0, len(srcs)+1)
-		for _, s := range srcs {
-			if !strings.EqualFold(s, "'none'") {
-				kept = append(kept, s)
-			}
-		}
-		dirs[name] = append(kept, src)
-	}
-	has := func(want ...string) func([]string) bool {
-		return func(srcs []string) bool {
-			for _, s := range srcs {
-				for _, w := range want {
-					if strings.EqualFold(s, w) {
-						return true
-					}
-				}
-			}
-			return false
-		}
-	}
-	nonceSrc := "'nonce-" + nonce + "'"
-	// script-src-elem, when present, overrides script-src for <script src>.
-	add("script-src", nonceSrc, has("*", "'unsafe-inline'"))
-	if _, ok := dirs["script-src-elem"]; ok {
-		add("script-src-elem", nonceSrc, has("*", "'unsafe-inline'"))
-	}
-	add("connect-src", "'self'", has("*", "'self'"))
-	parts := make([]string, 0, len(names))
-	for _, n := range names {
-		parts = append(parts, strings.Join(append([]string{n}, dirs[n]...), " "))
-	}
-	return strings.Join(parts, "; ")
 }

@@ -37,7 +37,7 @@ func htmlBackend(t *testing.T, mod func(w http.ResponseWriter, r *http.Request) 
 	return srv
 }
 
-var scriptTag = regexp.MustCompile(`<script src="([^"]+)" nonce="([^"]+)" defer></script>`)
+var scriptTag = regexp.MustCompile(`<script src="([^"]+)" defer></script>`)
 
 func TestInjectReloadScript(t *testing.T) {
 	var upstream http.Header
@@ -187,45 +187,25 @@ func TestInjectReloadScript(t *testing.T) {
 			t.Errorf("big body changed (len %d, want %d)", len(got), len(big))
 		}
 	})
-	t.Run("CSP lets the script and its stream through", func(t *testing.T) {
+	t.Run("validators of the original are dropped", func(t *testing.T) {
 		o := htmlBackend(t, func(w http.ResponseWriter, r *http.Request) bool {
 			w.Header().Set("Content-Type", "text/html")
-			w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'strict-dynamic'; connect-src 'none'")
+			w.Header().Set("ETag", `"abc"`)
+			w.Header().Set("Last-Modified", "Mon, 02 Jan 2006 15:04:05 GMT")
 			io.WriteString(w, page)
 			return true
 		})
 		e := newEnv(t, nil, desktop("alice", "alice", running(o.URL)))
 		rec := e.do("GET", "/", navHeaders)
-		m := scriptTag.FindStringSubmatch(rec.Body.String())
-		if m == nil {
-			t.Fatalf("no script: %q", rec.Body)
+		if !scriptTag.MatchString(rec.Body.String()) || rec.Header().Get("ETag") != "" || rec.Header().Get("Last-Modified") != "" {
+			t.Errorf("headers %v", rec.Header())
 		}
-		want := "default-src 'self'; script-src 'self' 'strict-dynamic' 'nonce-" + m[2] + "'; connect-src 'self'"
-		if got := rec.Header().Get("Content-Security-Policy"); got != want {
-			t.Errorf("CSP = %q\nwant  %q", got, want)
+		// An untouched page keeps its ETag.
+		other := e.do("GET", "/", map[string]string{"Sec-Fetch-Mode": "cors"})
+		if other.Header().Get("ETag") != `"abc"` {
+			t.Errorf("ETag of an untouched response: %v", other.Header())
 		}
 	})
-}
-
-func TestRelaxPolicy(t *testing.T) {
-	const n = "N"
-	for in, want := range map[string]string{
-		"": "",
-		// Nothing restricts scripts or connections: unchanged.
-		"img-src 'self'; frame-ancestors 'none'": "img-src 'self'; frame-ancestors 'none'",
-		// default-src alone restricts: script-src and connect-src are derived from it.
-		"default-src 'self'": "default-src 'self'; script-src 'self' 'nonce-N'; connect-src 'self'",
-		"default-src 'none'": "default-src 'none'; script-src 'nonce-N'; connect-src 'self'",
-		// 'none' is replaced, an inline or wildcard policy needs nothing.
-		"script-src 'none'; connect-src 'none'":                     "script-src 'nonce-N'; connect-src 'self'",
-		"script-src 'unsafe-inline'; connect-src *":                 "script-src 'unsafe-inline'; connect-src *",
-		"script-src-elem 'self'; script-src 'self'":                 "script-src-elem 'self' 'nonce-N'; script-src 'self' 'nonce-N'",
-		"connect-src 'self' wss:; script-src https://cdn.example/x": "connect-src 'self' wss:; script-src https://cdn.example/x 'nonce-N'",
-	} {
-		if got := relaxPolicy(in, n); got != want {
-			t.Errorf("relaxPolicy(%q)\n got %q\nwant %q", in, got, want)
-		}
-	}
 }
 
 func TestReloadScriptServed(t *testing.T) {

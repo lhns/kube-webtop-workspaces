@@ -15,15 +15,12 @@ import (
 
 // Stages of docs/contract.md, section 3.4.
 const (
-	stageStopped           = "Stopped"
-	stageStopping          = "Stopping"
-	stageScheduling        = "Scheduling"
-	stageCreatingContainer = "CreatingContainer"
-	stageAttachingVolume   = "AttachingVolume"
-	stagePullingImage      = "PullingImage"
-	stageBooting           = "Booting"
-	stageReady             = "Ready"
-	stageError             = "Error"
+	stageStopped    = "Stopped"
+	stageStopping   = "Stopping"
+	stageScheduling = "Scheduling"
+	stageBooting    = "Booting"
+	stageReady      = "Ready"
+	stageError      = "Error"
 )
 
 // Boot progress before the agent reports its own.
@@ -38,7 +35,7 @@ const (
 // what the pod reports never sets label values.
 func metricStage(stage string) string {
 	switch stage {
-	case stageStopped, stageStopping, stageScheduling, stageCreatingContainer, stageAttachingVolume, stagePullingImage, stageBooting, stageReady, stageError:
+	case stageStopped, stageStopping, stageScheduling, v1alpha1.StageCreatingContainer, v1alpha1.StageAttachingVolume, v1alpha1.StagePullingImage, stageBooting, stageReady, stageError:
 		return stage
 	}
 	if slices.Contains(waitingErrors, stage) {
@@ -107,11 +104,11 @@ func computeStatus(in statusInput) statusResult {
 		}
 		switch {
 		case in.Pulling: // volumes are attached before the kubelet pulls, so a running pull wins
-			return starting(stagePullingImage, progressCreating, "")
+			return starting(v1alpha1.StagePullingImage, progressCreating, "")
 		case in.AttachFailing:
-			return starting(stageAttachingVolume, progressCreating, "")
+			return starting(v1alpha1.StageAttachingVolume, progressCreating, "")
 		}
-		return starting(stageCreatingContainer, progressCreating, "")
+		return starting(v1alpha1.StageCreatingContainer, progressCreating, "")
 	}
 	if cs.State.Running == nil {
 		return starting(stageBooting, progressBooting, "") // terminated, restart pending

@@ -363,7 +363,7 @@ func (r *Reconciler) finish(ctx context.Context, d, base *v1alpha1.Desktop, pods
 	st.Phase, st.Stage, st.Message, st.BootProgress = res.Phase, res.Stage, res.Message, res.Progress
 
 	if pod != nil {
-		if ip := r.nextImagePull(ctx, d.Namespace, st.ImagePull, desktopImage(pod), a.events, res.Stage == stagePullingImage); ip != nil {
+		if ip := r.nextImagePull(ctx, d.Namespace, st.ImagePull, desktopImage(pod), a.events, res.Stage == v1alpha1.StagePullingImage); ip != nil {
 			st.ImagePull = ip
 		}
 	}

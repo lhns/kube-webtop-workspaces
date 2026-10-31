@@ -41,6 +41,13 @@ const (
 	StopLDAP     StopReason = "ldap"
 )
 
+// Stage ids the gateway also reads (docs/contract.md, section 3.4).
+const (
+	StageCreatingContainer = "CreatingContainer"
+	StageAttachingVolume   = "AttachingVolume"
+	StagePullingImage      = "PullingImage"
+)
+
 // Condition types and reasons.
 const (
 	ConditionAuthorized = "Authorized"
