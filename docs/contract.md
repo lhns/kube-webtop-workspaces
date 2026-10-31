@@ -288,6 +288,7 @@ Enabled when `ldap.url` is set; otherwise every user is authorized (`LDAPDisable
 | everything else | the caller's own desktop |
 | `<base>/.webtop/events` | SSE, never proxied |
 | `<base>/.webtop/reload.js` | the script injected into the desktop's page (section 7.3), never proxied |
+| `<base>/.webtop/ping` | GET/HEAD, `204` `no-store`, same authz as the desktop, never proxied. `reload.js` requests it every 60 s so the forward-auth in front of the gateway sees traffic and keeps its session active while a tab is open |
 | `<base>/.webtop/start` | POST start, never proxied |
 | `/.webtop/healthz` | not used; probes are on `gateway.healthAddr` (`/healthz`, `/readyz`) |
 

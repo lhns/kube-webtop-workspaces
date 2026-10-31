@@ -7,6 +7,7 @@ import (
 	"embed"
 	"html/template"
 	"net/http"
+	"time"
 
 	"github.com/lhns/kube-webtop-workspaces/api/v1alpha1"
 )
@@ -25,6 +26,7 @@ type pageData struct {
 	EventsURL string
 	StartURL  string
 	Reason    string
+	StoppedAt time.Time // zero: not shown
 	CSRF      string
 }
 
