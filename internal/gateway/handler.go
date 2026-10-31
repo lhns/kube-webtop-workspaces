@@ -244,6 +244,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			h.serveReloadScript(w, r)
+		case pingPath:
+			if r.Method != http.MethodGet && r.Method != http.MethodHead {
+				h.methodNotAllowed(w, http.MethodGet)
+				return
+			}
+			// Passing the forward-auth in front of the gateway is the point: it keeps the session active.
+			w.Header().Set("Cache-Control", "no-store")
+			w.WriteHeader(http.StatusNoContent)
 		case reservedPrefix + "/start":
 			if r.Method != http.MethodPost {
 				h.methodNotAllowed(w, http.MethodPost)
@@ -476,10 +484,14 @@ func (h *Handler) offPage(w http.ResponseWriter, rt *route, d *v1alpha1.Desktop)
 	}
 	setCSRFCookie(w, token, h.secure)
 	h.count(outOff)
-	writePage(w, http.StatusOK, "off", pageData{
+	data := pageData{
 		Title: "Your desktop is off", Reason: stopWording(d.Status.LastStop.Reason),
 		StartURL: rt.base + reservedPrefix + "/start", CSRF: token,
-	})
+	}
+	if t := d.Status.LastStop.Time; !t.IsZero() {
+		data.StoppedAt = t.UTC()
+	}
+	writePage(w, http.StatusOK, "off", data)
 }
 
 func (h *Handler) serveStart(w http.ResponseWriter, r *http.Request, rt *route, d *v1alpha1.Desktop) {

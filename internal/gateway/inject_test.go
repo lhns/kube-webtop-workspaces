@@ -247,6 +247,48 @@ func TestReloadScriptServed(t *testing.T) {
 	}
 }
 
+func TestPing(t *testing.T) {
+	b := htmlBackend(t, func(w http.ResponseWriter, r *http.Request) bool {
+		t.Errorf("backend reached: %s", r.URL)
+		return true
+	})
+	e := newEnv(t, func(g *config.Gateway) { g.AdminGroup = "admins" },
+		desktop("alice", "alice", running(b.URL)),
+		desktop("bob", "bob", powered(v1alpha1.PowerOff), phase(v1alpha1.PhaseOff)))
+	admin := map[string]string{"Remote-Groups": "admins"}
+
+	for _, tc := range []struct {
+		method, path string
+		hdr          map[string]string
+		code         int
+	}{
+		{"GET", "/.webtop/ping", nil, 204},
+		{"HEAD", "/.webtop/ping", nil, 204},
+		{"GET", "/u/alice/.webtop/ping", nil, 204},
+		{"GET", "/u/bob/.webtop/ping", admin, 204}, // also while the desktop is off
+		{"GET", "/u/bob/.webtop/ping", nil, 403},
+		{"POST", "/.webtop/ping", nil, 405},
+		{"PUT", "/u/alice/.webtop/ping", nil, 405},
+	} {
+		rec := e.do(tc.method, tc.path, tc.hdr)
+		if rec.Code != tc.code {
+			t.Errorf("%s %s: code %d, want %d", tc.method, tc.path, rec.Code, tc.code)
+			continue
+		}
+		if tc.code == 204 {
+			if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
+				t.Errorf("%s: Cache-Control %q", tc.path, cc)
+			}
+			if rec.Body.Len() != 0 {
+				t.Errorf("%s: body %q", tc.path, rec.Body.String())
+			}
+		}
+		if tc.code == 405 && rec.Header().Get("Allow") != "GET" {
+			t.Errorf("%s: Allow %q", tc.path, rec.Header().Get("Allow"))
+		}
+	}
+}
+
 // The script opens events?watch=1 next to itself; with watch the stream outlives "ready".
 func TestSSEWatchKeepsStreamOpen(t *testing.T) {
 	b := htmlBackend(t, nil)

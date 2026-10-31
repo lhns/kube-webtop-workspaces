@@ -24,6 +24,9 @@ var reloadScript []byte
 // reloadPath is the script's path below the route base.
 const reloadPath = reservedPrefix + "/reload.js"
 
+// pingPath answers 204; reload.js requests it to keep the forward-auth session active.
+const pingPath = reservedPrefix + "/ping"
+
 func (h *Handler) serveReloadScript(w http.ResponseWriter, r *http.Request) {
 	hd := w.Header()
 	hd.Set("Content-Type", "text/javascript; charset=utf-8")
