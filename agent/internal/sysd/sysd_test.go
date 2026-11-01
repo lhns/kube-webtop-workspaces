@@ -41,6 +41,13 @@ func TestWaylandSocketFromEnv(t *testing.T) {
 	}
 }
 
+func TestParseUnitList(t *testing.T) {
+	out := "app-firefox@1.service loaded active running Firefox\n\nplasma-kwin_wayland.service loaded active running KWin\n"
+	if got := parseUnitList(out); len(got) != 2 || got[0] != "app-firefox@1.service" || got[1] != "plasma-kwin_wayland.service" {
+		t.Fatalf("%q", got)
+	}
+}
+
 func TestPortOpen(t *testing.T) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

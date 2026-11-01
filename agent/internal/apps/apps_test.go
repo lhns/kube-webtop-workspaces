@@ -26,14 +26,23 @@ func (f *fakeSession) Systemctl(_ context.Context, args ...string) ([]byte, erro
 	switch args[0] {
 	case "show-environment":
 		return []byte(f.env), nil
-	case "list-units":
-		if f.unitsFail {
-			return nil, errors.New("boom")
-		}
-		return []byte(f.units), nil
 	}
 	f.calls = append(f.calls, line)
 	return nil, nil
+}
+
+// ActiveUnits answers with the first field of each line of units (list-units output).
+func (f *fakeSession) ActiveUnits(context.Context) ([]string, error) {
+	if f.unitsFail {
+		return nil, errors.New("boom")
+	}
+	var units []string
+	for _, l := range strings.Split(f.units, "\n") {
+		if fs := strings.Fields(l); len(fs) > 0 {
+			units = append(units, fs[0])
+		}
+	}
+	return units, nil
 }
 
 func (f *fakeSession) Command(_ context.Context, name string, args ...string) ([]byte, error) {
