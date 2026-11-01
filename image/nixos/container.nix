@@ -44,6 +44,8 @@ in
   systemd.services.nix-daemon.environment.NIX_CONFIG =
     "store = ${lib.replaceStrings [ "%" ] [ "%%" ] overlayStore}";
   nix.checkConfig = false; # would try to open the store at build time
+  # Extra substituters/keys from the chart (desktop.nix.*), written by webtop-init; optional include.
+  nix.extraOptions = "!include /run/webtop/nix.conf";
 
   # Journal to the container log (kubectl logs): systemd replaces PID 1's stdout, and journald's
   # ForwardToConsole needs /dev/console (tty: true). webtop-init relays this fifo to the real stdout.

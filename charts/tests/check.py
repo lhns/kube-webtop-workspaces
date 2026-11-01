@@ -93,6 +93,15 @@ for name, args in cases.items():
         fail(f"{name}: chart-only ldap keys leaked into the config")
     if name == "all-on" and cfg["ldap"].get("bindPasswordFile") != "/etc/kube-webtop-workspaces-secrets/ldap/password":
         fail(f"{name}: bindPasswordFile not set from bindSecret")
+    if "nix" in cfg["desktop"]:
+        fail(f"{name}: chart-only desktop.nix leaked into the config")
+    nix_env = {e["name"]: e["value"] for e in cfg["desktop"].get("extraEnv") or [] if e["name"].startswith("WEBTOP_NIX_")}
+    want_env = {"WEBTOP_NIX_EXTRA_SUBSTITUTERS": "http://cache.example.org/a http://cache.example.org/b",
+                "WEBTOP_NIX_EXTRA_TRUSTED_PUBLIC_KEYS": "a:AAAA b:BBBB"} if name == "all-on" else {}
+    if nix_env != want_env:
+        fail(f"{name}: desktop WEBTOP_NIX_* env {nix_env}, want {want_env}")
+    if name == "all-on" and {"name": "FOO", "value": "bar"} not in cfg["desktop"]["extraEnv"]:
+        fail(f"{name}: desktop.nix replaced desktop.extraEnv instead of appending")
 
     np = {d["metadata"]["name"].rsplit("-", 1)[1]: d for d in docs if d["kind"] == "NetworkPolicy"}
     if name == "netpol-off":
@@ -118,6 +127,10 @@ for name, args in cases.items():
             dns_ports = {(p["protocol"], p["port"]) for p in np["desktop"]["spec"]["egress"][0]["ports"]}
             if dns_ports != {("UDP", 53), ("TCP", 53)}:
                 fail(f"{name}: DNS egress must allow UDP and TCP 53, got {sorted(dns_ports)}")
+            extra = [r for r in np["desktop"]["spec"]["egress"] if any("namespaceSelector" in p and
+                     p["namespaceSelector"]["matchLabels"].get("kubernetes.io/metadata.name") == "cache" for p in r["to"])]
+            if len(extra) != (1 if name == "all-on" else 0):
+                fail(f"{name}: desktopEgress.extraRules not rendered exactly as given")
     if name == "all-on":
         for k in ("Ingress", "HTTPRoute", "ServiceMonitor"):
             if k not in kinds:

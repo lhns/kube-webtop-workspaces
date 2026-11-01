@@ -69,7 +69,8 @@ spec:
         - {port: {{ $metricsPort }}, protocol: TCP}
     {{- end }}
 ---
-# Desktop pods: ingress only from the gateway; egress DNS, the power API and allowCIDRs minus exceptCIDRs.
+# Desktop pods: ingress only from the gateway; egress DNS, the power API, allowCIDRs minus exceptCIDRs
+# and extraRules.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -120,5 +121,8 @@ spec:
             except:
               {{- toYaml . | nindent 14 }}
             {{- end }}
+    {{- end }}
+    {{- with .Values.networkPolicy.desktopEgress.extraRules }}
+    {{- toYaml . | nindent 4 }}
     {{- end }}
 {{- end }}
