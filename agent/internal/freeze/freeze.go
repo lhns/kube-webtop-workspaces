@@ -145,7 +145,7 @@ func (f *Freezer) Freeze(ctx context.Context) ([]string, error) {
 	}
 	if err := f.Ctl.Freeze(ctx, units...); err != nil {
 		// A unit that exited since the listing fails the batch; retry one by one.
-		kept, err := f.each(ctx, units, f.Ctl.Freeze)
+		kept, err := f.freezeEach(ctx, units)
 		if err != nil || len(kept) == 0 {
 			if terr := f.Thaw(context.WithoutCancel(ctx)); terr != nil {
 				log.Printf("freeze: thaw after failure: %v", terr)
@@ -185,13 +185,12 @@ func (f *Freezer) Thaw(ctx context.Context) error {
 	return nil
 }
 
-// each applies op to every unit separately, skipping units that are gone, and returns the
-// ones it succeeded on.
-func (f *Freezer) each(ctx context.Context, units []string, op func(context.Context, ...string) error) ([]string, error) {
+// freezeEach freezes units one by one, skipping units that are gone, and returns the ones frozen.
+func (f *Freezer) freezeEach(ctx context.Context, units []string) ([]string, error) {
 	var ok []string
 	var errs []error
 	for _, u := range units {
-		switch err := op(ctx, u); {
+		switch err := f.Ctl.Freeze(ctx, u); {
 		case err == nil:
 			ok = append(ok, u)
 		case f.active(ctx, u):

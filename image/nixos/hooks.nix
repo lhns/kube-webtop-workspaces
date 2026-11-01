@@ -184,9 +184,8 @@ in
   };
 
   # No real suspend in a pod: Sleep freezes the session (ADR 0009). The agent blocks until the next
-  # web client, so the start timeout must not kill it; EnvironmentFile gives it the controller URL
-  # and WEBTOP_SUSPEND_MODE. After= webtop-session-save makes the stop order suspend first, so the
-  # agent thaws before ksmserver is asked to save. Hibernation variants are off.
+  # web client, so no start timeout. After= webtop-session-save stops this first, so the agent
+  # thaws before ksmserver is asked to save. Hibernation variants are off.
   systemd.services.systemd-suspend = {
     path = [ config.systemd.package ];
     after = [ "webtop-session-save.service" ];
