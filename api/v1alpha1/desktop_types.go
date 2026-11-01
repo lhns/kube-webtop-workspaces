@@ -148,6 +148,10 @@ type DesktopStatus struct {
 	ConnectedClients int32 `json:"connectedClients,omitempty"`
 	// +optional
 	IdleSeconds int64 `json:"idleSeconds,omitempty"`
+	// Asleep is true while Sleep has the session frozen; the pod keeps running and the next
+	// web client wakes it. Reset with the pod.
+	// +optional
+	Asleep bool `json:"asleep,omitempty"`
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 	// +listType=map
@@ -165,6 +169,7 @@ type DesktopStatus struct {
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
 // +kubebuilder:printcolumn:name="Stage",type=string,JSONPath=`.status.stage`
 // +kubebuilder:printcolumn:name="Clients",type=integer,JSONPath=`.status.connectedClients`
+// +kubebuilder:printcolumn:name="Asleep",type=boolean,JSONPath=`.status.asleep`
 // +kubebuilder:printcolumn:name="Update",type=boolean,JSONPath=`.status.updatePending`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 type Desktop struct {

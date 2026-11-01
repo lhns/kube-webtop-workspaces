@@ -11,6 +11,8 @@ import (
 const (
 	StopReason = "stop-reason"
 	IdleSince  = "idle-since"
+	// FrozenUnits lists the units frozen by Sleep; it exists only while asleep.
+	FrozenUnits = "frozen-units"
 )
 
 // WriteAtomic replaces path via temp file + rename so readers never see a partial write.

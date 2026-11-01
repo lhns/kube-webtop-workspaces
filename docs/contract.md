@@ -57,6 +57,7 @@ Desktop whose name is not `sanitize(spec.user)`.
 | `observedRestartAt` | time | last `spec.restartRequestedAt` the controller applied |
 | `connectedClients` | int | from the agent |
 | `idleSeconds` | int | from the agent |
+| `asleep` | bool | the agent froze the session (Sleep); the pod stays `Running`. Reset with the pod |
 | `imagePull` | `{image, startedAt?, lastSizeBytes?, lastDurationSeconds?}` | the desktop image's pulls, for the boot page's download estimate (section 3.4); kept while off |
 | `observedGeneration` | int | |
 | `conditions` | `[]metav1.Condition` | `Authorized`, `Ready` |
@@ -145,7 +146,7 @@ Only the leader reconciles. Status is written with merge patches of the fields i
 | --- | --- |
 | `user` | agent (shutdown/reboot from the desktop) |
 | `idle` | agent (PowerDevil idle action) |
-| `suspend` | agent (suspend mapped to save + poweroff) |
+| `suspend` | agent (Sleep fallback: save + poweroff, when freezing fails or `WEBTOP_SUSPEND_MODE=poweroff`) |
 | `kube-stop` | agent (PID 1 got the stop signal from a pod deletion); never recorded |
 | `exit` | controller (clean exit without a recorded stop) |
 | `admin` | controller (`powerState` set `Off` by someone else) |
@@ -413,7 +414,7 @@ All fields optional; absent fields are left unchanged:
 
 ```json
 {"stage": "Starting Plasma", "bootProgress": 60, "ready": false,
- "connectedClients": 1, "idleSeconds": 12}
+ "connectedClients": 1, "idleSeconds": 12, "asleep": false}
 ```
 
 Reports from a pod whose UID ≠ `status.podUID` → `409`, ignored; right after a pod starts the
@@ -424,7 +425,7 @@ most 64 characters (longer → `400`); it never becomes a metric label value (se
 **Readiness:** the agent reports `ready: true` only when `multi-user.target` and the user's `plasma-workspace.target` are active, the web port accepts connections, and KWin is compositing (D-Bus `org.kde.KWin` `/Compositor` `org.kde.kwin.Compositing.active` on the user bus; any compositing type counts). While KWin is not compositing the stage is `Starting compositor`; after `WEBTOP_COMPOSITOR_TIMEOUT` it becomes `Compositor not active` (the agent keeps polling and still turns ready if KWin recovers).
 
 **Agent cadence:** during boot on every stage change (≤ 1/s); after ready every 30 s, and
-immediately when `connectedClients` changes.
+immediately when `connectedClients` or `asleep` changes. `asleep` is also sent once when Sleep starts and ends.
 
 ### 8.4 Other
 
@@ -565,6 +566,7 @@ Controller:
 | `webtop_desktop_boot_progress` | gauge | `desktop` |
 | `webtop_desktop_connected_clients` | gauge | `desktop` |
 | `webtop_desktop_idle_seconds` | gauge | `desktop` |
+| `webtop_desktop_asleep` | gauge | `desktop` |
 | `webtop_desktop_last_stop_timestamp_seconds` | gauge | `desktop`, `reason` |
 | `webtop_desktop_stops_total` | counter | `reason` |
 | `webtop_desktop_start_duration_seconds` | histogram | — (powerState On → Running) |

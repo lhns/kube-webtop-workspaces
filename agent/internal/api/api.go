@@ -46,6 +46,7 @@ type Report struct {
 	Ready            *bool  `json:"ready,omitempty"`
 	ConnectedClients *int   `json:"connectedClients,omitempty"`
 	IdleSeconds      *int   `json:"idleSeconds,omitempty"`
+	Asleep           *bool  `json:"asleep,omitempty"`
 }
 
 func (c *Client) Power(ctx context.Context, r PowerRequest) error {

@@ -282,6 +282,22 @@ func TestReport(t *testing.T) {
 	}
 }
 
+func TestReportAsleep(t *testing.T) {
+	e := newEnv(t, desktop(nil), desktopPod("pod-1"))
+	for _, tc := range []struct {
+		body string
+		want bool
+	}{{`{"asleep":true}`, true}, {`{"connectedClients":1}`, true}, {`{"asleep":false}`, false}} {
+		body, want := tc.body, tc.want
+		if rec := e.do("/api/v1/report", body, "tok"); rec.Code != 204 {
+			t.Fatal(rec.Code, rec.Body)
+		}
+		if got := e.get(t).Status.Asleep; got != want {
+			t.Fatalf("%s: asleep=%v, want %v", body, got, want)
+		}
+	}
+}
+
 func TestReportStageTooLong(t *testing.T) {
 	e := newEnv(t, desktop(nil), desktopPod("pod-1"))
 	ok := strings.Repeat("ä", maxStage)
