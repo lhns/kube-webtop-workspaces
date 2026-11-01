@@ -32,6 +32,7 @@ import (
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/session"
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/state"
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/sysd"
+	"github.com/lhns/kube-webtop-workspaces/agent/internal/usersession"
 )
 
 func main() {
@@ -105,7 +106,7 @@ func suspend(cfg config.Config) int {
 }
 
 func newFreezer(cfg config.Config) *freeze.Freezer {
-	return &freeze.Freezer{Ctl: freeze.UserCtl{User: sysd.LookupUser(cfg.User)}, StateDir: cfg.StateDir}
+	return &freeze.Freezer{Ctl: freeze.UserCtl{User: usersession.LookupUser(cfg.User)}, StateDir: cfg.StateDir}
 }
 
 // notifyAsleep reports the sleep state once; the steady reports repeat it from the state file.
@@ -162,7 +163,7 @@ func run(cfg config.Config) {
 
 	// Idle detection is best effort and independent of readiness.
 	tracker := idle.NewTracker(cfg.StateDir)
-	du := sysd.LookupUser(cfg.User)
+	du := usersession.LookupUser(cfg.User)
 	socket := du.WaylandSocket
 	if cfg.WaylandSocket != "" {
 		socket = func(context.Context) (string, error) { return cfg.WaylandSocket, nil }
@@ -196,7 +197,7 @@ func serveApps(ctx context.Context, cfg config.Config) {
 	if u, err := user.Lookup(cfg.User); err == nil {
 		home = u.HomeDir
 	}
-	l := &apps.Launcher{Session: sysd.LookupUser(cfg.User), StateDir: cfg.StateDir, Home: home}
+	l := &apps.Launcher{Session: usersession.LookupUser(cfg.User), StateDir: cfg.StateDir, Home: home}
 	srv := &http.Server{
 		Addr:              ":8081",
 		Handler:           apps.Handler(l),

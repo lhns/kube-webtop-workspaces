@@ -1,6 +1,6 @@
 //go:build !linux
 
-package sysd
+package usersession
 
 import "os/exec"
 

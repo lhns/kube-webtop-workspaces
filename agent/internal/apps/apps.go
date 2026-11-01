@@ -34,7 +34,7 @@ var (
 	ErrLaunch = errors.New("starting the app failed")
 )
 
-// Session runs commands as the desktop user. sysd.User implements it.
+// Session runs commands as the desktop user. usersession.User implements it.
 type Session interface {
 	// Systemctl runs `systemctl --user args...`.
 	Systemctl(ctx context.Context, args ...string) ([]byte, error)

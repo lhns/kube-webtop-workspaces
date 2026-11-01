@@ -1,4 +1,5 @@
-package sysd
+// Package usersession runs systemctl, busctl and other commands as the desktop user.
+package usersession
 
 import (
 	"context"
