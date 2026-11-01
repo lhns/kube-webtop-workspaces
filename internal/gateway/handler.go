@@ -39,7 +39,7 @@ type Options struct {
 	Hub       *Hub
 	Metrics   *Metrics
 	Log       logr.Logger
-	// Transport is the proxy transport; nil uses a shared default.
+	// Transport is the proxy transport; nil builds one for in-cluster targets.
 	Transport http.RoundTripper
 	// PingInterval overrides the SSE keep-alive period (tests).
 	PingInterval time.Duration
@@ -283,7 +283,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveProxy(w, r, rt, d, trustedPeer)
 		return
 	}
-	h.notRunning(w, r, rt, d, user, false)
+	h.notRunning(w, r, rt, d, user, app, false)
 }
 
 func (h *Handler) methodNotAllowed(w http.ResponseWriter, allow string) {
@@ -383,8 +383,8 @@ func (h *Handler) storeError(w http.ResponseWriter, err error) {
 }
 
 func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, rt *route, d *v1alpha1.Desktop, trusted bool) {
-	target, err := url.Parse(d.Status.URL)
-	if err != nil || target.Host == "" {
+	target, err := parseTarget(d.Status.URL)
+	if err != nil {
 		h.errorPage(w, http.StatusBadGateway, "Desktop unreachable", "The desktop has no valid address.", outError)
 		return
 	}
@@ -427,8 +427,8 @@ func (h *Handler) startFailed(w http.ResponseWriter, err error, desktop string) 
 	h.errorPage(w, http.StatusServiceUnavailable, "Unavailable", "Your desktop could not be started. Try again in a moment.", outError)
 }
 
-// notRunning implements the table of docs/contract.md, 7.5.
-func (h *Handler) notRunning(w http.ResponseWriter, r *http.Request, rt *route, d *v1alpha1.Desktop, user string, retried bool) {
+// notRunning implements the table of docs/contract.md, 7.5. app is the /apps/<name> asked for, or "".
+func (h *Handler) notRunning(w http.ResponseWriter, r *http.Request, rt *route, d *v1alpha1.Desktop, user, app string, retried bool) {
 	if !IsNavigation(r) {
 		h.unavailable(w)
 		return
@@ -456,7 +456,7 @@ func (h *Handler) notRunning(w http.ResponseWriter, r *http.Request, rt *route, 
 				h.collision(w)
 				return
 			}
-			h.notRunning(w, r, rt, cur, user, true)
+			h.notRunning(w, r, rt, cur, user, app, true)
 		default:
 			h.log.Error(err, "creating Desktop", "desktop", rt.name)
 			w.Header().Set("Retry-After", "5")
@@ -471,7 +471,7 @@ func (h *Handler) notRunning(w http.ResponseWriter, r *http.Request, rt *route, 
 	}
 	if d.Spec.PowerState != v1alpha1.PowerOn {
 		if d.Status.LastStop != nil {
-			h.offPage(w, rt, d, appOf(r, rt))
+			h.offPage(w, rt, d, app)
 			return
 		}
 		if err := h.store.PowerOn(ctx, d); err != nil {
@@ -489,15 +489,6 @@ func (h *Handler) bootPage(w http.ResponseWriter, rt *route, d *v1alpha1.Desktop
 		Title: "Starting your desktop", Stage: stageText(d.Status.Stage), Progress: d.Status.BootProgress,
 		Message: d.Status.Message, EventsURL: rt.base + reservedPrefix + "/events",
 	})
-}
-
-// appOf is the app of a /apps/<name> request, or "".
-func appOf(r *http.Request, rt *route) string {
-	if r.Method != http.MethodGet {
-		return ""
-	}
-	app, _ := appName(path.Clean("/" + rt.rest))
-	return app
 }
 
 func (h *Handler) offPage(w http.ResponseWriter, rt *route, d *v1alpha1.Desktop, app string) {

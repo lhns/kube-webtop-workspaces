@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -77,11 +78,7 @@ func (c *agentClient) Open(ctx context.Context, base *url.URL, app string) error
 
 // hostWithPort is base's host with the port replaced.
 func hostWithPort(base *url.URL, port int) string {
-	h := base.Hostname()
-	if strings.Contains(h, ":") {
-		h = "[" + h + "]"
-	}
-	return h + ":" + strconv.Itoa(port)
+	return net.JoinHostPort(base.Hostname(), strconv.Itoa(port))
 }
 
 // appName extracts <name> from a cleaned path below the route base; ok is false for any other path.

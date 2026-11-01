@@ -46,8 +46,6 @@ func stopWording(r v1alpha1.StopReason) string {
 		return "An administrator stopped it."
 	case v1alpha1.StopLDAP:
 		return "Your account is no longer allowed to use it."
-	case v1alpha1.StopKubeStop:
-		return "It was stopped by the cluster."
 	default:
 		return "It was stopped."
 	}
