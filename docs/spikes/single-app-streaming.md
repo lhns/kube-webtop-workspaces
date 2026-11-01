@@ -4,8 +4,8 @@ Question: can a desktop stream **one window** of the running Plasma session at `
 instead of the whole desktop? Investigated from source only; nothing was run against a cluster.
 
 Versions read: KWin **v6.8.1** (the version in webtop-nix's pinned nixpkgs), pixelflux **2.2.1**
-(`67b6d83`, pinned by webtop-nix) and main `72e07bc`, Selkies main `58b6c35` (webtop-nix ships the
-2.1.0 wheel, same feature set for what is cited here), webtop-nix `1aa1d33`.
+(`67b6d83`, pinned by webtop-nix) and main `72e07bc`, Selkies main `58b6c35` (webtop-nix ships
+2.1.0; the cited client, layout and fallback-handle code is the same there), webtop-nix `1aa1d33`.
 
 Options:
 
@@ -23,8 +23,9 @@ Options:
   streams but does not receive its clicks), dialogs are not in the stream, and it needs a new
   capture source in pixelflux plus a new display kind in Selkies. Roughly 3–5 weeks plus carrying
   a fork, with the input problem still open.
-- **C: go**, for one app at a time, ~1–1.5 weeks; +2–3 days for several apps at once (a web
-  client patch). Needs one more KWin patch (or a small pixelflux change), see risk 1.
+- **C: go**, for one app at a time, ~1–1.5 weeks. Several apps at once need Selkies work on the
+  web client and the extended-layout code (estimate soft, ~1 week). Needs one more KWin patch (or a
+  small pixelflux change), see risk 1, and is gated on risk 3.
 - **A** stays the fallback when an app must be independent of the session (own audio,
   concurrent use by another person, survives the session), ~1 week, at the cost of a second
   copy of the app and a compositor and encoder per app.
@@ -50,7 +51,6 @@ Options:
   which the patched KWin provides through llvmpipe. The uuid is KWin's `Window.internalId`
   (D-Bus `org.kde.KWin.queryWindowInfo`/`getWindowInfo`,
   [dbusinterface.h:78-87](https://invent.kde.org/plasma/kwin/-/blob/v6.8.1/src/dbusinterface.h#L78-87)).
-  xdg-desktop-portal-kde's window source ends in the same request, behind a picker dialog.
 - Buffers: the vendored software-presentation patch makes `ScreenCastStream::testCreateDmaBuf`
   return nothing on the memfd render device, so the PipeWire stream negotiates **memfd** buffers
   ([kwin-6.8-software-shm-presentation.patch, screencaststream.cpp hunk](https://github.com/lhns/webtop-nix/blob/1aa1d335f26bd5a1c055e171e4fdbd427d42ddc2/pkgs/kwin/kwin-6.8-software-shm-presentation.patch)).
@@ -154,7 +154,7 @@ and the web client ignores audio on a secondary display page
 | | B: window screencast | C: KWin screen per app | A: Selkies per app |
 | --- | --- | --- | --- |
 | new code | pixelflux capture source (Rust), Selkies display kind (Py/JS), input translation, window tracking | KWin patch or pixelflux fix, KWin script, gateway route, agent launch hook | webtop-nix unit template, gateway route per port, launcher |
-| effort | 3–5 weeks + fork upkeep | 1–1.5 weeks (one app at a time); +2–3 days for N | ~1 week |
+| effort | 3–5 weeks + fork upkeep | 1–1.5 weeks (one app at a time); N apps ~1 week more, soft | ~1 week |
 | input | broken under occlusion | native | native |
 | dialogs | missing | shown | shown |
 | audio | session | session (primary page) | per app |
@@ -180,11 +180,13 @@ when apps must have their own audio or be usable by someone else while the deskt
    (like ADR 0004), or better, teach pixelflux to bind the registry object (upstream PR). LinuxServer's
    other patch, `kwin-nested-virtual-output.patch`, is already upstream in 6.8.1
    (`createOutput` does the bookkeeping).
-2. **One secondary display in the web client.** The page knows only `#display2`
+2. **One secondary display assumed.** The page knows only `#display2`
    ([selkies-ws-core.js:870](https://github.com/selkies-project/selkies/blob/58b6c350cd29ee4f4a2423ea1cbf9f927979064f/addons/selkies-web-core/selkies-ws-core.js#L870));
    the server already maps any `displayN`
    ([display_utils.py:1358-1372](https://github.com/selkies-project/selkies/blob/58b6c350cd29ee4f4a2423ea1cbf9f927979064f/src/selkies/display_utils.py#L1358-L1372)).
-   Several apps at once need a client patch (upstream PR).
+   but the extended-layout helper is written for "a primary display plus one secondary"
+   ([display_utils.py:1436-1460](https://github.com/selkies-project/selkies/blob/58b6c350cd29ee4f4a2423ea1cbf9f927979064f/src/selkies/display_utils.py#L1436-L1460)).
+   Several apps at once need client and server layout changes (upstream PRs).
 3. **Placement and lifecycle.** Apps that restore their geometry, single-instance apps that open
    their window elsewhere, Plasma laying a desktop containment on the new screen (hidden under the
    fullscreen app, still rendered once), and the app screen vanishing when its page closes (KWin
@@ -207,10 +209,10 @@ screen and the window returns to the primary.
 | app placement | webtop-nix module or kww image | a KWin script (packaged, loaded at session start) that, on request over D-Bus, finds windows by `desktopFileName`, `sendClientToScreen` to the named output, sets `fullScreen`, activates; and pins later windows of that app |
 | launch | kww agent | endpoint `POST /apps/<name>`: start `<name>.desktop` via `systemd-run --user`/`gtk-launch` if not running, then call the script with the output name |
 | route | kww gateway (`internal/gateway`) | `/apps/<name>` (and `/u/<user>/apps/<name>`) serves the base page with `#display2-<pos>` via the existing inject path and triggers the agent launch; contract.md gets the route |
-| several apps | Selkies upstream (web client) | accept `#displayN`, N ≥ 2 |
+| several apps | Selkies upstream | web client accepts `#displayN`, N ≥ 2; extended layout for more than one secondary |
 | audio (later) | Selkies upstream + webtop-nix | per-app sink and audio on secondary pages, only if wanted |
 
-Rough steps: (1) patch + VM test proving display2 on nested KWin 6.8.1; (2) KWin script + manual
-placement test; (3) agent endpoint and gateway route, one app; (4) web client `#displayN` upstream
-for concurrent apps. Step 1 is the go/no-go gate: if the second display does not come up with the
-patch, fall back to A.
+Rough steps: (1) patch + VM test proving display2 on nested KWin 6.8.1, **with no primary page
+connected**; (2) KWin script + manual placement test; (3) agent endpoint and gateway route, one app;
+(4) Selkies `#displayN` and layout upstream for concurrent apps. Step 1 is the go/no-go gate: if the
+second display does not come up with the patch, or needs the primary page open, fall back to A.
