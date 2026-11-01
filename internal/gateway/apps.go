@@ -46,11 +46,8 @@ type agentClient struct {
 	http *http.Client
 }
 
-func newAgentClient(port int) *agentClient {
-	if port <= 0 {
-		port = names.AgentPort
-	}
-	return &agentClient{port: port, http: &http.Client{
+func newAgentClient() *agentClient {
+	return &agentClient{port: names.AgentPort, http: &http.Client{
 		Timeout: 30 * time.Second, // placing loads a KWin script and may start an app
 		// In-cluster target: never through HTTP(S)_PROXY from the environment.
 		Transport: &http.Transport{Proxy: nil},

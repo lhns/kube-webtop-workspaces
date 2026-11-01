@@ -210,8 +210,7 @@ Rendered from the `desktop` and `storage` config sections. Fixed parts:
   (`desktop.securityContext` replaces the whole container securityContext when set).
 - Readiness probe: TCP on `desktop.port`.
 - Ports: `http` = `desktop.port` (web client) and `agent` = 8081 (the in-pod agent's API for the
-  gateway, section 7.7). The Service exposes both. The agent reads an optional `WEBTOP_AGENT_PORT`
-  (default 8081); the controller never sets it.
+  gateway, section 7.7). The Service exposes both.
 - Volumes:
 
 | mount | volume |
@@ -405,7 +404,7 @@ restart (opening the URL again places it again).
 
 ### 7.7 Agent API (gateway to agent)
 
-The agent listens on `:8081` (`WEBTOP_AGENT_PORT`), plain HTTP, started independently of the
+The agent listens on `:8081`, plain HTTP, started independently of the
 controller API. The gateway reaches it at the host of `status.url` with port 8081.
 
 **No authentication of its own** (ADR 0010): the desktop NetworkPolicy admits only gateway pods to

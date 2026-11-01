@@ -235,7 +235,8 @@ func TestAgentClient(t *testing.T) {
 	port, _ := strconv.Atoi(u.Port())
 	// The desktop's Status.URL names the web client port; the client swaps in the agent port.
 	base, _ := url.Parse("http://" + u.Hostname() + ":8080")
-	c := newAgentClient(port)
+	c := newAgentClient()
+	c.port = port
 
 	if err := c.Open(context.Background(), base, "org.kde.dolphin"); err != nil {
 		t.Fatal(err)

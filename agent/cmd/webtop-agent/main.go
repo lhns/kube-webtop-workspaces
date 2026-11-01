@@ -13,14 +13,12 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
 	"os/user"
 	"path/filepath"
-	"strconv"
 	"syscall"
 	"time"
 
@@ -191,7 +189,7 @@ func run(cfg config.Config) {
 	}).Run(ctx)
 }
 
-// serveApps runs the gateway-facing API until ctx ends. It is independent of the controller API.
+// serveApps runs the gateway-facing API (names.AgentPort in the controller module) until ctx ends. It is independent of the controller API.
 func serveApps(ctx context.Context, cfg config.Config) {
 	home := ""
 	if u, err := user.Lookup(cfg.User); err == nil {
@@ -199,7 +197,7 @@ func serveApps(ctx context.Context, cfg config.Config) {
 	}
 	l := &apps.Launcher{Session: sysd.LookupUser(cfg.User), StateDir: cfg.StateDir, Home: home}
 	srv := &http.Server{
-		Addr:              net.JoinHostPort("", strconv.Itoa(cfg.AgentPort)),
+		Addr:              ":8081",
 		Handler:           apps.Handler(l),
 		ReadHeaderTimeout: 10 * time.Second,
 	}

@@ -97,7 +97,7 @@ func NewHandler(o Options) (*Handler, error) {
 		agent:  o.Agent,
 	}
 	if h.agent == nil {
-		h.agent = newAgentClient(0)
+		h.agent = newAgentClient()
 	}
 	if h.ping <= 0 {
 		h.ping = pingInterval
