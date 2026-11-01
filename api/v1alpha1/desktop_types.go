@@ -46,6 +46,7 @@ const (
 	StageCreatingContainer = "CreatingContainer"
 	StageAttachingVolume   = "AttachingVolume"
 	StagePullingImage      = "PullingImage"
+	StageStoppingPrevious  = "StoppingPrevious"
 )
 
 // Condition types and reasons.
