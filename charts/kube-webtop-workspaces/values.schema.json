@@ -126,6 +126,14 @@
         "extraEnv": {"type": "array"},
         "extraVolumes": {"type": "array"},
         "extraVolumeMounts": {"type": "array"},
+        "nix": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "extraSubstituters": {"type": "array", "items": {"type": "string"}},
+            "extraTrustedPublicKeys": {"type": "array", "items": {"type": "string"}}
+          }
+        },
         "securityContext": {"type": ["object", "null"]},
         "shmSize": {"type": ["string", "integer"]},
         "runSizeLimit": {"type": ["string", "integer"]},
@@ -231,7 +239,8 @@
           "additionalProperties": false,
           "properties": {
             "allowCIDRs": {"type": "array", "items": {"type": "string"}},
-            "exceptCIDRs": {"type": "array", "items": {"type": "string"}}
+            "exceptCIDRs": {"type": "array", "items": {"type": "string"}},
+            "extraRules": {"type": "array", "items": {"type": "object"}}
           }
         }
       }

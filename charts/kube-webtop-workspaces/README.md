@@ -24,6 +24,9 @@ upgrades that change the CRD.
   desktops; use it with a CIDR that excludes the desktop pods (e.g. node addresses).
 - Desktop egress defaults to `0.0.0.0/0`. Put your pod, service and node ranges in
   `networkPolicy.desktopEgress.exceptCIDRs`.
+- A key in `desktop.nix.extraTrustedPublicKeys` is trusted by every desktop's store: whoever can
+  push to that cache can put code on every desktop. Give desktops read access only, unless that
+  shared trust is what you want.
 - The LDAP bind password comes from an existing Secret (`ldap.bindSecret`); there is no literal value.
 - The controller can never delete PersistentVolumeClaims (no `delete` verb; checked by
   `charts/tests/check.py`). The only cluster-scoped permission is `tokenreviews/create`.
@@ -54,6 +57,7 @@ unknown keys. Defaults are in `values.yaml`.
 | `desktop.hostUsers` | `false` | user namespace |
 | `desktop.port`, `resources`, `nodeSelector`, `tolerations`, `affinity`, `priorityClassName`, `podLabels`, `podAnnotations` | see values.yaml | desktop pod scheduling |
 | `desktop.extraEnv`, `extraVolumes`, `extraVolumeMounts`, `securityContext` | | extra pod config; `securityContext` replaces the default container one |
+| `desktop.nix.extraSubstituters` / `extraTrustedPublicKeys` | `[]` / `[]` | extra binary caches in the desktops' `nix.conf`, after cache.nixos.org (passed as `WEBTOP_NIX_*` env) |
 | `desktop.shmSize`, `runSizeLimit`, `terminationGracePeriodSeconds` | `1Gi`, `256Mi`, `120` | |
 | `desktop.serviceAccountName` | `""` | empty: `<release>-desktop` |
 | `desktopServiceAccount.create` | `true` | shared desktop ServiceAccount (token automount off) |
@@ -71,6 +75,7 @@ unknown keys. Defaults are in `values.yaml`.
 | `networkPolicy.dns` | `kube-system` / `k8s-app=kube-dns` | desktop egress to DNS |
 | `networkPolicy.metricsFrom` | `[]` | peers allowed to scrape metrics (nobody by default) |
 | `networkPolicy.desktopEgress.allowCIDRs` / `exceptCIDRs` | `["0.0.0.0/0"]` / `[]` | desktop internet egress; list cluster ranges in `exceptCIDRs` |
+| `networkPolicy.desktopEgress.extraRules` | `[]` | egress rules appended as-is, e.g. to an in-cluster cache that `exceptCIDRs` hides |
 
 ## Development
 

@@ -232,6 +232,15 @@ The image's `webtop-init` writes every `WEBTOP_*` variable to `/run/webtop/env`,
 do not inherit the container env. The controller and agent do not read the three informational ones;
 they are there for desktop-side units and scripts.
 
+Optional Nix settings, never set by the controller (the chart sets them from `desktop.nix.*` through
+`desktop.extraEnv`). `webtop-init` writes them to `/run/webtop/nix.conf`, which `/etc/nix/nix.conf`
+includes; unset adds nothing:
+
+| Variable | nix.conf setting |
+| --- | --- |
+| `WEBTOP_NIX_EXTRA_SUBSTITUTERS` | `extra-substituters`, space-separated URLs |
+| `WEBTOP_NIX_EXTRA_TRUSTED_PUBLIC_KEYS` | `extra-trusted-public-keys`, space-separated `name:key` |
+
 Optional agent overrides, never set by the controller (the defaults are what ships):
 
 | Variable | Default |

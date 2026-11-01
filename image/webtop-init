@@ -166,6 +166,16 @@ write_env() {
   echo "SELKIES_PORT=${WEBTOP_HTTP_PORT:-8080}" > /run/webtop/selkies.env
 }
 
+# Extra binary caches, !included by /etc/nix/nix.conf (container.nix). Newlines are folded so a
+# value cannot add other settings.
+write_nix_conf() {
+  { [ -z "$WEBTOP_NIX_EXTRA_SUBSTITUTERS" ] ||
+      echo "extra-substituters = $(echo "$WEBTOP_NIX_EXTRA_SUBSTITUTERS" | tr '\n' ' ')"
+    [ -z "$WEBTOP_NIX_EXTRA_TRUSTED_PUBLIC_KEYS" ] ||
+      echo "extra-trusted-public-keys = $(echo "$WEBTOP_NIX_EXTRA_TRUSTED_PUBLIC_KEYS" | tr '\n' ' ')"
+  } > /run/webtop/nix.conf
+}
+
 step "mount /run" mount_run
 step "make / rprivate" make_rprivate
 step "volume at /persist" persist_path
@@ -182,6 +192,7 @@ fi
 step "bind $P/home on /home" bind_home
 step "console relay" console_relay
 step "write /run/webtop/env" write_env
+step "write /run/webtop/nix.conf" write_nix_conf
 log "step: writable /sys/power stand-in"
 fake_sys_power || log "no /sys/power stand-in: the desktop will not offer sleep"
 

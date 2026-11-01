@@ -45,8 +45,8 @@ Built from `flake.nix` with nix2container: `nix build .#image`, then
 **Entrypoint.** `webtop-init` makes `/` rprivate, binds the image's `/nix` read-only at
 `/.lower/nix`, mounts an overlayfs on `/nix/store` (lower: the image's store, upper:
 `/persist/nix/upper`, `userxattr`), binds `/persist/nix/var` on `/nix/var/nix` and `/persist/home` on
-`/home`, writes the `WEBTOP_*` env to `/run/webtop/env` (systemd does not pass the container env to
-units) and execs systemd. Stop signal `SIGRTMIN+3`. `WEBTOP_INIT_DEBUG=1` parks the container on a
+`/home`, writes the `WEBTOP_*` env to `/run/webtop/env` and extra binary caches (`WEBTOP_NIX_*`) to
+`/run/webtop/nix.conf` (systemd does not pass the container env to units) and execs systemd. Stop signal `SIGRTMIN+3`. `WEBTOP_INIT_DEBUG=1` parks the container on a
 failed step instead of exiting; `WEBTOP_INIT_SKIP_OVERLAY=1` boots on the image's store alone.
 systemd replaces PID 1's stdout, so a unit follows the journal into a fifo that webtop-init relays to
 the container log (`kubectl logs`).
