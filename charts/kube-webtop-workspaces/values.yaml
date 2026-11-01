@@ -88,7 +88,7 @@ desktop:
   # Extra binary caches in the desktops' nix.conf, after cache.nixos.org. Chart-only: passed as
   # WEBTOP_NIX_* env (docs/contract.md). A listed key is trusted by every user's store.
   nix:
-    extraSubstituters: []       # ["http://attic.attic.svc:8080/desktops"]
+    extraSubstituters: []       # ["http://cache.example.org/desktops"]
     extraTrustedPublicKeys: []  # ["desktops:<base64>"]
   securityContext: null       # when set, replaces the whole default container securityContext (default caps: SYS_ADMIN, SYS_NICE for NixOS's kwin_wayland wrapper)
   shmSize: 1Gi
