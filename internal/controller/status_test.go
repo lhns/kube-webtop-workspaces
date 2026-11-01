@@ -55,6 +55,8 @@ func TestComputeStatus(t *testing.T) {
 		{"off pod exists", statusInput{PodExists: true, Pod: readyPod}, statusResult{Phase: "Stopping", Stage: "Stopping"}},
 		{"off only terminating pod", statusInput{PodExists: true}, statusResult{Phase: "Stopping", Stage: "Stopping"}},
 		{"on no pod", statusInput{Run: true}, statusResult{Phase: "Starting", Stage: "Scheduling", Progress: 5}},
+		{"on, previous pod terminating", statusInput{Run: true, PodExists: true},
+			statusResult{Phase: "Starting", Stage: "StoppingPrevious", Progress: 5}},
 		{"unschedulable", statusInput{Run: true, Pod: mkPod(func(p *corev1.Pod) {
 			p.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodScheduled, Status: corev1.ConditionFalse, Reason: "Unschedulable", Message: "no nodes"}}
 		})}, statusResult{Phase: "Starting", Stage: "Scheduling", Progress: 5, Message: "no nodes"}},
@@ -112,7 +114,7 @@ func TestComputeStatus(t *testing.T) {
 
 func TestMetricStage(t *testing.T) {
 	for in, want := range map[string]string{
-		"Scheduling": "Scheduling", "Ready": "Ready", "PullingImage": "PullingImage", "AttachingVolume": "AttachingVolume", "ImagePullBackOff": "ImagePullBackOff",
+		"Scheduling": "Scheduling", "StoppingPrevious": "StoppingPrevious", "Ready": "Ready", "PullingImage": "PullingImage", "AttachingVolume": "AttachingVolume", "ImagePullBackOff": "ImagePullBackOff",
 		"Starting Plasma": "Booting", "": "Booting",
 	} {
 		if got := metricStage(in); got != want {

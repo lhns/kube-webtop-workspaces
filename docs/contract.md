@@ -159,6 +159,7 @@ Only the leader reconciles. Status is written with merge patches of the fields i
 | `Off`, no pod | `Off` | `Stopped` |
 | `Off`, pod exists | `Stopping` | `Stopping` |
 | `On`, no pod yet | `Starting` | `Scheduling` |
+| `On`, no live pod, the previous pod still terminating | `Starting` | `StoppingPrevious` |
 | pod unschedulable | `Starting` | `Scheduling` (+ `message`) |
 | container waiting (`ContainerCreating`), a `Pulling` event of the pod has no later `Pulled` | `Starting` | `PullingImage` |
 | container waiting, a `FailedAttachVolume` event has no later `SuccessfulAttachVolume` (and no pull is running) | `Starting` | `AttachingVolume` |
@@ -360,7 +361,7 @@ open). `podUID` is added when set. While the stage is `PullingImage` and the pul
 is computed by the gateway, and the boot page ticks it locally and shows "about N%" (elapsed /
 last duration, at most 95) as an estimate, only when `lastDurationSeconds` is known. Stage texts:
 `CreatingContainer` "Creating container", `PullingImage` "Downloading image", `AttachingVolume`
-"Waiting for volume".
+"Waiting for volume", `StoppingPrevious` "Waiting for the previous session to stop".
 
 **Off page / start:** a form `POST <base>/.webtop/start` with field `csrf`. CSRF is a double-submit
 cookie: the page sets cookie `webtop_csrf` (random 32 bytes, base64url, `HttpOnly`, `SameSite=Strict`,

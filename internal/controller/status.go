@@ -35,7 +35,7 @@ const (
 // what the pod reports never sets label values.
 func metricStage(stage string) string {
 	switch stage {
-	case stageStopped, stageStopping, stageScheduling, v1alpha1.StageCreatingContainer, v1alpha1.StageAttachingVolume, v1alpha1.StagePullingImage, stageBooting, stageReady, stageError:
+	case stageStopped, stageStopping, v1alpha1.StageStoppingPrevious, stageScheduling, v1alpha1.StageCreatingContainer, v1alpha1.StageAttachingVolume, v1alpha1.StagePullingImage, stageBooting, stageReady, stageError:
 		return stage
 	}
 	if slices.Contains(waitingErrors, stage) {
@@ -92,6 +92,9 @@ func computeStatus(in statusInput) statusResult {
 	}
 	pod := in.Pod
 	if pod == nil {
+		if in.PodExists { // Recreate: the new pod waits for the old one to terminate
+			return starting(v1alpha1.StageStoppingPrevious, progressScheduling, "")
+		}
 		return starting(stageScheduling, progressScheduling, "")
 	}
 	if c := podCondition(pod, corev1.PodScheduled); c != nil && c.Status == corev1.ConditionFalse && c.Reason == corev1.PodReasonUnschedulable {
