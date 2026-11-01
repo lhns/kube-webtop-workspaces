@@ -1,6 +1,6 @@
 # 0005 — Power actions in the desktop call the controller, authenticated by pod-bound tokens
 
-- Status: Accepted
+- Status: Accepted; its sleep and suspend lines are superseded by [0009](0009-sleep-freezes-the-session.md)
 - Date: 2026-10-28
 
 ## Context

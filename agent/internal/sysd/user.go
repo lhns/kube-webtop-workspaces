@@ -41,6 +41,27 @@ func (u User) Systemctl(ctx context.Context, args ...string) ([]byte, error) {
 	return u.run(ctx, "systemctl", args...)
 }
 
+// ActiveUnits lists the user manager's active services and scopes.
+func (u User) ActiveUnits(ctx context.Context) ([]string, error) {
+	out, err := u.Systemctl(ctx, "list-units", "--plain", "--no-legend", "--no-pager",
+		"--type=service,scope", "--state=active")
+	if err != nil {
+		return nil, err
+	}
+	return parseUnitList(string(out)), nil
+}
+
+// parseUnitList takes the unit names from `systemctl list-units --plain --no-legend` output.
+func parseUnitList(out string) []string {
+	var names []string
+	for _, l := range strings.Split(out, "\n") {
+		if f := strings.Fields(l); len(f) > 0 {
+			names = append(names, f[0])
+		}
+	}
+	return names
+}
+
 // Busctl runs `busctl --user args...` as the user, bounded by a timeout. The user
 // bus is /run/user/<uid>/bus; running as the user avoids D-Bus auth as root.
 func (u User) Busctl(ctx context.Context, args ...string) ([]byte, error) {

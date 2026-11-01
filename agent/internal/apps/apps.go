@@ -12,6 +12,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -37,6 +38,8 @@ var (
 type Session interface {
 	// Systemctl runs `systemctl --user args...`.
 	Systemctl(ctx context.Context, args ...string) ([]byte, error)
+	// ActiveUnits lists the user manager's active services and scopes.
+	ActiveUnits(ctx context.Context) ([]string, error)
 	// Command runs name with the session bus in its environment.
 	Command(ctx context.Context, name string, args ...string) ([]byte, error)
 }
@@ -158,17 +161,11 @@ func dataDirs(env, home string) []string {
 // running reports whether the user manager has an active unit of the app. KDE and systemd name
 // them app-<id>@<random>.service or app-<id>-<pid>.scope, with "-" in the id escaped.
 func (l *Launcher) running(ctx context.Context, name string) (bool, error) {
-	out, err := l.Session.Systemctl(ctx, "list-units", "--plain", "--no-legend", "--no-pager",
-		"--type=service,scope", "--state=active")
+	units, err := l.Session.ActiveUnits(ctx)
 	if err != nil {
 		return false, err
 	}
-	for _, line := range strings.Split(string(out), "\n") {
-		if f := strings.Fields(line); len(f) > 0 && unitIsApp(f[0], name) {
-			return true, nil
-		}
-	}
-	return false, nil
+	return slices.ContainsFunc(units, func(u string) bool { return unitIsApp(u, name) }), nil
 }
 
 var escapedRE = regexp.MustCompile(`\\x([0-9a-fA-F]{2})`)

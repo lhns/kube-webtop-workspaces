@@ -9,12 +9,15 @@ import (
 
 	dto "github.com/prometheus/client_model/go"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/lhns/kube-webtop-workspaces/api/v1alpha1"
 	"github.com/lhns/kube-webtop-workspaces/internal/config"
 	"github.com/lhns/kube-webtop-workspaces/internal/metrics"
+	"github.com/lhns/kube-webtop-workspaces/internal/render"
 )
 
 func startSamples(t *testing.T) uint64 {
@@ -60,5 +63,34 @@ func TestStartDurationObservedOnce(t *testing.T) {
 	}
 	if n := startSamples(t) - before; n != 1 {
 		t.Errorf("start duration observed %d times, want 1", n)
+	}
+}
+
+// A Service created before the agent port existed must get it, or the gateway cannot reach the agent.
+func TestEnsureServiceAddsMissingPort(t *testing.T) {
+	scheme, err := Scheme()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Parse([]byte("namespace: ns\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := &v1alpha1.Desktop{ObjectMeta: metav1.ObjectMeta{Name: "a", Namespace: "ns"}, Spec: v1alpha1.DesktopSpec{User: "a"}}
+	old := render.Service(cfg, d)
+	old.Spec.Ports = old.Spec.Ports[:1]
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(d, old).Build()
+	r := &Reconciler{Client: c}
+	r.SetConfig(cfg)
+
+	if err := r.ensureService(context.Background(), d); err != nil {
+		t.Fatal(err)
+	}
+	var got corev1.Service
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(old), &got); err != nil {
+		t.Fatal(err)
+	}
+	if want := render.Service(cfg, d).Spec.Ports; !equality.Semantic.DeepEqual(got.Spec.Ports, want) {
+		t.Fatalf("ports %+v, want %+v", got.Spec.Ports, want)
 	}
 }

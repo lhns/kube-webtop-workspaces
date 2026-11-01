@@ -6,7 +6,7 @@ Interface details: [docs/contract.md](../../docs/contract.md). Cluster prerequis
 [docs/cluster-requirements.md](../../docs/cluster-requirements.md).
 
 ```sh
-helm install webtop oci://ghcr.io/<owner>/charts/kube-webtop-workspaces -n webtop --create-namespace \
+helm install webtop oci://ghcr.io/lhns/charts/kube-webtop-workspaces -n webtop --create-namespace \
   --set desktop.image=registry.example/desktop:1 \
   --set desktop.runtimeClassName=cgroup-writable \
   --set networkPolicy.ingressController.namespaceSelector.matchLabels."kubernetes\.io/metadata\.name"=ingress-nginx

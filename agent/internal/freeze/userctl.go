@@ -11,21 +11,11 @@ import (
 type UserCtl struct{ User sysd.User }
 
 func (c UserCtl) Units(ctx context.Context) ([]Unit, error) {
-	out, err := c.User.Systemctl(ctx, "list-units", "--plain", "--no-legend", "--no-pager",
-		"--type=service,scope", "--state=active")
-	if err != nil {
+	names, err := c.User.ActiveUnits(ctx)
+	if err != nil || len(names) == 0 {
 		return nil, err
 	}
-	var names []string
-	for _, l := range strings.Split(string(out), "\n") {
-		if f := strings.Fields(l); len(f) > 0 {
-			names = append(names, f[0])
-		}
-	}
-	if len(names) == 0 {
-		return nil, nil
-	}
-	out, err = c.User.Systemctl(ctx, append([]string{"show", "--property=Id,ControlGroup"}, names...)...)
+	out, err := c.User.Systemctl(ctx, append([]string{"show", "--property=Id,ControlGroup"}, names...)...)
 	if err != nil {
 		return nil, err
 	}

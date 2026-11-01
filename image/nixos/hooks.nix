@@ -127,10 +127,10 @@ in
   # already pulls it in, listed so that stays true. webtop-app-screen comes with the webtop module.
   environment.systemPackages = [ agent pkgs.kdePackages.kde-cli-tools ];
 
-  # Boot progress until Plasma and Selkies are up, then client/idle reports. The controller waits
-  # for its ready report (requireAgentReady), so it always restarts.
+  # Boot progress until Plasma and Selkies are up, then client/idle reports, plus the gateway's apps
+  # API on :8081. The controller waits for its ready report (requireAgentReady), so it always restarts.
   systemd.services.webtop-agent = {
-    description = "Desktop agent: boot progress and activity reports";
+    description = "Desktop agent: boot progress, activity reports, apps API";
     wantedBy = [ "multi-user.target" ];
     after = [ "dbus.service" ];
     path = [ config.systemd.package ];

@@ -462,10 +462,7 @@ func (r *Reconciler) ensureService(ctx context.Context, d *v1alpha1.Desktop) err
 		svc.Labels[k] = v
 	}
 	svc.Spec.Selector = desired.Spec.Selector
-	if len(svc.Spec.Ports) != 1 || svc.Spec.Ports[0].Port != desired.Spec.Ports[0].Port ||
-		svc.Spec.Ports[0].TargetPort != desired.Spec.Ports[0].TargetPort || svc.Spec.Ports[0].Name != desired.Spec.Ports[0].Name {
-		svc.Spec.Ports = desired.Spec.Ports
-	}
+	svc.Spec.Ports = desired.Spec.Ports
 	if equality.Semantic.DeepEqual(orig, svc) {
 		return nil
 	}
