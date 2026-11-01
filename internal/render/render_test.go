@@ -107,6 +107,12 @@ func TestPodTemplate(t *testing.T) {
 			t.Errorf("env %s = %q, want %q", k, env[k], v)
 		}
 	}
+	if len(c.Ports) != 2 || c.Ports[1].Name != "agent" || c.Ports[1].ContainerPort != names.AgentPort {
+		t.Errorf("container ports: %+v", c.Ports)
+	}
+	if svc := Service(cfg, d).Spec.Ports; len(svc) != 2 || svc[1].Name != "agent" || svc[1].Port != names.AgentPort {
+		t.Errorf("service ports: %+v", svc)
+	}
 	vols := map[string]corev1.Volume{}
 	for _, v := range p.Volumes {
 		vols[v.Name] = v

@@ -85,7 +85,8 @@ time{white-space:nowrap}
 <p class="muted">{{.Reason}}{{with .StoppedAt}} <time datetime="{{.Format "2006-01-02T15:04:05Z07:00"}}">{{.Format "2006-01-02 15:04 UTC"}}</time>{{end}}</p>
 <form method="post" action="{{.StartURL}}" id="start">
 <input type="hidden" name="csrf" value="{{.CSRF}}">
-<button class="btn" type="submit">Start desktop</button>
+{{with .App}}<input type="hidden" name="app" value="{{.}}">
+{{end}}<button class="btn" type="submit">Start desktop</button>
 </form>
 <script>
 (function(){

@@ -13,6 +13,8 @@ const (
 	IdleSince  = "idle-since"
 	// FrozenUnits lists the units frozen by Sleep; it exists only while asleep.
 	FrozenUnits = "frozen-units"
+	// PlacedApp is the desktop file id placed on the second screen; empty or missing: none.
+	PlacedApp = "placed-app"
 )
 
 // WriteAtomic replaces path via temp file + rename so readers never see a partial write.

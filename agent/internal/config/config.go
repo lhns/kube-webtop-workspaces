@@ -11,6 +11,7 @@ type Config struct {
 	ControllerURL     string // empty disables the API
 	TokenPath         string
 	HTTPPort          int
+	AgentPort         int // the gateway-facing API (apps)
 	StateDir          string
 	WaylandSocket     string // empty = discover from the user manager
 	User              string
@@ -38,10 +39,15 @@ func FromEnv(getenv func(string) string) Config {
 	if p, err := strconv.Atoi(str("WEBTOP_HTTP_PORT", "")); err == nil && p > 0 {
 		port = p
 	}
+	agentPort := 8081
+	if p, err := strconv.Atoi(str("WEBTOP_AGENT_PORT", "")); err == nil && p > 0 {
+		agentPort = p
+	}
 	return Config{
 		ControllerURL:     strings.TrimRight(str("WEBTOP_CONTROLLER_URL", ""), "/"),
 		TokenPath:         str("WEBTOP_TOKEN_PATH", "/run/webtop/sa/token"),
 		HTTPPort:          port,
+		AgentPort:         agentPort,
 		StateDir:          str("WEBTOP_AGENT_STATE_DIR", "/run/webtop"),
 		WaylandSocket:     str("WEBTOP_AGENT_WAYLAND_SOCKET", ""),
 		User:              str("WEBTOP_AGENT_USER", "user"),

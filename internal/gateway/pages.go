@@ -28,6 +28,7 @@ type pageData struct {
 	Reason    string
 	StoppedAt time.Time // zero: not shown
 	CSRF      string
+	App       string // off page: the app to return to after Start, empty for the desktop
 }
 
 // stopWording is the human wording of a lastStop reason.

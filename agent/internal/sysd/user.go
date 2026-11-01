@@ -11,7 +11,10 @@ import (
 	"time"
 )
 
-const systemctlTimeout = 5 * time.Second
+const (
+	systemctlTimeout = 5 * time.Second
+	commandTimeout   = 20 * time.Second // a KWin script load is slower than a systemctl call
+)
 
 // User is the desktop user. systemctl runs as this user without PAM (unlike
 // `systemctl -M user@.host`, which opens a login session per call) and talks
@@ -45,11 +48,23 @@ func (u User) Busctl(ctx context.Context, args ...string) ([]byte, error) {
 }
 
 func (u User) run(ctx context.Context, name string, args ...string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, systemctlTimeout)
+	return u.exec(ctx, systemctlTimeout, name, append([]string{"--user"}, args...)...)
+}
+
+// Command runs name as the user with the session bus in its environment, bounded by commandTimeout.
+// Output is stdout; a failing command's stderr is in the returned *exec.ExitError.
+func (u User) Command(ctx context.Context, name string, args ...string) ([]byte, error) {
+	return u.exec(ctx, commandTimeout, name, args...)
+}
+
+func (u User) exec(ctx context.Context, timeout time.Duration, name string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, name, append([]string{"--user"}, args...)...)
+	cmd := exec.CommandContext(ctx, name, args...)
+	runtimeDir := "/run/user/" + strconv.FormatUint(uint64(u.UID), 10)
 	cmd.Env = []string{
-		"XDG_RUNTIME_DIR=/run/user/" + strconv.FormatUint(uint64(u.UID), 10),
+		"XDG_RUNTIME_DIR=" + runtimeDir,
+		"DBUS_SESSION_BUS_ADDRESS=unix:path=" + runtimeDir + "/bus",
 		"PATH=/run/current-system/sw/bin:/usr/local/bin:/usr/bin:/bin",
 	}
 	setCredential(cmd, u.UID, u.GID)

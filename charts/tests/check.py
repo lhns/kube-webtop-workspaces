@@ -120,6 +120,11 @@ for name, args in cases.items():
             if np["desktop"]["spec"]["ingress"][0]["from"][0]["podSelector"]["matchLabels"][
                     "app.kubernetes.io/component"] != "gateway":
                 fail(f"{name}: desktop ingress is not limited to the gateway")
+            desktop_ingress = {p["port"] for r in np["desktop"]["spec"]["ingress"] for p in r["ports"]}
+            if desktop_ingress != {8080, 8081}:
+                fail(f"{name}: desktop ingress ports {sorted(desktop_ingress)}, want the web client 8080 and the agent API 8081")
+            if len(np["desktop"]["spec"]["ingress"]) != 1:
+                fail(f"{name}: the agent API must be reachable only by the gateway; desktop ingress has several rules")
             if np["desktop"]["spec"]["podSelector"]["matchLabels"] != DESKTOP_LABELS:
                 fail(f"{name}: desktop policy does not select the controller's desktop labels")
             if np["controller"]["spec"]["ingress"][0]["from"][0]["podSelector"]["matchLabels"] != DESKTOP_LABELS:

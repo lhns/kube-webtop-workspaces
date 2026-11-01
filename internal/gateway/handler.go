@@ -43,6 +43,8 @@ type Options struct {
 	Transport http.RoundTripper
 	// PingInterval overrides the SSE keep-alive period (tests).
 	PingInterval time.Duration
+	// Agent opens apps in a desktop; nil uses the HTTP client for the agent port (names.AgentPort).
+	Agent AppOpener
 }
 
 // Handler is the gateway's HTTP handler.
@@ -58,6 +60,7 @@ type Handler struct {
 	ping    time.Duration
 	now     func() time.Time // time.Now; tests replace it
 	proxy   *httputil.ReverseProxy
+	agent   AppOpener
 }
 
 type ctxKey struct{}
@@ -91,6 +94,10 @@ func NewHandler(o Options) (*Handler, error) {
 		secure: o.Config.CookieSecure == nil || *o.Config.CookieSecure,
 		ping:   o.PingInterval,
 		now:    time.Now,
+		agent:  o.Agent,
+	}
+	if h.agent == nil {
+		h.agent = newAgentClient(0)
 	}
 	if h.ping <= 0 {
 		h.ping = pingInterval
@@ -264,7 +271,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	app, isApp := "", false
+	if r.Method == http.MethodGet && IsNavigation(r) {
+		app, isApp = appName(path.Clean("/" + rt.rest))
+	}
 	if isReady(d) {
+		if isApp {
+			h.serveApp(w, r, rt, d, app)
+			return
+		}
 		h.serveProxy(w, r, rt, d, trustedPeer)
 		return
 	}
@@ -456,7 +471,7 @@ func (h *Handler) notRunning(w http.ResponseWriter, r *http.Request, rt *route, 
 	}
 	if d.Spec.PowerState != v1alpha1.PowerOn {
 		if d.Status.LastStop != nil {
-			h.offPage(w, rt, d)
+			h.offPage(w, rt, d, appOf(r, rt))
 			return
 		}
 		if err := h.store.PowerOn(ctx, d); err != nil {
@@ -476,7 +491,16 @@ func (h *Handler) bootPage(w http.ResponseWriter, rt *route, d *v1alpha1.Desktop
 	})
 }
 
-func (h *Handler) offPage(w http.ResponseWriter, rt *route, d *v1alpha1.Desktop) {
+// appOf is the app of a /apps/<name> request, or "".
+func appOf(r *http.Request, rt *route) string {
+	if r.Method != http.MethodGet {
+		return ""
+	}
+	app, _ := appName(path.Clean("/" + rt.rest))
+	return app
+}
+
+func (h *Handler) offPage(w http.ResponseWriter, rt *route, d *v1alpha1.Desktop, app string) {
 	token, err := newCSRFToken()
 	if err != nil {
 		h.errorPage(w, http.StatusInternalServerError, "Error", "Could not create the page.", outError)
@@ -486,7 +510,7 @@ func (h *Handler) offPage(w http.ResponseWriter, rt *route, d *v1alpha1.Desktop)
 	h.count(outOff)
 	data := pageData{
 		Title: "Your desktop is off", Reason: stopWording(d.Status.LastStop.Reason),
-		StartURL: rt.base + reservedPrefix + "/start", CSRF: token,
+		StartURL: rt.base + reservedPrefix + "/start", CSRF: token, App: app,
 	}
 	if t := d.Status.LastStop.Time; !t.IsZero() {
 		data.StoppedAt = t.UTC()
@@ -517,5 +541,9 @@ func (h *Handler) serveStart(w http.ResponseWriter, r *http.Request, rt *route, 
 	}
 	h.count(outStart)
 	w.Header().Set("Cache-Control", "no-store")
-	http.Redirect(w, r, rt.base+"/", http.StatusSeeOther)
+	target := rt.base + "/"
+	if app := returnApp(r); app != "" {
+		target = rt.base + appPrefix + app
+	}
+	http.Redirect(w, r, target, http.StatusSeeOther)
 }

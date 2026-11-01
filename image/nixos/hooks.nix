@@ -123,7 +123,9 @@ let
   };
 in
 {
-  environment.systemPackages = [ agent ];
+  # kioclient starts the app of /apps/<name> from its desktop file (agent/internal/apps); Plasma
+  # already pulls it in, listed so that stays true. webtop-app-screen comes with the webtop module.
+  environment.systemPackages = [ agent pkgs.kdePackages.kde-cli-tools ];
 
   # Boot progress until Plasma and Selkies are up, then client/idle reports. The controller waits
   # for its ready report (requireAgentReady), so it always restarts.
