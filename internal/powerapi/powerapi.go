@@ -323,6 +323,7 @@ type reportRequest struct {
 	Ready            *bool   `json:"ready"`
 	ConnectedClients *int32  `json:"connectedClients"`
 	IdleSeconds      *int64  `json:"idleSeconds"`
+	Asleep           *bool   `json:"asleep"`
 }
 
 func (s *Server) report(w http.ResponseWriter, r *http.Request) {
@@ -376,6 +377,9 @@ func (s *Server) report(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.IdleSeconds != nil {
 		st.IdleSeconds = *req.IdleSeconds
+	}
+	if req.Asleep != nil {
+		st.Asleep = *req.Asleep
 	}
 	now := metav1.NewTime(s.now())
 	st.LastReportTime = &now

@@ -3,10 +3,13 @@ package boot
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -252,5 +255,41 @@ func TestSelkiesClients(t *testing.T) {
 	got, err := SelkiesClients(n)(context.Background())
 	if err != nil || got != 2 {
 		t.Fatalf("got %d, %v", got, err)
+	}
+}
+
+func TestSteadyAsleepChangeReportsImmediately(t *testing.T) {
+	var asleep atomic.Bool
+	s := &fakeSender{}
+	st := &Steady{
+		Sender:   s,
+		Clients:  func(context.Context) (int, error) { return 1, nil },
+		Idle:     func() int { return 0 },
+		Asleep:   asleep.Load,
+		Poll:     time.Millisecond,
+		Interval: time.Hour,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go st.Run(ctx)
+	waitFor(t, func() bool { return len(s.snapshot()) == 1 })
+	asleep.Store(true)
+	waitFor(t, func() bool { return len(s.snapshot()) == 2 })
+	r := s.snapshot()
+	if *r[0].Asleep || !*r[1].Asleep {
+		t.Fatalf("asleep = %v then %v", *r[0].Asleep, *r[1].Asleep)
+	}
+}
+
+func TestSelkiesSessionsIDs(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"sessions":[{"id":"a"},{"id":7},{}]}`))
+	}))
+	defer srv.Close()
+	_, port, _ := net.SplitHostPort(srv.Listener.Addr().String())
+	n, _ := strconv.Atoi(port)
+	got, err := SelkiesSessions(n)(context.Background())
+	if err != nil || !reflect.DeepEqual(got, []string{"a", "7", ""}) {
+		t.Fatalf("got %v, %v", got, err)
 	}
 }

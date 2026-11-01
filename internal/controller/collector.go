@@ -34,8 +34,9 @@ var (
 	descProgress = prometheus.NewDesc("webtop_desktop_boot_progress", "Boot progress 0-100.", desktopLabel, nil)
 	descClients  = prometheus.NewDesc("webtop_desktop_connected_clients", "Clients connected to the desktop.", desktopLabel, nil)
 	descIdle     = prometheus.NewDesc("webtop_desktop_idle_seconds", "Idle seconds reported by the agent.", desktopLabel, nil)
+	descAsleep   = prometheus.NewDesc("webtop_desktop_asleep", "1 while the session is frozen by Sleep.", desktopLabel, nil)
 	descLastStop = prometheus.NewDesc("webtop_desktop_last_stop_timestamp_seconds", "Unix time of the last recorded stop.", []string{"desktop", "reason"}, nil)
-	allDescs     = []*prometheus.Desc{descInfo, descPowerOn, descRunning, descAuth, descPending, descProgress, descClients, descIdle, descLastStop}
+	allDescs     = []*prometheus.Desc{descInfo, descPowerOn, descRunning, descAuth, descPending, descProgress, descClients, descIdle, descAsleep, descLastStop}
 )
 
 func (c *Collector) Describe(ch chan<- *prometheus.Desc) {
@@ -91,6 +92,7 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 		g(descProgress, float64(st.BootProgress), d.Name)
 		g(descClients, float64(st.ConnectedClients), d.Name)
 		g(descIdle, float64(st.IdleSeconds), d.Name)
+		g(descAsleep, b2f(st.Asleep), d.Name)
 		if st.LastStop != nil {
 			g(descLastStop, float64(st.LastStop.Time.UnixMicro())/1e6, d.Name, string(st.LastStop.Reason))
 		}

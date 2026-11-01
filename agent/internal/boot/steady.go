@@ -12,11 +12,12 @@ import (
 )
 
 // Steady drives the phase after ready: a report every Interval, and at once
-// when the client count changes (polled every Poll).
+// when the client count or the sleep state changes (polled every Poll).
 type Steady struct {
 	Sender   Sender
 	Clients  func(ctx context.Context) (int, error) // connected web clients
 	Idle     func() int                             // idle seconds
+	Asleep   func() bool                            // optional: frozen by Sleep
 	Poll     time.Duration
 	Interval time.Duration
 }
@@ -27,6 +28,7 @@ func (s *Steady) Run(ctx context.Context) {
 		sentAt   time.Time
 		sentOnce bool
 		sentN    int
+		sentZ    bool
 		warnedAt time.Time
 	)
 	t := time.NewTicker(s.Poll)
@@ -40,12 +42,17 @@ func (s *Steady) Run(ctx context.Context) {
 		} else {
 			clients = n
 		}
-		if !sentOnce || clients != sentN || time.Since(sentAt) >= s.Interval {
+		asleep := s.Asleep != nil && s.Asleep()
+		if !sentOnce || clients != sentN || asleep != sentZ || time.Since(sentAt) >= s.Interval {
 			idle := s.Idle()
-			if err := s.Sender.Report(ctx, api.Report{ConnectedClients: &clients, IdleSeconds: &idle}); err != nil {
+			r := api.Report{ConnectedClients: &clients, IdleSeconds: &idle}
+			if s.Asleep != nil {
+				r.Asleep = &asleep
+			}
+			if err := s.Sender.Report(ctx, r); err != nil {
 				log.Printf("steady: report: %v", err) // retried on the next poll
 			} else {
-				sentOnce, sentN, sentAt = true, clients, time.Now()
+				sentOnce, sentN, sentZ, sentAt = true, clients, asleep, time.Now()
 			}
 		}
 		select {
@@ -56,29 +63,47 @@ func (s *Steady) Run(ctx context.Context) {
 	}
 }
 
-// SelkiesClients returns a Clients func reading the session count from Selkies.
-func SelkiesClients(port int) func(ctx context.Context) (int, error) {
+// SelkiesSessions returns a func listing the ids of the connected Selkies sessions. A session
+// without an id field is listed as "" (callers then only get the count).
+func SelkiesSessions(port int) func(ctx context.Context) ([]string, error) {
 	url := fmt.Sprintf("http://127.0.0.1:%d/api/sessions", port)
 	hc := &http.Client{Timeout: 5 * time.Second}
-	return func(ctx context.Context) (int, error) {
+	return func(ctx context.Context) ([]string, error) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		if err != nil {
-			return 0, err
+			return nil, err
 		}
 		resp, err := hc.Do(req)
 		if err != nil {
-			return 0, err
+			return nil, err
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
-			return 0, fmt.Errorf("HTTP %d", resp.StatusCode)
+			return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 		}
 		var v struct {
-			Sessions []json.RawMessage `json:"sessions"`
+			Sessions []struct {
+				ID any `json:"id"`
+			} `json:"sessions"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&v); err != nil {
-			return 0, err
+			return nil, err
 		}
-		return len(v.Sessions), nil
+		ids := make([]string, len(v.Sessions))
+		for i, s := range v.Sessions {
+			if s.ID != nil {
+				ids[i] = fmt.Sprint(s.ID)
+			}
+		}
+		return ids, nil
+	}
+}
+
+// SelkiesClients returns a Clients func reading the session count from Selkies.
+func SelkiesClients(port int) func(ctx context.Context) (int, error) {
+	sessions := SelkiesSessions(port)
+	return func(ctx context.Context) (int, error) {
+		ids, err := sessions(ctx)
+		return len(ids), err
 	}
 }

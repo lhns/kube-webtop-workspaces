@@ -32,6 +32,9 @@ spec:
     - jsonPath: .status.connectedClients
       name: Clients
       type: integer
+    - jsonPath: .status.asleep
+      name: Asleep
+      type: boolean
     - jsonPath: .status.updatePending
       name: Update
       type: boolean
@@ -97,6 +100,11 @@ spec:
               appliedTemplateHash:
                 description: AppliedTemplateHash is the pod template hash on the Deployment.
                 type: string
+              asleep:
+                description: |-
+                  Asleep is true while Sleep has the session frozen; the pod keeps running and the next
+                  web client wakes it. Reset with the pod.
+                type: boolean
               bootProgress:
                 format: int32
                 maximum: 100
