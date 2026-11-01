@@ -23,11 +23,12 @@ import (
 )
 
 const (
-	volData  = "data"
-	volRun   = "run"
-	volShm   = "shm"
-	volSA    = "webtop-sa"
-	portName = "http"
+	volData       = "data"
+	volRun        = "run"
+	volShm        = "shm"
+	volSA         = "webtop-sa"
+	portName      = "http"
+	agentPortName = "agent"
 )
 
 func ptr[T any](v T) *T { return &v }
@@ -88,6 +89,11 @@ func Service(cfg *config.Config, d *v1alpha1.Desktop) *corev1.Service {
 				Name:       portName,
 				Port:       cfg.Desktop.Port,
 				TargetPort: intstr.FromInt32(cfg.Desktop.Port),
+				Protocol:   corev1.ProtocolTCP,
+			}, {
+				Name:       agentPortName,
+				Port:       names.AgentPort,
+				TargetPort: intstr.FromInt32(names.AgentPort),
 				Protocol:   corev1.ProtocolTCP,
 			}},
 		},
@@ -159,7 +165,10 @@ func PodTemplate(cfg *config.Config, d *v1alpha1.Desktop) corev1.PodTemplateSpec
 		Name:            names.ContainerName,
 		Image:           dc.Image,
 		ImagePullPolicy: dc.ImagePullPolicy,
-		Ports:           []corev1.ContainerPort{{Name: portName, ContainerPort: dc.Port, Protocol: corev1.ProtocolTCP}},
+		Ports: []corev1.ContainerPort{
+			{Name: portName, ContainerPort: dc.Port, Protocol: corev1.ProtocolTCP},
+			{Name: agentPortName, ContainerPort: names.AgentPort, Protocol: corev1.ProtocolTCP},
+		},
 		Env:             env,
 		VolumeMounts:    mounts,
 		Resources:       *dc.Resources.DeepCopy(),

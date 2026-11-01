@@ -27,7 +27,7 @@ cleanup() {
 trap cleanup EXIT
 
 docker rm -f desktop-boot >/dev/null 2>&1 || true
-args=(--privileged --cgroupns=private --shm-size=1g --add-host=host.docker.internal:host-gateway -p 8080:8080
+args=(--privileged --cgroupns=private --shm-size=1g --add-host=host.docker.internal:host-gateway -p 8080:8080 -p 8083:8081
   -v "$dir/persist:/persist" -v "$dir/token:/token:ro"
   -e WEBTOP_CONTROLLER_URL=http://host.docker.internal:8081 -e WEBTOP_TOKEN_PATH=/token
   -e WEBTOP_HTTP_PORT=8080 -e WEBTOP_USER=ci -e WEBTOP_DESKTOP=ci -e WEBTOP_NAMESPACE=ci
@@ -85,6 +85,11 @@ in_session systemctl --user is-active --quiet plasma-workspace.target \
   || { echo "::error::plasma-workspace.target is not active"; exit 1; }
 code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/ || true)
 case $code in 2??|3??|401) echo "Selkies answers HTTP $code" ;; *) echo "::error::Selkies port answers HTTP $code"; exit 1 ;; esac
+# One app per screen: the helper is installed and the agent serves its API (404: not an application).
+in_session sh -c 'command -v webtop-app-screen && command -v kioclient' >/dev/null \
+  || { echo "::error::webtop-app-screen or kioclient is not on the user's PATH"; exit 1; }
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:8083/api/v1/apps/no-such-app.invalid || true)
+[ "$code" = 404 ] || { echo "::error::the agent's apps API answers HTTP $code, want 404"; exit 1; }
 subst=$(docker exec desktop-boot /run/current-system/sw/bin/nix config show substituters || true)
 case $subst in *cache.nixos.org*http://cache.invalid/ci*) echo "substituters: $subst" ;;
   *) echo "::error::WEBTOP_NIX_EXTRA_SUBSTITUTERS not in nix.conf (substituters: $subst)"; exit 1 ;; esac

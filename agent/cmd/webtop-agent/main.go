@@ -10,16 +10,20 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
+	"os/user"
 	"path/filepath"
 	"syscall"
 	"time"
 
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/api"
+	"github.com/lhns/kube-webtop-workspaces/agent/internal/apps"
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/boot"
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/config"
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/freeze"
@@ -147,6 +151,7 @@ func suspendPoweroff(cfg config.Config) int {
 func run(cfg config.Config) {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer stop()
+	go serveApps(ctx, cfg)
 	if cfg.ControllerURL == "" {
 		// Wait instead of exiting so Restart=always doesn't loop.
 		log.Print("run: WEBTOP_CONTROLLER_URL not set, API disabled")
@@ -182,4 +187,27 @@ func run(cfg config.Config) {
 		Poll:     5 * time.Second,
 		Interval: 30 * time.Second,
 	}).Run(ctx)
+}
+
+// serveApps runs the gateway-facing API (names.AgentPort in the controller module) until ctx ends. It is independent of the controller API.
+func serveApps(ctx context.Context, cfg config.Config) {
+	home := ""
+	if u, err := user.Lookup(cfg.User); err == nil {
+		home = u.HomeDir
+	}
+	l := &apps.Launcher{Session: sysd.LookupUser(cfg.User), StateDir: cfg.StateDir, Home: home}
+	srv := &http.Server{
+		Addr:              ":8081",
+		Handler:           apps.Handler(l),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	go func() {
+		<-ctx.Done()
+		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(shutdown)
+	}()
+	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Printf("apps API: %v", err) // the agent's other jobs go on; systemd restarts it on exit only
+	}
 }

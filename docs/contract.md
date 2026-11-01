@@ -209,6 +209,8 @@ Rendered from the `desktop` and `storage` config sections. Fixed parts:
   `procMount: Unmasked`, `seccompProfile: RuntimeDefault`, `appArmorProfile: Unconfined`
   (`desktop.securityContext` replaces the whole container securityContext when set).
 - Readiness probe: TCP on `desktop.port`.
+- Ports: `http` = `desktop.port` (web client) and `agent` = 8081 (the in-pod agent's API for the
+  gateway, section 7.7). The Service exposes both.
 - Volumes:
 
 | mount | volume |
@@ -301,6 +303,7 @@ Enabled when `ldap.url` is set; otherwise every user is authorized (`LDAPDisable
 | `<base>/.webtop/reload.js` | the script injected into the desktop's page (section 7.3), never proxied |
 | `<base>/.webtop/ping` | GET/HEAD, `204` `no-store`, same authz as the desktop, never proxied. `reload.js` requests it every 60 s so the forward-auth in front of the gateway sees traffic and keeps its session active while a tab is open |
 | `<base>/.webtop/start` | POST start, never proxied |
+| `<base>/apps/<name>` | top-level `GET` only: single-app streaming (section 7.6). The gateway owns this path for navigations; any other request to it is proxied like every other path |
 | `/.webtop/healthz` | not used; probes are on `gateway.healthAddr` (`/healthz`, `/readyz`) |
 
 `/u/<user>` without the trailing slash redirects (308) to `/u/<user>/`. Paths under `/u/` never
@@ -378,6 +381,56 @@ cookie: the page sets cookie `webtop_csrf` (random 32 bytes, base64url, `HttpOnl
 accepted only if field = cookie (constant-time) and the request is same-origin (`Sec-Fetch-Site:
 same-origin` if present, else `Origin` host = `Host`; neither → reject). Success: patch
 `powerState: On`, `303` to `<base>/`. Failure: 403.
+
+### 7.6 Single app: `<base>/apps/<name>`
+
+`<name>` is a desktop file id (`org.kde.dolphin`, `firefox`), `[A-Za-z0-9._-]+`; any application
+installed for the desktop's user is allowed. A path that does not match, or a request that is not a
+navigation (section 7.4) `GET`, is not this route and is handled as any other path.
+
+| desktop | result |
+| --- | --- |
+| not `Running` | the table of section 7.5; the boot page reloads the same URL, and the off page's start form carries `app=<name>` (validated against the name rule) so the `303` goes to `<base>/apps/<name>` instead of `<base>/` |
+| `Running` | the gateway calls the agent (section 7.7); on success `303` to `<base>/#display2-right` (`no-store`) |
+| agent: unknown application | 404 page "App not found" |
+| agent unreachable or failed | 503 page with `Retry-After: 5` |
+
+The target is the Selkies page with the fragment `#display2-right`: it makes KWin grow the screen
+`SELKIES-2` and streams only that screen, with the app fullscreen on it ([webtop-nix, "One app per
+screen"](https://github.com/lhns/webtop-nix#one-app-per-screen)). It is the normal page, so the reload
+script (section 7.3) is injected as usual. Limits: one app at a time (only `display2` exists in
+Selkies' web client), audio plays on the main page only, and placement does not survive a desktop
+restart (opening the URL again places it again).
+
+### 7.7 Agent API (gateway to agent)
+
+The agent listens on `:8081`, plain HTTP, started independently of the
+controller API. The gateway reaches it at the host of `status.url` with port 8081.
+
+**No authentication of its own** (ADR 0010): the desktop NetworkPolicy admits only gateway pods to
+the desktop's ports, the same boundary that protects the web client on `desktop.port`. The gateway
+alone maps the authenticated user (or admin) to a desktop. With `networkPolicy.enabled=false` the
+cluster must provide that isolation itself.
+
+`POST /api/v1/apps/<name>` (no body):
+
+1. `<name>` must match `[A-Za-z0-9._-]+` (else 400) and `applications/<name>.desktop` must exist in
+   the user's data dirs (`~/.local/share`, the user manager's `XDG_DATA_DIRS`, the NixOS profiles)
+   (else 404).
+2. If a different app is recorded in `/run/webtop/placed-app`, `webtop-app-screen release <old>`.
+3. `webtop-app-screen place <name> SELKIES-2`, before the app starts, so its window lands on the
+   screen as it opens. It is repeated on every call (harmless; it also recovers a lost KWin script).
+   Failure: 502.
+4. Record `<name>` in `/run/webtop/placed-app`.
+5. Unless an active unit `app-<name>@....service` or `app-<name>-<pid>.scope` exists in the user
+   manager (how KDE/systemd name a launched app), start it:
+   `systemd-run --user --collect -- kioclient exec <path of the .desktop file>`. Failure: 500.
+   `204` on success.
+
+Reloading `/apps/<name>` therefore does not start a second instance while the app runs; an app that
+is not recognised as running but has its own single-instance logic just raises its window.
+
+`GET /healthz` answers `ok`.
 
 ## 8. Power/report API (controller, every replica)
 
@@ -526,7 +579,7 @@ gateway:
 ```
 
 Ports: gateway HTTP `:8080`, controller power API `:8082`, metrics `:9090`, probes `:8081`
-(`/healthz`, `/readyz`). Leader election uses a `coordination.k8s.io` Lease.
+(`/healthz`, `/readyz`). The desktop pod has its own `:8081` for the agent API (section 7.7). Leader election uses a `coordination.k8s.io` Lease.
 
 ## 10. RBAC
 

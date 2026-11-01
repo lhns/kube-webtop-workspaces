@@ -10,6 +10,7 @@ const (
 	outBoot        = "boot"
 	outOff         = "off"
 	outStart       = "start"
+	outApp         = "app"
 	outUnavailable = "unavailable"
 	outDenied      = "denied"
 	outNotFound    = "notfound"
