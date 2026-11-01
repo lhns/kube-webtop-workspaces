@@ -75,7 +75,7 @@ Conditions:
 | object | name | owner | notes |
 | --- | --- | --- | --- |
 | Deployment | `<prefix><desktop>` | Desktop (controller ownerReference) | replicas 0/1, strategy `Recreate` |
-| Service | `<prefix><desktop>` | Desktop (controller ownerReference) | ClusterIP, port `desktop.port`, selects the desktop label |
+| Service | `<prefix><desktop>` | Desktop (controller ownerReference) | ClusterIP, ports `http` (`desktop.port`) and `agent` (8081), selects the desktop label |
 | PVC | `<prefix><desktop>` | **none, ever** | created on the first start; mounted at `storage.mountPath` |
 
 `<prefix>` is `names.prefix` (default `desktop-`); it must start with a letter and be ≤ 22 chars so
@@ -165,6 +165,7 @@ Only the leader reconciles. Status is written with merge patches of the fields i
 | container waiting, a `FailedAttachVolume` event has no later `SuccessfulAttachVolume` (and no pull is running) | `Starting` | `AttachingVolume` |
 | container waiting, otherwise | `Starting` | `CreatingContainer` |
 | `ErrImagePull`/`ImagePullBackOff`/`CrashLoopBackOff`/`CreateContainerConfigError` | `Error` | the waiting reason (+ `message`) |
+| container terminated, restart pending | `Starting` | `Booting` |
 | container running, no agent report | `Starting` | `Booting` |
 | agent reported, not ready | `Starting` | agent's `stage` (free text, ≤ 64 characters) |
 | pod `Ready` and (`agentReady` or `controller.requireAgentReady=false`) | `Running` | `Ready`, progress 100 |
@@ -255,6 +256,7 @@ Optional agent overrides, never set by the controller (the defaults are what shi
 | `WEBTOP_AGENT_STATE_DIR` | `/run/webtop` |
 | `WEBTOP_AGENT_WAYLAND_SOCKET` | unset: the agent finds it from the user manager's `WAYLAND_DISPLAY` |
 | `WEBTOP_AGENT_USER` | `user` |
+| `WEBTOP_SUSPEND_MODE` | `freeze`: Sleep freezes the session; `poweroff` saves it and powers off (reason `suspend`) |
 
 **Image obligations:**
 
@@ -304,7 +306,6 @@ Enabled when `ldap.url` is set; otherwise every user is authorized (`LDAPDisable
 | `<base>/.webtop/ping` | GET/HEAD, `204` `no-store`, same authz as the desktop, never proxied. `reload.js` requests it every 60 s so the forward-auth in front of the gateway sees traffic and keeps its session active while a tab is open |
 | `<base>/.webtop/start` | POST start, never proxied |
 | `<base>/apps/<name>` | top-level `GET` only: single-app streaming (section 7.6). The gateway owns this path for navigations; any other request to it is proxied like every other path |
-| `/.webtop/healthz` | not used; probes are on `gateway.healthAddr` (`/healthz`, `/readyz`) |
 
 `/u/<user>` without the trailing slash redirects (308) to `/u/<user>/`. Paths under `/u/` never
 reach a desktop unprefixed. A non-admin asking for someone else's desktop gets 403 whether or not it
@@ -603,9 +604,9 @@ Network (besides DNS):
 
 | component | egress | ingress |
 | --- | --- | --- |
-| gateway | API server; desktop Services on `desktop.port` | ingress controller on `gateway.addr` |
+| gateway | API server; desktop Services on `desktop.port` and 8081 (agent) | ingress controller on `gateway.addr` |
 | controller | API server; `ldap.url` when LDAP is enabled | desktop pods on `powerApi.addr` |
-| desktop | controller on `powerApi.addr` (plus whatever the chart allows) | gateway on `desktop.port` |
+| desktop | controller on `powerApi.addr` (plus whatever the chart allows) | gateway on `desktop.port` and 8081 (agent) |
 
 Metrics and probes listen on `metricsAddr` and `healthAddr`. Desktop pods must not reach the gateway:
 it trusts the user header (section 7.1).
@@ -642,7 +643,7 @@ Gateway:
 
 | metric | type | labels |
 | --- | --- | --- |
-| `webtop_gateway_requests_total` | counter | `outcome` (`proxy`, `boot`, `off`, `start`, `unavailable`, `denied`, `notfound`, `error`) |
+| `webtop_gateway_requests_total` | counter | `outcome` (`proxy`, `boot`, `off`, `start`, `app`, `unavailable`, `denied`, `notfound`, `error`) |
 | `webtop_gateway_websockets` | gauge | — |
 | `webtop_gateway_starts_total` | counter | `trigger` (`create`, `navigate`, `button`) |
 
