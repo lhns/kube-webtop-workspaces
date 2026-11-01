@@ -193,13 +193,15 @@ when apps must have their own audio or be usable by someone else while the deskt
    their window elsewhere, Plasma laying a desktop containment on the new screen (hidden under the
    fullscreen app, still rendered once), and the app screen vanishing when its page closes (KWin
    moves the window back to the primary). With no primary page open, the primary screen still
-   exists unseen: an app window that opens there (a second window, a dialog of a window not on the
-   app screen) is invisible at `/apps/<name>` until the placement rule moves it.
+   exists unseen: an app window that opens there would be invisible at `/apps/<name>`.
+   `webtop-app-screen` (below) moves every window and dialog of the app, also later ones, and the
+   permanent test covers a later window.
 4. **A secondary page alone needs a Selkies patch** (confirmed, see step 1). Selkies lays out a
    second display only beside a connected primary page
    ([websockets_mode.py:6585-6618 at 2.1.0](https://github.com/selkies-project/selkies/blob/2.1.0/src/selkies/websockets_mode.py#L6585-L6618),
    unchanged on main) and otherwise logs "Calculated total display size is zero". The patch adds
-   the secondary-only case; carried in webtop-nix until upstream takes it.
+   the secondary-only case; carried in webtop-nix until upstream takes it
+   ([upstream text](https://github.com/lhns/webtop-nix/blob/second-display/docs/upstream/selkies-second-display-without-primary.md)).
 
 ## Sketched design (C)
 
@@ -210,36 +212,34 @@ screen and the window returns to the primary.
 
 | component | repo | change |
 | --- | --- | --- |
-| KWin output-device globals | webtop-nix (`pkgs/kwin/`) or pixelflux upstream | vendor LinuxServer's patch next to the presentation patches, or a pixelflux PR binding `kde_output_device_registry_v2` |
-| Selkies secondary-only layout | webtop-nix (`pkgs/selkies.nix`) and Selkies upstream | the step 1 patch, reading the primary screen's real size instead of the last layout's |
-| second display check | webtop-nix VM test | `tests/second-display.nix` from step 1, turned into assertions |
-| app placement | webtop-nix module or kww image | a KWin script (packaged, loaded at session start) that, on request over D-Bus, finds windows by `desktopFileName`, `sendClientToScreen` to the named output, sets `fullScreen`, activates; and pins later windows of that app |
-| launch | kww agent | endpoint `POST /apps/<name>`: start `<name>.desktop` via `systemd-run --user`/`gtk-launch` if not running, then call the script with the output name |
+| KWin output-device globals | webtop-nix (`pkgs/kwin/`) | done in lhns/webtop-nix#10 (LinuxServer's patch, ADR 0004 amended); a pixelflux PR binding `kde_output_device_registry_v2` would make it unnecessary |
+| Selkies secondary-only layout | webtop-nix (`pkgs/selkies/`), Selkies upstream | done in lhns/webtop-nix#10, reading the primary screen's current size; upstream not yet submitted |
+| second display check | webtop-nix | done: `checks.second-display` asserts the path end to end |
+| app placement | webtop-nix | done: `webtop-app-screen place <app-id> <screen>` / `release <app-id>` (webtop-nix README, "One app per screen"), a per-app KWin script loaded over D-Bus |
+| launch | kww agent | endpoint `POST /apps/<name>`: start `<name>.desktop` via `systemd-run --user`/`gtk-launch` if not running, then `webtop-app-screen place <app-id> SELKIES-2` |
 | route | kww gateway (`internal/gateway`) | `/apps/<name>` (and `/u/<user>/apps/<name>`) serves the base page with `#display2-<pos>` via the existing inject path and triggers the agent launch; contract.md gets the route |
 | several apps | Selkies upstream | web client accepts `#displayN`, N ≥ 2; extended layout for more than one secondary |
 | audio (later) | Selkies upstream + webtop-nix | per-app sink and audio on secondary pages, only if wanted |
 
-Rough steps: (1) ~~patch + VM test proving display2 on nested KWin 6.8.1 with no primary page~~
-done, passed with both patches; (2) KWin script for placement (the test's script is the seed);
-(3) agent endpoint and gateway route, one app; (4) Selkies `#displayN` and layout upstream for
-concurrent apps.
+Rough steps: (1) and (2), the second display without a primary page and the app placement, are
+done in lhns/webtop-nix#10; (3) agent endpoint and gateway route, one app; (4) Selkies `#displayN`
+and layout upstream for concurrent apps.
 
 ## Step 1 results (VM test)
 
-[lhns/webtop-nix#9](https://github.com/lhns/webtop-nix/pull/9) (draft) adds `tests/second-display.nix`:
-the webtop module in a NixOS VM (KWin 6.8.1 nested in pixelflux 2.2.1, Selkies 2.1.0, llvmpipe,
-JPEG encoder), headless Chromium via Playwright opening `#display2-right` (1024x640) first alone,
-then beside a primary page (1280x720). A KWin script (loaded over D-Bus) sends `wev` to the newest
-screen fullscreen; the page then gets a click at (512,320) and the keys `k q`. Evidence per run is
-the `second-display-probe` artifact (summary, screenshots, `kscreen-doctor -o`, `wev` log, journal).
+The permanent check is `checks.x86_64-linux.second-display` in webtop-nix
+([`tests/second-display.nix`](https://github.com/lhns/webtop-nix/blob/second-display/tests/second-display.nix),
+lhns/webtop-nix#10). It boots the module in a NixOS VM (KWin 6.8.1 nested in pixelflux 2.2.1,
+llvmpipe, JPEG encoder), opens `/#display2-right` (1024x640) in headless Chromium with **no primary
+page**, and asserts:
 
-| run | KWin | Selkies | display2 alone | display2 beside primary |
-| --- | --- | --- | --- | --- |
-| [stock](https://github.com/lhns/webtop-nix/actions/runs/41260449239) | presentation patches | 2.1.0 | no layout ("Calculated total display size is zero"), black page | screen refused: "virtual screen 'SELKIES-2' produced no output device", display dropped |
-| [+ globals patch](https://github.com/lhns/webtop-nix/actions/runs/41261629523) | + `kwin-6.7-output-device-globals.patch` | 2.1.0 | as stock | screen `SELKIES-2` 1024x640 added, its capture streams the second screen's wallpaper |
-| [+ Selkies patch](https://github.com/lhns/webtop-nix/actions/runs/41264733727) | as above | + secondary-only layout | screen added, streams; `wev` gets pointer enter at (500,300) surface-local, left press/release, keys `k` and `q` | same |
+- screen `SELKIES-2` appears, and the page streams non-black frames;
+- `webtop-app-screen place wev SELKIES-2` moves the running app there, fullscreen;
+- a click at page (500,300) reaches the app at surface (500,300), and the keys `k q` arrive;
+- a window of the app opened later lands on `SELKIES-2`;
+- closing the page removes the screen.
 
-So both deciding risks are settled: (1) the second screen needs the KWin globals patch (or a
-pixelflux fix) and then works; (2) a display2 page streams and takes input with no primary page,
-given a ~15-line Selkies patch. Input coordinates map 1:1 from the page to the fullscreen window.
-Closing the page removes the screen and KWin returns its windows to the primary.
+All 8 assertions passed on the PR's CI run; the PR description records the run and the result of
+each assertion. Without the patches (spike runs on the closed lhns/webtop-nix#9), stock KWin
+refused the screen ("virtual screen 'SELKIES-2' produced no output device"), and stock Selkies laid
+out nothing for a page with no primary page ("Calculated total display size is zero", black page).
