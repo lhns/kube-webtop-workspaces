@@ -1,4 +1,4 @@
-// Package sysd probes systemd and the desktop for the boot phase.
+// Package sysd talks to systemd and runs commands as the desktop user.
 package sysd
 
 import (
@@ -76,7 +76,7 @@ func (p *Probe) DesktopActive(ctx context.Context) bool {
 }
 
 // Compositing reports whether KWin's Compositing.active is true. The type is
-// deliberately not checked: it is qpainter on Plasma 6.7 and OpenGL on 6.8.
+// deliberately not checked: it depends on the KWin version and its software-rendering patch.
 func (p *Probe) Compositing(ctx context.Context) bool {
 	out, err := p.User.Busctl(ctx, "get-property", "org.kde.KWin", "/Compositor", "org.kde.kwin.Compositing", "active")
 	return err == nil && parseBusctlBool(out)

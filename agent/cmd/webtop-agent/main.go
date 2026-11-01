@@ -1,6 +1,6 @@
 // Command webtop-agent is the in-pod agent of a desktop.
 //
-//	webtop-agent run                 long-running: boot/steady reports
+//	webtop-agent run                 long-running: boot/steady reports, and the gateway's apps API on :8081
 //	webtop-agent power-hook          at shutdown: report the queued target (poweroff|reboot|halt)
 //	webtop-agent suspend             Sleep: freeze the session until the next client (or, with
 //	                                 WEBTOP_SUSPEND_MODE=poweroff or on failure, mark + poweroff)
@@ -189,7 +189,8 @@ func run(cfg config.Config) {
 	}).Run(ctx)
 }
 
-// serveApps runs the gateway-facing API (names.AgentPort in the controller module) until ctx ends. It is independent of the controller API.
+// serveApps serves the gateway-facing apps API (docs/contract.md, 7.7) until ctx ends, independently
+// of the controller API.
 func serveApps(ctx context.Context, cfg config.Config) {
 	home := ""
 	if u, err := user.Lookup(cfg.User); err == nil {

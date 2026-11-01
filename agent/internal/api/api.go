@@ -39,7 +39,7 @@ type PowerRequest struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-// Report fields are pointers so absent ones are omitted (the controller leaves them unchanged).
+// Report fields left empty are omitted, and the controller leaves them unchanged.
 type Report struct {
 	Stage            string `json:"stage,omitempty"`
 	BootProgress     *int   `json:"bootProgress,omitempty"`

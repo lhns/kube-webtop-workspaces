@@ -1,5 +1,4 @@
-// Package state handles the small files the agent shares across its
-// processes (stop-reason, idle-since) in the state directory.
+// Package state handles the small files in the state directory that the agent's processes share.
 package state
 
 import (
