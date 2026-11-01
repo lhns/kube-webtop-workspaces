@@ -4,11 +4,11 @@ import (
 	"context"
 	"strings"
 
-	"github.com/lhns/kube-webtop-workspaces/agent/internal/sysd"
+	"github.com/lhns/kube-webtop-workspaces/agent/internal/usersession"
 )
 
 // UserCtl is Systemctl over the desktop user's manager.
-type UserCtl struct{ User sysd.User }
+type UserCtl struct{ User usersession.User }
 
 func (c UserCtl) Units(ctx context.Context) ([]Unit, error) {
 	names, err := c.User.ActiveUnits(ctx)

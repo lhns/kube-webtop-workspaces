@@ -39,7 +39,7 @@ type Options struct {
 	Hub       *Hub
 	Metrics   *Metrics
 	Log       logr.Logger
-	// Transport is the proxy transport; nil builds one for in-cluster targets.
+	// Transport reaches desktop targets, for the proxy and the agent client; nil builds one for in-cluster targets.
 	Transport http.RoundTripper
 	// PingInterval overrides the SSE keep-alive period (tests).
 	PingInterval time.Duration
@@ -96,9 +96,6 @@ func NewHandler(o Options) (*Handler, error) {
 		now:    time.Now,
 		agent:  o.Agent,
 	}
-	if h.agent == nil {
-		h.agent = newAgentClient()
-	}
 	if h.ping <= 0 {
 		h.ping = pingInterval
 	}
@@ -120,6 +117,9 @@ func NewHandler(o Options) (*Handler, error) {
 			MaxIdleConnsPerHost: 32,
 			IdleConnTimeout:     90 * time.Second,
 		}
+	}
+	if h.agent == nil {
+		h.agent = newAgentClient(rt)
 	}
 	h.proxy = &httputil.ReverseProxy{
 		Rewrite:        h.rewrite,

@@ -34,7 +34,11 @@ var (
 	ErrLaunch = errors.New("starting the app failed")
 )
 
-// Session runs commands as the desktop user. sysd.User implements it.
+// Port is where the agent serves the gateway (docs/contract.md 7.7). Also names.AgentPort in the
+// controller module and $agentPort in the chart's networkpolicy.yaml: keep the three equal.
+const Port = 8081
+
+// Session runs commands as the desktop user. usersession.User implements it.
 type Session interface {
 	// Systemctl runs `systemctl --user args...`.
 	Systemctl(ctx context.Context, args ...string) ([]byte, error)

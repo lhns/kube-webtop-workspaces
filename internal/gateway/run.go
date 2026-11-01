@@ -15,8 +15,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	toolscache "k8s.io/client-go/tools/cache"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
@@ -25,29 +23,27 @@ import (
 
 	"github.com/lhns/kube-webtop-workspaces/api/v1alpha1"
 	"github.com/lhns/kube-webtop-workspaces/internal/config"
+	"github.com/lhns/kube-webtop-workspaces/internal/scheme"
 )
 
 // Run starts the gateway. It blocks until ctx is done.
 func Run(ctx context.Context, restCfg *rest.Config, cfg *config.Config) error {
 	log := ctrllog.Log.WithName("gateway")
 
-	scheme := runtime.NewScheme()
-	if err := clientgoscheme.AddToScheme(scheme); err != nil {
-		return err
-	}
-	if err := v1alpha1.AddToScheme(scheme); err != nil {
+	sch, err := scheme.New()
+	if err != nil {
 		return err
 	}
 
 	c, err := cache.New(restCfg, cache.Options{
-		Scheme:            scheme,
+		Scheme:            sch,
 		DefaultNamespaces: map[string]cache.Config{cfg.Namespace: {}},
 	})
 	if err != nil {
 		return fmt.Errorf("cache: %w", err)
 	}
 	cl, err := client.New(restCfg, client.Options{
-		Scheme: scheme,
+		Scheme: sch,
 		Cache:  &client.CacheOptions{Reader: c},
 	})
 	if err != nil {

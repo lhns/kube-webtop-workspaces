@@ -1,4 +1,4 @@
-// Package sysd talks to systemd and runs commands as the desktop user.
+// Package sysd probes systemd and the desktop for the boot phase and lists pending jobs.
 package sysd
 
 import (
@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/godbus/dbus/v5"
+
+	"github.com/lhns/kube-webtop-workspaces/agent/internal/usersession"
 )
 
 const (
@@ -20,7 +22,7 @@ const (
 
 // Probe implements boot.Probe against the system bus, systemctl and TCP.
 type Probe struct {
-	User User
+	User usersession.User
 	Port int
 
 	conn *dbus.Conn // system bus

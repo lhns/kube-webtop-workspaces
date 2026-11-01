@@ -47,11 +47,10 @@ type agentClient struct {
 	http *http.Client
 }
 
-func newAgentClient() *agentClient {
+func newAgentClient(rt http.RoundTripper) *agentClient {
 	return &agentClient{port: names.AgentPort, http: &http.Client{
-		Timeout: 30 * time.Second, // placing loads a KWin script and may start an app
-		// In-cluster target: never through HTTP(S)_PROXY from the environment.
-		Transport: &http.Transport{Proxy: nil},
+		Timeout:   30 * time.Second, // placing loads a KWin script and may start an app
+		Transport: rt,
 	}}
 }
 

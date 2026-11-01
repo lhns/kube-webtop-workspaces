@@ -18,6 +18,7 @@ import (
 	"github.com/lhns/kube-webtop-workspaces/internal/config"
 	"github.com/lhns/kube-webtop-workspaces/internal/metrics"
 	"github.com/lhns/kube-webtop-workspaces/internal/render"
+	"github.com/lhns/kube-webtop-workspaces/internal/scheme"
 )
 
 func startSamples(t *testing.T) uint64 {
@@ -31,7 +32,7 @@ func startSamples(t *testing.T) uint64 {
 
 // A reconcile on a cache that has not seen our Running write yet must not observe the start again.
 func TestStartDurationObservedOnce(t *testing.T) {
-	scheme, err := Scheme()
+	scheme, err := scheme.New()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +69,7 @@ func TestStartDurationObservedOnce(t *testing.T) {
 
 // A Service created before the agent port existed must get it, or the gateway cannot reach the agent.
 func TestEnsureServiceAddsMissingPort(t *testing.T) {
-	scheme, err := Scheme()
+	scheme, err := scheme.New()
 	if err != nil {
 		t.Fatal(err)
 	}
