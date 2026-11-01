@@ -12,6 +12,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/lhns/kube-webtop-workspaces/api/v1alpha1"
+	"github.com/lhns/kube-webtop-workspaces/internal/scheme"
 )
 
 type staticDir map[string]struct{}
@@ -24,7 +25,7 @@ func (d staticDir) IsMember(_ context.Context, u string) (bool, error) {
 
 // The sync reads the member set while a reconcile may Add to the cache (run with -race).
 func TestSyncDoesNotShareMemberMap(t *testing.T) {
-	scheme, err := Scheme()
+	scheme, err := scheme.New()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +59,7 @@ func TestSyncDoesNotShareMemberMap(t *testing.T) {
 // The directory's member set already includes the admin group (ldap.adminGroupDN): such a user
 // keeps a running desktop, and only a user in neither group is stopped.
 func TestSyncKeepsAdminGroupMember(t *testing.T) {
-	scheme, err := Scheme()
+	scheme, err := scheme.New()
 	if err != nil {
 		t.Fatal(err)
 	}

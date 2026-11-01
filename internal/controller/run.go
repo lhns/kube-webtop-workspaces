@@ -10,8 +10,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/runtime"
-	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
@@ -21,24 +19,12 @@ import (
 	crmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-	"github.com/lhns/kube-webtop-workspaces/api/v1alpha1"
 	"github.com/lhns/kube-webtop-workspaces/internal/config"
 	"github.com/lhns/kube-webtop-workspaces/internal/ldap"
 	"github.com/lhns/kube-webtop-workspaces/internal/names"
 	"github.com/lhns/kube-webtop-workspaces/internal/powerapi"
+	"github.com/lhns/kube-webtop-workspaces/internal/scheme"
 )
-
-// Scheme has the core types and the Desktop API.
-func Scheme() (*runtime.Scheme, error) {
-	s := runtime.NewScheme()
-	if err := clientgoscheme.AddToScheme(s); err != nil {
-		return nil, err
-	}
-	if err := v1alpha1.AddToScheme(s); err != nil {
-		return nil, err
-	}
-	return s, nil
-}
 
 // CacheOptions restricts the cache to the namespace, pods to the desktop pods and events to pod events.
 func CacheOptions(cfg *config.Config) cache.Options {
@@ -80,7 +66,7 @@ func Setup(mgr ctrl.Manager, cfg *config.Config, dir ldap.Directory) (*Reconcile
 // Run starts the controller manager: reconciler and LDAP sync (leader only) and the
 // power/report API (every replica). It blocks until ctx is done.
 func Run(ctx context.Context, restCfg *rest.Config, cfg *config.Config) error {
-	scheme, err := Scheme()
+	scheme, err := scheme.New()
 	if err != nil {
 		return err
 	}

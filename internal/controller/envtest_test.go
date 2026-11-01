@@ -26,6 +26,7 @@ import (
 	"github.com/lhns/kube-webtop-workspaces/api/v1alpha1"
 	"github.com/lhns/kube-webtop-workspaces/internal/config"
 	"github.com/lhns/kube-webtop-workspaces/internal/names"
+	"github.com/lhns/kube-webtop-workspaces/internal/scheme"
 )
 
 const testNS = "default"
@@ -90,7 +91,7 @@ ldap: {url: "ldap://fake", baseDN: "dc=x", groupDN: "cn=g,dc=x"}
 	if err != nil {
 		panic(err)
 	}
-	scheme, err := Scheme()
+	scheme, err := scheme.New()
 	if err != nil {
 		panic(err)
 	}

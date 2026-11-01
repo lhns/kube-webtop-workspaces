@@ -12,6 +12,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/lhns/kube-webtop-workspaces/api/v1alpha1"
+	"github.com/lhns/kube-webtop-workspaces/internal/scheme"
 )
 
 const pulledMsg = `Successfully pulled image "ghcr.io/x@sha256:abc" in 9m13.252s (9m13.252s including waiting). Image size: 3745009478 bytes.`
@@ -120,7 +121,7 @@ func TestUpdateImagePull(t *testing.T) {
 
 func TestNextImagePullUsesOtherDesktops(t *testing.T) {
 	const img = "ghcr.io/x@sha256:abc"
-	scheme, err := Scheme()
+	scheme, err := scheme.New()
 	if err != nil {
 		t.Fatal(err)
 	}
