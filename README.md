@@ -82,7 +82,7 @@ image update the template's image-registry inputs are relocked automatically.
 | pod deleted (`SIGRTMIN+3`) | `halt.target` | `stop`/`kube-stop`, after saving the Plasma session |
 | Shut down in Plasma, `systemctl poweroff` | `poweroff.target` | `stop`/`user`, or `stop`/`idle` (heuristic below) |
 | Restart | `reboot.target` | `reboot` |
-| Sleep | `suspend.target` | marker + poweroff, then `suspend`/`suspend`, after saving the session |
+| Sleep | `suspend.target` | no stop: the session is frozen, the pod keeps running (below); only the fallback is marker + poweroff, then `suspend`/`suspend` |
 
 `webtop-power-hook.service` (a boot-time `RemainAfterExit` unit whose `ExecStop` runs at shutdown,
 while the token, `resolv.conf` and `hosts` mounts still exist; it reads the target from the queued
@@ -96,10 +96,28 @@ A Plasma shutdown saves the session itself (restore is on by default);
 `saveCurrentSession` over the user's session bus, which writes the "saved by user" session, and
 copies that group to "saved at previous logout" in `~/.config/ksmserverrc`, the one Plasma restores. A shell `systemctl poweroff` does not save it, as on a real machine.
 
+**Sleep.** `systemd-suspend.service` runs `webtop-agent suspend` (ADR 0009). It freezes the user
+manager's `plasma-*.service` units in `session.slice` and every unit in `app.slice` except Selkies
+(`systemctl --user freeze`, the cgroup freezer), reports `asleep: true`, and blocks. Selkies, the
+session bus, audio, `background.slice` and the agent stay up, so the readiness probe passes and
+a browser can still connect. A new Selkies connection thaws exactly what was frozen and the unit
+exits 0, so logind and PowerDevil resume as on hardware. The units are listed in
+`/run/webtop/frozen-units`; `webtop-agent thaw` thaws them.
+
+Wake rule: the agent records the Selkies session ids when Sleep starts and wakes on a session
+id it has not seen, or when the session count rises above the lowest it has seen since. Clients
+open at Sleep do not wake it, but their reload (new id) or closing and reopening the tab does. If
+Selkies' sessions carry no ids, a reload faster than the 0.5 s poll cannot be told from the open tab.
+
+A stop while asleep (pod deletion, poweroff) thaws first: the agent thaws on SIGTERM,
+`systemd-suspend.service` is ordered after `webtop-session-save.service` so it stops first, and the
+latter thaws again before saving. If freezing fails, or `WEBTOP_SUSPEND_MODE=poweroff` is set in the
+pod environment (default `freeze`), Sleep saves the session and powers off with reason `suspend`.
+
 **Boot progress and activity.** `webtop-agent run` reports the stage and progress from systemd's
 boot progress, the user's `plasma-workspace.target` and Selkies' port, then `ready`. Afterwards it
-reports `connectedClients` (Selkies `GET /api/sessions`) and `idleSeconds` every 30 s and when the
-client count changes.
+reports `connectedClients` (Selkies `GET /api/sessions`), `idleSeconds` and `asleep` every 30 s and when the
+client count or sleep state changes.
 
 **Path prefix.** The gateway strips `/u/<user>` and requires the trailing slash; the Selkies web
 client loads its assets and opens `api/websockets` relative to the page's directory, so it needs no
@@ -120,7 +138,8 @@ the `desktop-image` job caches it (`packages.x86_64-linux.kwin`, keyed by its st
 **Known limits**
 
 - The Nix build sandbox is off (`pivot_root` fails with `EPERM` in the user-namespaced pod).
-- No real suspend: sleep is mapped to session save + poweroff. logind offers sleep only with a
+- No real suspend: sleep freezes the session's processes. The pod keeps its RAM and CPU request while
+  asleep, and PowerDevil's idle shutdown does not fire while frozen. logind offers sleep only with a
   writable `/sys/power/state`, which is read-only in a pod; webtop-init binds a stand-in over it
   (best effort, logged).
 - Session restore on Wayland relaunches apps; it restores only what ksmserver can (X11 apps via

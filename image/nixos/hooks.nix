@@ -161,8 +161,9 @@ in
     };
   };
 
-  # Saves the Plasma session on a pod deletion or a suspend, where ksmserver does not. Stopped before
-  # the session and the user manager (plasma-ksmserver.service runs there).
+  # Saves the Plasma session on a pod deletion or a fallback suspend, where ksmserver does not.
+  # Stopped before the session and the user manager (plasma-ksmserver.service runs there). The
+  # thaw first ("+": as root) is a no-op unless Sleep left units frozen, which would hang ksmserver.
   systemd.services.webtop-session-save = {
     description = "Save the Plasma session before an external stop";
     wantedBy = [ "multi-user.target" ];
@@ -176,17 +177,23 @@ in
       RemainAfterExit = true;
       User = cfg.user;
       ExecStart = "${pkgs.coreutils}/bin/true";
-      ExecStop = "${exe} save-session";
+      ExecStop = [ "+${exe} thaw" "${exe} save-session" ];
       EnvironmentFile = envFile;
       TimeoutStopSec = 40;
     };
   };
 
-  # No real suspend in a pod: a suspend from the desktop saves the session and powers off with
-  # reason "suspend". Hibernation variants are off.
+  # No real suspend in a pod: Sleep freezes the session (ADR 0009). The agent blocks until the next
+  # web client, so no start timeout. After= webtop-session-save stops this first, so the agent
+  # thaws before ksmserver is asked to save. Hibernation variants are off.
   systemd.services.systemd-suspend = {
     path = [ config.systemd.package ];
-    serviceConfig.ExecStart = [ "" "${exe} suspend" ];
+    after = [ "webtop-session-save.service" ];
+    serviceConfig = {
+      ExecStart = [ "" "${exe} suspend" ];
+      EnvironmentFile = envFile;
+      TimeoutStartSec = "infinity";
+    };
   };
   systemd.sleep.settings.Sleep = {
     AllowHibernation = "no";

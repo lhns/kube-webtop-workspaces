@@ -142,6 +142,8 @@ func stageText(stage string) string {
 		return "Downloading image"
 	case v1alpha1.StageAttachingVolume:
 		return "Waiting for volume"
+	case v1alpha1.StageStoppingPrevious:
+		return "Waiting for the previous session to stop"
 	}
 	return stage
 }

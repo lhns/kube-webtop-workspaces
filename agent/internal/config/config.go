@@ -17,6 +17,7 @@ type Config struct {
 	PowerHookTimeout  time.Duration
 	IdleThreshold     time.Duration
 	CompositorTimeout time.Duration
+	SuspendMode       string // "freeze" (default) or "poweroff"
 }
 
 // FromEnv builds a Config; getenv is os.Getenv in production.
@@ -47,5 +48,14 @@ func FromEnv(getenv func(string) string) Config {
 		PowerHookTimeout:  dur("WEBTOP_POWER_HOOK_TIMEOUT", 60*time.Second),
 		IdleThreshold:     dur("WEBTOP_IDLE_REASON_THRESHOLD", 60*time.Second),
 		CompositorTimeout: dur("WEBTOP_COMPOSITOR_TIMEOUT", 3*time.Minute),
+		SuspendMode:       suspendMode(str("WEBTOP_SUSPEND_MODE", "")),
 	}
+}
+
+// suspendMode is "poweroff" only when asked for; anything else freezes.
+func suspendMode(v string) string {
+	if strings.EqualFold(v, "poweroff") {
+		return "poweroff"
+	}
+	return "freeze"
 }
