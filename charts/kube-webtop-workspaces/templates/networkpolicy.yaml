@@ -7,7 +7,7 @@
 {{- $gwPort := include "kwt.port" .Values.gateway.addr }}
 {{- $apiPort := include "kwt.port" .Values.powerApi.addr }}
 {{- $metricsPort := include "kwt.port" .Values.metricsAddr }}
-{{- $agentPort := 8081 }}{{- /* names.AgentPort: the in-pod agent's API, unauthenticated, so only the gateway may reach it (ADR 0010) */}}
+{{- $agentPort := 8081 }}{{- /* docs/contract.md 7.7; also names.AgentPort (controller) and apps.Port (agent), keep equal. Unauthenticated, so only the gateway may reach it (ADR 0010) */}}
 {{- $dns := .Values.networkPolicy.dns }}
 {{- if not (or $dns.namespaceSelector $dns.podSelector) }}
 {{- fail "networkPolicy.dns needs a namespaceSelector and/or podSelector" }}

@@ -121,6 +121,7 @@ for name, args in cases.items():
                     "app.kubernetes.io/component"] != "gateway":
                 fail(f"{name}: desktop ingress is not limited to the gateway")
             desktop_ingress = {p["port"] for r in np["desktop"]["spec"]["ingress"] for p in r["ports"]}
+            # 8081 is the agent port of docs/contract.md 7.7 (names.AgentPort, apps.Port).
             if desktop_ingress != {8080, 8081}:
                 fail(f"{name}: desktop ingress ports {sorted(desktop_ingress)}, want the web client 8080 and the agent API 8081")
             if len(np["desktop"]["spec"]["ingress"]) != 1:

@@ -27,7 +27,8 @@ const (
 	MaxNameLength = 40
 	MaxPrefixLen  = 22
 
-	// AgentPort is where the in-pod agent serves the gateway (docs/contract.md, "Agent API").
+	// AgentPort is where the in-pod agent serves the gateway (docs/contract.md 7.7). Also apps.Port in
+	// the agent module and $agentPort in the chart's networkpolicy.yaml: keep the three equal.
 	AgentPort = 8081
 
 	TokenDir  = "/run/webtop/sa"

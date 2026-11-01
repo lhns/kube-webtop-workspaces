@@ -199,7 +199,7 @@ func serveApps(ctx context.Context, cfg config.Config) {
 	}
 	l := &apps.Launcher{Session: usersession.LookupUser(cfg.User), StateDir: cfg.StateDir, Home: home}
 	srv := &http.Server{
-		Addr:              ":8081",
+		Addr:              fmt.Sprintf(":%d", apps.Port),
 		Handler:           apps.Handler(l),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
