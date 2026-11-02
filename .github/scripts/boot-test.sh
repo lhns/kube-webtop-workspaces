@@ -171,14 +171,204 @@ for bad in root ../x /home/root /home/../x; do
 done
 grep -qF '"loginName":"ci","homePaths":["/home/ci","/home/user"]' "$reports" \
   || { echo "::error::the agent did not report the login name and home paths"; exit 1; }
+
+# Software installation (ADR 0013): one declaration that `nix profile` edits. First the setup unit
+# (after the template unit) switches to the new starter flake; the checks below follow.
+fail() { echo "::error::$*"; exit 1; }
+as_user() { in_session env HOME=/home/ci PATH=/home/ci/.nix-profile/bin:/home/ci/.local/state/nix/profiles/profile/bin:/run/current-system/sw/bin "$@"; }
+unit_prop() { docker exec desktop-boot systemctl show -P "$1" webtop-home-manager; }
+# Until the setup unit's run ends; a unit that has not run yet also has Result=success.
+wait_setup() {
+  for _ in $(seq 1 150); do
+    [ "$(unit_prop ActiveState)" = active ] || [ "$(unit_prop ExecMainExitTimestampMonotonic)" = 0 ] || return 0
+    sleep 2
+  done
+}
+decl=/home/ci/.config/home-manager/packages.json
+wait_setup
+[ "$(docker exec desktop-boot systemctl show -P Result webtop-home-manager)" = success ] \
+  || { docker exec desktop-boot journalctl -u webtop-home-manager --no-pager | tail -n 50; fail "webtop-home-manager failed"; }
 # The starter flake written for `user` now names ci, and switches.
 grep -qF 'homeConfigurations."ci"' "$hm/flake.nix" \
   && grep -qF 'home.username = "ci";' "$hm/home.nix" \
   && grep -qF 'home.homeDirectory = "/home/ci";' "$hm/home.nix" \
   || { echo "::error::the home-manager template does not name ci"; cat "$hm/home.nix"; exit 1; }
-start_hm=$(date +%s)
-docker exec desktop-boot timeout 900 runuser -l ci -c 'home-manager switch --flake ~/.config/home-manager' 2>&1 | tail -n 20 \
-  || { echo "::error::home-manager switch failed"; exit 1; }
-echo "home-manager switch took $(($(date +%s) - start_hm)) s"
+as_user test -e /home/ci/.local/state/nix/profiles/home-manager || fail "the setup unit did not switch"
+echo "home-manager switch took $((($(unit_prop ExecMainExitTimestampMonotonic) - $(unit_prop ExecMainStartTimestampMonotonic)) / 1000000)) s"
 echo "identity: $pw; /home: $homes"
+! docker exec desktop-boot sh -c 'command -v discover' || fail "Discover is installed"
+docker exec desktop-boot sh -c 'nix-store -qR /run/current-system | grep -q -- -knewstuff-' || fail "KNewStuff is not in the system"
+[ "$(as_user sh -c 'command -v nix')" = /run/current-system/sw/bin/nix ] || fail "nix on the user's PATH is not the system's"
+backend=$(as_user nix config show profile-backend)
+[ "$backend" = "declaration:$decl" ] || fail "profile-backend is '$backend'"
+as_user nix profile add nixpkgs#hello || fail "nix profile add nixpkgs#hello failed"
+as_user jq -e '.elements.hello.originalUrl == "flake:nixpkgs"' "$decl" >/dev/null || fail "hello is not in packages.json"
+as_user hello >/dev/null || fail "hello is not on PATH after the switch"
+out=$(as_user nix profile list 2>&1)
+{ grep -q 'hello' <<<"$out" && grep -q 'Backend: *declaration' <<<"$out"; } || fail "nix profile list: $out"
+! grep -qE 'ignoring (the client-specified|untrusted)' <<<"$out" || fail "the daemon got the client-side settings: $out"
+as_user nix profile list --json | jq -e '.elements.hello.backend == "declaration"
+  and (.elements | to_entries | any(.value.backend == "profile" and (.value.storePaths[0] // "" | endswith("home-manager-path"))))' >/dev/null \
+  || fail "nix profile list --json is not marked or lacks home-manager-path"
+as_user home-manager switch --flake /home/ci/.config/home-manager >/dev/null || fail "a direct home-manager switch failed"
+as_user nix profile remove hello || fail "nix profile remove hello failed"
+! as_user jq -e '.elements.hello' "$decl" >/dev/null || fail "hello is still in packages.json"
+! as_user sh -c 'command -v hello' >/dev/null || fail "hello is still installed"
+# Not piped into grep -q: with pipefail, nix dying of SIGPIPE fails the pipeline.
+out=$(as_user nix profile history)
+grep -q 'hello' <<<"$out" || fail "nix profile history does not show hello: $out"
+as_user nix profile rollback || fail "nix profile rollback failed"
+as_user hello >/dev/null || fail "rollback did not bring hello back"
+sum=$(as_user sha256sum "$decl")
+! as_user nix profile remove --profile-hook /run/current-system/sw/bin/false hello 2>/dev/null || fail "a failing hook did not fail"
+[ "$(as_user sha256sum "$decl")" = "$sum" ] || fail "a failing hook did not restore packages.json"
+out=$(as_user nix profile remove --profile-hook '' hello 2>&1 || true)
+grep -q "needs 'profile-hook'" <<<"$out" || fail "an empty hook was accepted: $out"
+# Store paths and explicit profiles bypass the declaration.
+jqpath=$(as_user sh -c 'dirname "$(dirname "$(readlink -f /run/current-system/sw/bin/jq)")"')
+as_user nix profile add "$jqpath" || fail "adding a store path failed"
+as_user nix profile list --json | jq -e '.elements.jq.backend == "profile"' >/dev/null || fail "the store path is not in the profile"
+as_user nix profile remove jq || fail "removing the store path failed"
+{ as_user nix profile add --profile-backend profile "$jqpath" && as_user nix profile remove --profile-backend profile jq; } \
+  || fail "--profile-backend profile failed"
+! as_user nix profile add --profile-backend profile --profile-hook /run/current-system/sw/bin/false "$jqpath" 2>/dev/null \
+  || fail "a failing hook did not fail a profile change"
+! as_user nix profile list --profile-backend profile --json | jq -e '.elements.jq' >/dev/null \
+  || fail "a failing hook did not roll the profile back"
+{ as_user nix profile add --profile /tmp/ci-profile nixpkgs#hello && as_user test -x /tmp/ci-profile/bin/hello; } \
+  || fail "--profile <path> failed"
+[ "$(as_user sha256sum "$decl")" = "$sum" ] || fail "a profile backend changed packages.json"
+out=$(as_user nix profile list --profile /tmp/ci-profile --profile-backend profile 2>&1 || true)
+grep -q 'cannot be used together' <<<"$out" || fail "--profile with --profile-backend was accepted: $out"
+# A profile element of the same name moves into the declaration.
+as_user nix profile add --profile-backend profile "$jqpath" || fail "adding jq to the profile failed"
+as_user nix profile add nixpkgs#jq || fail "adding nixpkgs#jq failed"
+as_user jq -e '.elements.jq' "$decl" >/dev/null || fail "jq is not declared"
+! as_user nix profile list --profile-backend profile --json | jq -e '.elements.jq' >/dev/null || fail "jq is still in the profile"
+as_user nix profile remove jq >/dev/null || fail "removing the declared jq failed"
+# --all matches the declaration only: upgrade does not look at home-manager-path.
+out=$(as_user nix profile upgrade --all 2>&1) || fail "nix profile upgrade --all failed: $out"
+! grep -q 'not added from a flake' <<<"$out" || fail "upgrade --all reached the profile: $out"
+# A store path may not shadow a declared package.
+out=$(as_user nix profile add "$(as_user sh -c 'dirname "$(dirname "$(readlink -f "$(command -v hello)")")"')" 2>&1 || true)
+grep -q 'is declared in the declaration' <<<"$out" || fail "a store path shadowing a declared package was accepted: $out"
+# One command, two backends: when the declaration's hook fails, the profile change is undone too.
+as_user sh -c 'printf "#!/bin/sh\n[ \"\$NIX_PROFILE_BACKEND\" != declaration ]\n" > /tmp/ci-decl-fails && chmod +x /tmp/ci-decl-fails'
+sum=$(as_user sha256sum "$decl")
+plink=$(as_user readlink /home/ci/.local/state/nix/profiles/profile)
+! as_user nix profile add --profile-hook /tmp/ci-decl-fails "$jqpath" nixpkgs#tree 2>/dev/null \
+  || fail "a failing declaration hook did not fail the command"
+[ "$(as_user sha256sum "$decl")" = "$sum" ] || fail "packages.json changed although the command failed"
+! as_user nix profile list --profile-backend profile --json | jq -e '.elements.jq' >/dev/null \
+  || fail "the profile part of a failed command was kept"
+[ "$(as_user readlink /home/ci/.local/state/nix/profiles/profile)" = "$plink" ] || fail "the profile is not back at its generation"
+as_user hello >/dev/null || fail "hello went missing in a failed command"
+# Rollback right after a hand edit goes back to the last recorded version; the edit becomes a version.
+as_user sh -c "jq '.elements.handedit = {originalUrl: \"flake:nixpkgs\", attrPath: \"legacyPackages.x86_64-linux.tree\"}' $decl > /tmp/ci-decl && cat /tmp/ci-decl > $decl"
+as_user nix profile rollback || fail "rollback after a hand edit failed"
+[ "$(as_user sha256sum "$decl")" = "$sum" ] || fail "rollback after a hand edit did not restore the recorded version"
+hist=$(as_user nix profile history | sed 's/\x1b\[[0-9;]*m//g')
+newest=$(grep -o '^Version [0-9]*' <<<"$hist" | tail -n1 | cut -d' ' -f2)
+tail -n 3 <<<"$hist" | grep -q 'tree' || fail "the hand edit is not the newest version: $hist"
+as_user nix profile rollback --to "$newest" || fail "rollback --to the hand edit failed"
+as_user jq -e '.elements.handedit' "$decl" >/dev/null || fail "rollback --to did not restore the hand edit"
+as_user nix profile remove handedit >/dev/null || fail "removing the hand edit failed"
+# Packages from another flake (builtins.getFlake), including a quoted attribute name with a dot.
+as_user sh -c 'mkdir -p /tmp/ci-flake && printf "%s\n" "{" "  inputs.nixpkgs.url = \"nixpkgs\";" \
+  "  outputs = { nixpkgs, ... }: { packages.x86_64-linux = { ci-hello = nixpkgs.legacyPackages.x86_64-linux.hello;" \
+  "    \"ci.dotted\" = nixpkgs.legacyPackages.x86_64-linux.hello; }; };" "}" > /tmp/ci-flake/flake.nix'
+# Locked first: locking writes flake.lock into the directory, which changes its hash.
+as_user nix flake lock path:/tmp/ci-flake || fail "locking the local flake failed"
+as_user nix profile add path:/tmp/ci-flake#ci-hello 'path:/tmp/ci-flake#"ci.dotted"' \
+  || fail "adding packages from a local flake failed"
+as_user jq -e '[.elements[] | select(.originalUrl | startswith("path:"))] | length == 2' "$decl" >/dev/null \
+  || fail "the local flake's packages are not declared: $(as_user cat "$decl")"
+as_user nix profile remove --regex '.*ci-flake.*' >/dev/null || fail "removing the local flake's packages failed"
+# A flake dir that is a git repo: packages.json is added with --intent-to-add; a git-ignored one is refused.
+hmdir=/home/ci/.config/home-manager
+as_user sh -c "cd $hmdir && git init -q && git add -A && git rm -q --cached packages.json"
+as_user nix profile add nixpkgs#tree || fail "nix profile add in a git flake dir failed"
+as_user git -C "$hmdir" ls-files | grep -qx packages.json || fail "packages.json was not added to git"
+as_user sh -c "cd $hmdir && echo packages.json > .gitignore && git rm -q --cached packages.json"
+sum=$(as_user sha256sum "$decl")
+out=$(as_user nix profile remove tree 2>&1 || true)
+grep -q 'git ignores' <<<"$out" || fail "a git-ignored packages.json was not refused: $out"
+[ "$(as_user sha256sum "$decl")" = "$sum" ] || fail "a refused change was not reverted"
+as_user rm -rf "$hmdir/.git" "$hmdir/.gitignore"
+as_user nix profile remove tree >/dev/null || fail "removing tree failed"
+# An earlier starter flake (before packages.nix, for the old name `user`): the template unit rewrites it
+# for ci with packages.nix, and the setup unit moves the `nix profile` flake packages into packages.json.
+as_user nix profile remove hello >/dev/null || fail "nix profile remove hello failed"
+cat > "$dir/legacy-flake.nix" <<'FLAKE'
+{
+  inputs = {
+    # nixpkgs and home-manager are the image's (its flake registry): no download; relocked after image updates.
+    nixpkgs.url = "nixpkgs";
+    home-manager = {
+      url = "home-manager";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+  };
+
+  outputs = { nixpkgs, home-manager, ... }: {
+    homeConfigurations."user" = home-manager.lib.homeManagerConfiguration {
+      pkgs = nixpkgs.legacyPackages.x86_64-linux;
+      modules = [ ./home.nix ];
+    };
+  };
+}
+FLAKE
+# Not docker cp: /home is a bind mount inside the container, which docker cp does not see.
+as_user sh -c "echo $(base64 -w0 "$dir/legacy-flake.nix") | base64 -d > /home/ci/.config/home-manager/flake.nix"
+as_user rm /home/ci/.config/home-manager/packages.nix "$decl"
+# An earlier starter flake had no nix.conf (any nix.conf makes the setup "customized").
+as_user rm /home/ci/.config/nix/nix.conf
+as_user nix profile add --profile-backend profile nixpkgs#hello || fail "adding hello to the profile failed"
+since=$(docker exec desktop-boot date '+%Y-%m-%d %H:%M:%S')
+docker exec desktop-boot systemctl restart webtop-home-manager-template
+docker exec desktop-boot journalctl -u webtop-home-manager-template --since "$since" -o cat | grep -q 'rewrote the starter flake' \
+  || fail "the template unit did not rewrite the earlier flake"
+docker exec desktop-boot systemctl start webtop-home-manager
+wait_setup
+[ "$(docker exec desktop-boot systemctl show -P Result webtop-home-manager)" = success ] \
+  || { docker exec desktop-boot journalctl -u webtop-home-manager --no-pager | tail -n 50; fail "the migration failed"; }
+as_user jq -e '.elements.hello.originalUrl == "flake:nixpkgs"' "$decl" >/dev/null || fail "the migration did not declare hello"
+as_user grep -q 'packages.nix' /home/ci/.config/home-manager/flake.nix || fail "the migration did not add packages.nix"
+as_user grep -qF 'homeConfigurations."ci"' /home/ci/.config/home-manager/flake.nix || fail "the migration did not rename the flake"
+as_user nix profile list --json | jq -e '.elements.hello.backend == "declaration" and (.elements["hello-1"] == null)' >/dev/null \
+  || fail "hello is not (only) declared after the migration: $(as_user nix profile list --json)"
+as_user hello >/dev/null || fail "hello is not installed after the migration"
+# home-manager's own `nix profile` calls in that switch went through the profile backend quietly
+# (the deprecated `install` alias warning is stock Nix's).
+warns=$(docker exec desktop-boot journalctl -u webtop-home-manager --since "$since" --no-pager | grep 'warning:' \
+  | grep -v "deprecated alias\|cache.invalid" || true)
+[ -z "$warns" ] || fail "nix profile warned during the switch: $warns"
+# A failing switch fails the unit and says so.
+as_user sh -c "cp $decl /tmp/decl.bak && jq '.elements.broken = {originalUrl: \"flake:nixpkgs\", attrPath: \"legacyPackages.x86_64-linux.noSuchPackageCi\"}' /tmp/decl.bak > $decl"
+gen=/home/ci/.local/state/nix/profiles/home-manager
+link=$(as_user readlink "$gen")
+as_user ln -sfn /nix/store/00000000000000000000000000000000-gone "$gen"
+docker exec desktop-boot systemctl start webtop-home-manager
+wait_setup
+[ "$(docker exec desktop-boot systemctl show -P Result webtop-home-manager)" = exit-code ] || fail "a failing switch did not fail the unit"
+docker exec desktop-boot journalctl -u webtop-home-manager --no-pager | grep -q 'home-manager switch failed' \
+  || fail "a failing switch was not reported"
+as_user cp /tmp/decl.bak "$decl"
+as_user ln -sfn "$link" "$gen"
+# A setup with a nix.conf of its own gets the rename only, and only once.
+as_user sh -c "echo $(base64 -w0 "$dir/legacy-flake.nix") | base64 -d > /home/ci/.config/home-manager/flake.nix"
+as_user rm /home/ci/.config/home-manager/packages.nix
+as_user sh -c 'rm -f /home/ci/.config/nix/nix.conf && echo "# own" > /home/ci/.config/nix/nix.conf'
+for run in 1 2; do
+  since=$(docker exec desktop-boot date '+%Y-%m-%d %H:%M:%S')
+  docker exec desktop-boot systemctl restart webtop-home-manager-template
+  out=$(docker exec desktop-boot journalctl -u webtop-home-manager-template --since "$since" -o cat)
+  case $run in
+    1) grep -q 'kept without packages.nix' <<<"$out" || fail "an own nix.conf did not keep the flake without packages.nix: $out" ;;
+    2) ! grep -q 'rewrote' <<<"$out" || fail "the rename-only rewrite repeats: $out" ;;
+  esac
+  sleep 1 # --since has second resolution
+done
+as_user grep -qF 'homeConfigurations."ci"' /home/ci/.config/home-manager/flake.nix || fail "the rename-only rewrite did not rename"
+echo "software installation: ok"
 echo "boot test passed"
