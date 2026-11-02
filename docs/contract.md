@@ -60,6 +60,7 @@ Desktop whose name is not `sanitize(spec.user)`.
 | `asleep` | bool | the agent froze the session (Sleep); the pod stays `Running`. Reset with the pod |
 | `loginName` | string | the desktop user's login name, from the agent (section 8.3); kept while off |
 | `homePaths` | []string, ≤ 16 | paths the user's home is mounted at, from the agent; kept while off |
+| `loginNameError` | string, ≤ 512 | why the rename to the desktop name failed, from the agent (section 8.3) |
 | `displayName` | string | the LDAP display name the current or last pod started with (section 6) |
 | `imagePull` | `{image, startedAt?, lastSizeBytes?, lastDurationSeconds?}` | the desktop image's pulls, for the boot page's download estimate (section 3.4); kept while off |
 | `observedGeneration` | int | |
@@ -72,7 +73,8 @@ Conditions:
 - `Ready`: `True` iff phase `Running`.
 - `LoginName` (once the agent reported `loginName`): `True` (`DesktopName`) when the desktop user has
   the desktop's name; `False` when the image fell back to `user` because the name starts with a digit
-  (`InvalidLoginName`) or is an account of the image (`ReservedName`).
+  (`InvalidLoginName`), is an account of the image (`ReservedName`) or could not be renamed to
+  (`RenameFailed`, with the reason from `status.loginNameError`).
 
 ## 3. Controller behaviour
 
@@ -213,7 +215,7 @@ Rendered from the `desktop` and `storage` config sections. Fixed parts:
 
 - Pod: `hostUsers: false` (`desktop.hostUsers`), `automountServiceAccountToken: false`,
   `enableServiceLinks: false`, `serviceAccountName: desktop.serviceAccountName`,
-  `runtimeClassName`, `terminationGracePeriodSeconds` (default 120; must exceed the power hook
+  `runtimeClassName`, `terminationGracePeriodSeconds` (default 420; must exceed the setup unit's 5 min stop timeout plus the power hook
   timeout plus the session save).
 - Container `desktop`: `runAsUser: 0`, `runAsNonRoot: false`, capabilities add `SYS_ADMIN` and `SYS_NICE`,
   `procMount: Unmasked`, `seccompProfile: RuntimeDefault`, `appArmorProfile: Unconfined`
@@ -580,7 +582,8 @@ All fields optional; absent fields are left unchanged:
 `loginName` must be a valid login name (section 4) and `homePaths` at most 16 entries of
 `/home/<login name>` (else `400`); they set `status.loginName` and `status.homePaths`. A change of
 `loginName` away from the desktop name (or back) also records an Event on the Desktop
-(`LoginNameFallback` warning / `LoginName`).
+(`LoginNameFallback` warning / `LoginName`). `loginError` (at most 512 characters, sent with
+`loginName`; empty clears) is why `usermod` failed at activation; it sets `status.loginNameError`.
 
 Reports from a pod whose UID ≠ `status.podUID` → `409`, ignored; right after a pod starts the
 controller may not have recorded it yet, so the agent retries a 409 (every few seconds). `ready: true` sets `agentReady`.
@@ -663,7 +666,7 @@ desktop:
   securityContext: null           # replaces the default container securityContext
   shmSize: 1Gi
   runSizeLimit: 256Mi
-  terminationGracePeriodSeconds: 120
+  terminationGracePeriodSeconds: 420
 
 storage:
   storageClassName: ""            # empty: cluster default

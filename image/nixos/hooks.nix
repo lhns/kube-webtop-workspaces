@@ -9,17 +9,7 @@ let
   envFile = "-/run/webtop/env";
   userBus = "unix:path=/run/user/${uid}/bus";
 
-  # Best effort and in the background: Plasma's notification server may not be up yet, and a call
-  # to an unowned name can hang until the D-Bus timeout. $NOTIFY_PREFIX runs it as the user (root).
-  notifyFn = ''
-    notify() {
-      (for _ in $(seq 1 12); do
-        # shellcheck disable=SC2086
-        timeout 5 ''${NOTIFY_PREFIX:-} notify-send -a "Desktop" -i system-software-update "$1" "$2" 2>/dev/null && exit
-        sleep 5
-      done) &
-    }
-  '';
+  notify = import ../notify.nix { inherit pkgs; inherit uid; };
 
   restore = pkgs.writeShellApplication {
     name = "webtop-nix-restore";
@@ -30,12 +20,9 @@ let
   # Root. Any restore exit code is fine: what did not come back is left to the reinstall.
   restoreUnit = pkgs.writeShellApplication {
     name = "webtop-nix-restore-unit";
-    runtimeInputs = with pkgs; [ coreutils util-linux libnotify systemd restore ];
+    runtimeInputs = with pkgs; [ coreutils systemd restore notify ];
     text = ''
-      NOTIFY_PREFIX="runuser -u $(id -nu ${uid}) -- env DBUS_SESSION_BUS_ADDRESS=${userBus}"
-      export NOTIFY_PREFIX
-      ${notifyFn}
-      notify "Desktop image updated" "Restoring your Nix packages in the background."
+      webtop-notify "Desktop image updated" "Restoring your Nix packages in the background." system-software-update &
       webtop-nix-restore || echo "webtop-nix-restore exit $?"
       # Not reached when the unit is stopped: the marker stays and the restore resumes next boot.
       rm -f /persist/nix/reinstall/restore
@@ -46,12 +33,11 @@ let
 
   reinstall = pkgs.writeShellApplication {
     name = "webtop-nix-reinstall";
-    runtimeInputs = with pkgs; [ coreutils gnused jq config.nix.package libnotify ];
+    runtimeInputs = with pkgs; [ coreutils gnused jq config.nix.package notify ];
     text = ''
       r=/persist/nix/reinstall
       # As webtop-home-manager.service has them, for the setup script it runs.
       export DBUS_SESSION_BUS_ADDRESS=${userBus} XDG_RUNTIME_DIR=/run/user/${uid}
-      ${notifyFn}
       failed=0
       profiles="$HOME/.local/state/nix/profiles"
       old="$profiles.old-$(date +%s)"
@@ -96,9 +82,9 @@ let
       ${config.systemd.services.webtop-home-manager.serviceConfig.ExecStart} || failed=1
 
       if [ "$failed" = 0 ]; then
-        notify "Packages restored" "Your Nix packages are back."
+        webtop-notify "Packages restored" "Your Nix packages are back." system-software-update &
       else
-        notify "Package reinstall incomplete" "See: journalctl -u webtop-nix-reinstall"
+        webtop-notify "Package reinstall incomplete" "See: journalctl -u webtop-nix-reinstall" system-software-update &
       fi
       wait
       exit "$failed"

@@ -36,17 +36,24 @@ let
     ];
   };
   hmPackage = home-manager.packages.${system}.home-manager;
+  notify = import ../notify.nix { inherit pkgs; uid = toString cfg.uid; };
+  # Which homeConfigurations to switch: setup script and profile hook.
+  hmAttr = pkgs.writeShellApplication {
+    name = "webtop-hm-attr";
+    runtimeInputs = with pkgs; [ coreutils jq config.nix.package ];
+    text = builtins.readFile ../webtop-hm-attr.sh;
+  };
 
   # profile-hook (packages.nix): applies a changed packages.json.
   profileHook = pkgs.writeShellApplication {
     name = "webtop-profile-hook";
-    runtimeInputs = [ pkgs.coreutils pkgs.git config.nix.package hmPackage ];
+    runtimeInputs = [ pkgs.coreutils pkgs.git config.nix.package hmPackage hmAttr ];
     text = builtins.readFile ../webtop-profile-hook.sh;
   };
 
   setup = pkgs.writeShellApplication {
     name = "webtop-home-manager";
-    runtimeInputs = with pkgs; [ coreutils gnused gnugrep jq git libnotify config.nix.package hmPackage ];
+    runtimeInputs = with pkgs; [ coreutils gnused gnugrep jq git config.nix.package hmPackage hmAttr notify ];
     text = builtins.readFile ../webtop-home-manager.sh;
   };
   upstream = lib.importJSON "${flake-registry}/flake-registry.json";
@@ -197,22 +204,17 @@ in
     wantedBy = [ "multi-user.target" ];
     after = [ "webtop-session.service" "webtop-home-manager-template.service" ];
     unitConfig.ConditionPathExists = notice;
-    environment.DBUS_SESSION_BUS_ADDRESS = "unix:path=/run/user/${toString cfg.uid}/bus";
+    environment.WEBTOP_NOTIFY_TRIES = "24"; # Plasma may take a while after the session starts
     serviceConfig = {
       Type = "exec"; # not oneshot: multi-user.target must not wait for the session
       User = toString cfg.uid;
       ExecStart = lib.getExe (pkgs.writeShellApplication {
         name = "webtop-home-manager-notice";
-        runtimeInputs = with pkgs; [ coreutils libnotify ];
+        runtimeInputs = with pkgs; [ coreutils notify ];
         text = ''
           echo "notifying: $(head -n1 ${notice})"
-          # Plasma's notification server may not be up yet.
-          for _ in $(seq 1 24); do
-            timeout 5 notify-send -a Desktop -i dialog-warning "Update your home-manager flake" \
-              "$(tail -n +2 ${notice}) See: journalctl -u webtop-home-manager-template" 2>/dev/null && exit 0
-            sleep 5
-          done
-          echo "notification not delivered"
+          webtop-notify "Update your home-manager flake" \
+            "$(tail -n +2 ${notice}) See: journalctl -u webtop-home-manager-template" dialog-warning
         '';
       });
     };
@@ -235,7 +237,9 @@ in
       Type = "exec";
       User = toString cfg.uid;
       ExecStart = lib.getExe setup;
-      TimeoutStopSec = 10;
+      # A stop during the import's switch waits for it (webtop-home-manager.sh); the chart's
+      # terminationGracePeriodSeconds must cover this plus the session save.
+      TimeoutStopSec = "5min";
     };
   };
 }

@@ -4,6 +4,7 @@ package controller
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -101,12 +102,14 @@ func TestLoginNameCondition(t *testing.T) {
 	if _, ok := loginNameCondition(d); ok {
 		t.Fatal("condition before the agent reported")
 	}
-	for _, tc := range []struct{ name, login, reason string }{
-		{"alice", "alice", v1alpha1.ReasonDesktopName},
-		{"root", "user", v1alpha1.ReasonReservedName},
-		{"1abc", "user", v1alpha1.ReasonInvalidLoginName},
+	for _, tc := range []struct{ name, login, reason, err string }{
+		{"alice", "alice", v1alpha1.ReasonDesktopName, ""},
+		{"root", "user", v1alpha1.ReasonReservedName, ""},
+		{"1abc", "user", v1alpha1.ReasonInvalidLoginName, ""},
+		{"bob", "user", v1alpha1.ReasonRenameFailed, "usermod: Permission denied"},
 	} {
 		d.Name, d.Status.LoginName = tc.name, tc.login
+		d.Status.LoginNameError = tc.err
 		c, ok := loginNameCondition(d)
 		want := metav1.ConditionFalse
 		if tc.reason == v1alpha1.ReasonDesktopName {
@@ -114,6 +117,9 @@ func TestLoginNameCondition(t *testing.T) {
 		}
 		if !ok || c.Reason != tc.reason || c.Status != want {
 			t.Errorf("%s/%s: %+v", tc.name, tc.login, c)
+		}
+		if tc.err != "" && !strings.Contains(c.Message, tc.err) {
+			t.Errorf("message %q lacks the reason", c.Message)
 		}
 	}
 }

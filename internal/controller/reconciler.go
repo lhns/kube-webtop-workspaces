@@ -434,6 +434,9 @@ func loginNameCondition(d *v1alpha1.Desktop) (metav1.Condition, bool) {
 		Reason: v1alpha1.ReasonDesktopName, ObservedGeneration: d.Generation}
 	switch {
 	case got == d.Name:
+	case d.Status.LoginNameError != "":
+		c.Status, c.Reason = metav1.ConditionFalse, v1alpha1.ReasonRenameFailed
+		c.Message = fmt.Sprintf("renaming the desktop user to %q failed (%s); the desktop user is %q", d.Name, d.Status.LoginNameError, got)
 	case !names.ValidLogin(d.Name):
 		c.Status, c.Reason = metav1.ConditionFalse, v1alpha1.ReasonInvalidLoginName
 		c.Message = fmt.Sprintf("%q is not a valid login name (it must start with a letter); the desktop user is %q", d.Name, got)

@@ -36,11 +36,12 @@ import (
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 
 const (
-	extraPodName = "authentication.kubernetes.io/pod-name"
-	extraPodUID  = "authentication.kubernetes.io/pod-uid"
-	maxBody      = 16 << 10
-	maxStage     = 64 // characters; the agent's stage is free text shown on the boot page
-	maxHomePaths = 16 // the image mounts at most this many
+	extraPodName  = "authentication.kubernetes.io/pod-name"
+	extraPodUID   = "authentication.kubernetes.io/pod-uid"
+	maxBody       = 16 << 10
+	maxStage      = 64 // characters; the agent's stage is free text shown on the boot page
+	maxHomePaths  = 16 // the image mounts at most this many
+	maxLoginError = 512
 )
 
 // Authenticator validates a bearer token.
@@ -330,12 +331,14 @@ type reportRequest struct {
 	Asleep           *bool    `json:"asleep"`
 	LoginName        *string  `json:"loginName"`
 	HomePaths        []string `json:"homePaths"`
+	LoginError       *string  `json:"loginError"`
 }
 
 // validIdentity checks the reported login name and home paths against the image's rules
 // (docs/contract.md, section 8.3).
 func (req *reportRequest) validIdentity() bool {
-	if req.LoginName != nil && !names.ValidLogin(*req.LoginName) || len(req.HomePaths) > maxHomePaths {
+	if req.LoginName != nil && !names.ValidLogin(*req.LoginName) || len(req.HomePaths) > maxHomePaths ||
+		req.LoginError != nil && utf8.RuneCountInString(*req.LoginError) > maxLoginError {
 		return false
 	}
 	for _, p := range req.HomePaths {
@@ -371,7 +374,7 @@ func (s *Server) report(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !req.validIdentity() {
-		writeErr(sw, fail(http.StatusBadRequest, "invalid loginName or homePaths"))
+		writeErr(sw, fail(http.StatusBadRequest, "invalid loginName, homePaths or loginError"))
 		return
 	}
 	d, herr := s.getDesktop(r.Context(), c.desktop, false)
@@ -412,6 +415,9 @@ func (s *Server) report(w http.ResponseWriter, r *http.Request) {
 	if req.HomePaths != nil {
 		st.HomePaths = req.HomePaths
 	}
+	if req.LoginError != nil {
+		st.LoginNameError = *req.LoginError
+	}
 	now := metav1.NewTime(s.now())
 	st.LastReportTime = &now
 	if err := s.Client.Status().Patch(r.Context(), d, client.MergeFrom(orig)); err != nil {
@@ -431,6 +437,10 @@ func (s *Server) loginNameEvent(d *v1alpha1.Desktop, prev string) {
 		return
 	}
 	if cur != d.Name {
+		if e := d.Status.LoginNameError; e != "" {
+			s.Recorder.Eventf(d, corev1.EventTypeWarning, "LoginNameFallback", "the desktop user is %q, not %q: renaming failed: %s", cur, d.Name, e)
+			return
+		}
 		s.Recorder.Eventf(d, corev1.EventTypeWarning, "LoginNameFallback",
 			"the desktop user is %q, not %q: the name is not a valid login name or is an account of the image", cur, d.Name)
 		return

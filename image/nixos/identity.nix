@@ -25,9 +25,12 @@ in
     # Read, not sourced: the GECOS comes from LDAP.
     name=$(grep -m1 '^WEBTOP_LOGIN_NAME=' /run/webtop/env | cut -d= -f2-)
     gecos=$(grep -m1 '^WEBTOP_LOGIN_GECOS=' /run/webtop/env | cut -d= -f2-)
-    if [ -n "$name" ] && [ "$name" != ${cfg.user} ] && ! usermod -l "$name" ${cfg.user}; then
+    rm -f /run/webtop/identity-error
+    if [ -n "$name" ] && [ "$name" != ${cfg.user} ] && ! reason=$(usermod -l "$name" ${cfg.user} 2>&1); then
       # Stay `user` with home /home/user, consistently; webtop-init mounted only /home/<name>.
-      echo "webtop-identity: renaming ${cfg.user} to $name failed; staying ${cfg.user}"
+      # The agent reports the reason (condition LoginName, RenameFailed).
+      echo "webtop-identity: renaming ${cfg.user} to $name failed; staying ${cfg.user}: $reason"
+      printf '%s' "${reason:-usermod failed}" > /run/webtop/identity-error
       name=${cfg.user}
       mountpoint -q /home/${cfg.user} || { mkdir -p /home/${cfg.user} && mount --bind /persist/home/user /home/${cfg.user}; }
     fi

@@ -55,7 +55,14 @@ func TestReportCarriesIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	paths, _ := got["homePaths"].([]any)
-	if got["loginName"] != "bob" || len(paths) != 2 || paths[1] != "/home/user" {
+	if got["loginName"] != "bob" || len(paths) != 2 || paths[1] != "/home/user" || got["loginError"] != "" {
+		t.Fatalf("body = %v", got)
+	}
+	c.LoginError = "usermod: user 'bob' already exists"
+	if err := c.Report(context.Background(), Report{}); err != nil {
+		t.Fatal(err)
+	}
+	if got["loginError"] != c.LoginError {
 		t.Fatalf("body = %v", got)
 	}
 }

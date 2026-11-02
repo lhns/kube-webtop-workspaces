@@ -106,7 +106,7 @@ desktop:
   shmSize: 1Gi
   runSizeLimit: 256Mi
   # Must exceed the power-hook timeout plus the session save.
-  terminationGracePeriodSeconds: 120
+  terminationGracePeriodSeconds: 420
 
 # Per-user PVC. Created on first start; never deleted by the controller.
 storage:

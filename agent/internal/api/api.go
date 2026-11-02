@@ -20,6 +20,8 @@ type Client struct {
 	// LoginName and HomePaths go with every report (they are fixed for the pod's lifetime).
 	LoginName string
 	HomePaths []string
+	// LoginError is why the account could not be renamed ("" if it could).
+	LoginError string
 }
 
 func New(url, tokenPath string) *Client {
@@ -53,6 +55,8 @@ type Report struct {
 	// Set by Client.Report.
 	LoginName string   `json:"loginName,omitempty"`
 	HomePaths []string `json:"homePaths,omitempty"`
+	// Sent with LoginName, empty included, so it clears an earlier pod's.
+	LoginError *string `json:"loginError,omitempty"`
 }
 
 func (c *Client) Power(ctx context.Context, r PowerRequest) error {
@@ -61,6 +65,9 @@ func (c *Client) Power(ctx context.Context, r PowerRequest) error {
 
 func (c *Client) Report(ctx context.Context, r Report) error {
 	r.LoginName, r.HomePaths = c.LoginName, c.HomePaths
+	if c.LoginName != "" {
+		r.LoginError = &c.LoginError
+	}
 	return c.post(ctx, "/api/v1/report", r, http.StatusNoContent)
 }
 

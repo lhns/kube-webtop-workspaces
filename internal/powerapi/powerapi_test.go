@@ -334,6 +334,27 @@ func TestReportIdentity(t *testing.T) {
 	}
 }
 
+func TestReportLoginError(t *testing.T) {
+	e := newEnv(t, desktop(nil), desktopPod("pod-1"))
+	if rec := e.do("/api/v1/report", `{"loginName":"user","loginError":"usermod: denied"}`, "tok"); rec.Code != 204 {
+		t.Fatal(rec.Code, rec.Body)
+	}
+	e.do("/api/v1/report", `{"connectedClients":1}`, "tok") // absent keeps it
+	if got := e.get(t).Status.LoginNameError; got != "usermod: denied" {
+		t.Fatalf("loginNameError %q", got)
+	}
+	if rec := e.do("/api/v1/report", `{"loginName":"alice","loginError":""}`, "tok"); rec.Code != 204 {
+		t.Fatal(rec.Code, rec.Body)
+	}
+	if got := e.get(t).Status.LoginNameError; got != "" {
+		t.Fatalf("not cleared: %q", got)
+	}
+	long := `{"loginError":"` + strings.Repeat("x", maxLoginError+1) + `"}`
+	if rec := e.do("/api/v1/report", long, "tok"); rec.Code != 400 {
+		t.Errorf("too long: %d", rec.Code)
+	}
+}
+
 func TestReportFromOldPodConflicts(t *testing.T) {
 	e := newEnv(t, desktop(func(d *v1alpha1.Desktop) { d.Status.PodUID = "pod-2" }), desktopPod("pod-1"))
 	if rec := e.do("/api/v1/report", `{"ready":true}`, "tok"); rec.Code != 409 {

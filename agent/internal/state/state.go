@@ -10,6 +10,8 @@ import (
 const (
 	StopReason = "stop-reason"
 	IdleSince  = "idle-since"
+	// IdentityError is why the rename at activation failed; missing: it did not.
+	IdentityError = "identity-error"
 	// FrozenUnits lists the units frozen by Sleep; it exists only while asleep.
 	FrozenUnits = "frozen-units"
 	// PlacedApp is the desktop file id placed on the second screen; empty or missing: none.

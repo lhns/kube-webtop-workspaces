@@ -26,6 +26,7 @@ import (
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/boot"
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/config"
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/freeze"
+	"github.com/lhns/kube-webtop-workspaces/agent/internal/identity"
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/idle"
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/powerhook"
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/session"
@@ -163,7 +164,8 @@ func run(cfg config.Config) {
 	tracker := idle.NewTracker(cfg.StateDir)
 	du := usersession.LookupUser(cfg.User)
 	// What the account is (passwd, after the rename at activation), not what webtop-init asked for.
-	client.LoginName, client.HomePaths = du.Name, cfg.HomePaths
+	client.LoginName, client.HomePaths = du.Name, identity.HomePaths(cfg.HomePaths, du.Name)
+	client.LoginError = identity.Error(cfg.StateDir)
 	socket := du.WaylandSocket
 	if cfg.WaylandSocket != "" {
 		socket = func(context.Context) (string, error) { return cfg.WaylandSocket, nil }

@@ -66,6 +66,8 @@ const (
 	ReasonDesktopName      = "DesktopName"
 	ReasonInvalidLoginName = "InvalidLoginName"
 	ReasonReservedName     = "ReservedName"
+	// RenameFailed: usermod failed at activation; status.loginNameError says why.
+	ReasonRenameFailed = "RenameFailed"
 )
 
 // DesktopSpec is the desired state of a Desktop.
@@ -163,6 +165,11 @@ type DesktopStatus struct {
 	// "user" when that is not usable (condition LoginName). Kept while off.
 	// +optional
 	LoginName string `json:"loginName,omitempty"`
+	// LoginNameError is why the image could not rename the user to the desktop name, as the agent
+	// reported it. Empty when it could.
+	// +kubebuilder:validation:MaxLength=512
+	// +optional
+	LoginNameError string `json:"loginNameError,omitempty"`
 	// HomePaths are the paths the user's home is mounted at, as the agent reported them. Kept while off.
 	// +kubebuilder:validation:MaxItems=16
 	// +optional
