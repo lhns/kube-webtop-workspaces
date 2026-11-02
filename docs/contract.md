@@ -305,6 +305,7 @@ Enabled when `ldap.url` is set; otherwise every user is authorized (`LDAPDisable
 | `<base>/.webtop/reload.js` | the script injected into the desktop's page (section 7.3), never proxied |
 | `<base>/.webtop/ping` | GET/HEAD, `204` `no-store`, same authz as the desktop, never proxied. `reload.js` requests it every 60 s so the forward-auth in front of the gateway sees traffic and keeps its session active while a tab is open |
 | `<base>/.webtop/start` | POST start, never proxied |
+| `<base>/.webtop/wake` | POST wake from the sleep page (section 7.5), never proxied |
 | `<base>/.webtop/apps/<id>/icon` | GET/HEAD, same authz as the desktop, never proxied: the app's icon from the agent (section 7.6) |
 | `<base>/apps/` | top-level `GET` only: the apps overview (section 7.6). Any other request to it is proxied |
 | `<base>/apps/<name>` | top-level `GET` only: single-app streaming (section 7.6). The gateway owns this path for navigations; any other request to it is proxied like every other path |
@@ -384,6 +385,19 @@ cookie: the page sets cookie `webtop_csrf` (random 32 bytes, base64url, `HttpOnl
 accepted only if field = cookie (constant-time) and the request is same-origin (`Sec-Fetch-Site:
 same-origin` if present, else `Origin` host = `Host`; neither → reject). Success: patch
 `powerState: On`, `303` to `<base>/`. Failure: 403.
+
+**Sleep page / wake:** Sleep (ADR 0009) freezes the stream, so a tab would stay on the last frame.
+`status` carries `"asleep": true` while `status.asleep` is set (omitted otherwise), and `reload.js`
+reloads a tab that saw the desktop awake when it falls asleep (a tab opened while it is still waking
+does not). A navigation (section 7.4) `GET` to a `Running` desktop with `status.asleep` gets the
+**sleep page** "Your desktop is asleep" instead of being proxied; it has the off page's CSRF cookie,
+and a form `POST <base>/.webtop/wake` with fields `csrf` and optionally `app` (as for start). Any other
+request (websocket, XHR, a frame) is proxied as usual. `/apps/<name>` and `/apps/` navigations get the same page (the form carries `app`, `*` for the overview).
+Wake checks CSRF like start, sets cookie `webtop_wake=1` (`HttpOnly`, `SameSite=Lax`, `Path=<base>/`,
+`Max-Age=60`, `Secure` as above) and answers `303` to `<base>/` or `<base>/apps/<app>`. A navigation
+with that cookie is proxied while the desktop is asleep: it opens a new Selkies session, which makes
+the agent thaw the session. A navigation with the cookie to an awake desktop expires it, so the next
+Sleep shows the page again.
 
 ### 7.6 Single app: `<base>/apps/<name>`
 
@@ -683,7 +697,7 @@ Gateway:
 
 | metric | type | labels |
 | --- | --- | --- |
-| `webtop_gateway_requests_total` | counter | `outcome` (`proxy`, `boot`, `off`, `start`, `app`, `unavailable`, `denied`, `notfound`, `error`) |
+| `webtop_gateway_requests_total` | counter | `outcome` (`proxy`, `boot`, `off`, `start`, `asleep`, `wake`, `app`, `unavailable`, `denied`, `notfound`, `error`) |
 | `webtop_gateway_websockets` | gauge | — |
 | `webtop_gateway_starts_total` | counter | `trigger` (`create`, `navigate`, `button`) |
 
