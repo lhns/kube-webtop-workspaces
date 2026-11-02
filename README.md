@@ -112,7 +112,8 @@ generation is one); a profile element of the same name moves into the file when 
 declared package is refused. If any part
 of a command fails, all of it is reverted. `--profile-backend profile` or `--profile <path>` gives
 stock behaviour for one call. Entries are locked: a package from a local `path:` flake picks up edits only with
-`nix profile upgrade`. Packages in `home.nix` work as before. KDE add-ons from Plasma's "Get New…" dialogs live in
+`nix profile upgrade`, and such a flake needs its `flake.lock` before the first `add` (`nix flake
+lock`), since writing it changes the directory's hash. Packages in `home.nix` work as before. KDE add-ons from Plasma's "Get New…" dialogs live in
 `~/.local/share`, outside the declaration; there is no Discover.
 
 An earlier starter flake (unmodified apart from the user name) is migrated once at boot:
