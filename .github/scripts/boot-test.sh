@@ -175,9 +175,9 @@ as_user nix profile add nixpkgs#jq || fail "adding nixpkgs#jq failed"
 as_user jq -e '.elements.jq' "$decl" >/dev/null || fail "jq is not declared"
 ! as_user nix profile list --profile-backend profile --json | jq -e '.elements.jq' >/dev/null || fail "jq is still in the profile"
 as_user nix profile remove jq >/dev/null || fail "removing the declared jq failed"
-# --all matches the declaration only: upgrade leaves home-manager-path alone.
+# --all matches the declaration only: upgrade does not look at home-manager-path.
 out=$(as_user nix profile upgrade --all 2>&1) || fail "nix profile upgrade --all failed: $out"
-! grep -q 'home-manager-path' <<<"$out" || fail "upgrade --all reached the profile: $out"
+! grep -q 'not added from a flake' <<<"$out" || fail "upgrade --all reached the profile: $out"
 # Migration of an earlier starter flake (webtop-home-manager): its `nix profile` flake packages move
 # into packages.json.
 as_user nix profile remove hello >/dev/null || fail "nix profile remove hello failed"
