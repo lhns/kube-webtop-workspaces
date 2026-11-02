@@ -17,6 +17,9 @@ type Client struct {
 	URL       string
 	TokenPath string
 	HTTP      *http.Client
+	// LoginName and HomePaths go with every report (they are fixed for the pod's lifetime).
+	LoginName string
+	HomePaths []string
 }
 
 func New(url, tokenPath string) *Client {
@@ -47,6 +50,9 @@ type Report struct {
 	ConnectedClients *int   `json:"connectedClients,omitempty"`
 	IdleSeconds      *int   `json:"idleSeconds,omitempty"`
 	Asleep           *bool  `json:"asleep,omitempty"`
+	// Set by Client.Report.
+	LoginName string   `json:"loginName,omitempty"`
+	HomePaths []string `json:"homePaths,omitempty"`
 }
 
 func (c *Client) Power(ctx context.Context, r PowerRequest) error {
@@ -54,6 +60,7 @@ func (c *Client) Power(ctx context.Context, r PowerRequest) error {
 }
 
 func (c *Client) Report(ctx context.Context, r Report) error {
+	r.LoginName, r.HomePaths = c.LoginName, c.HomePaths
 	return c.post(ctx, "/api/v1/report", r, http.StatusNoContent)
 }
 

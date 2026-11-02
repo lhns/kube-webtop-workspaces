@@ -98,6 +98,7 @@
         "adminGroupDN": {"type": "string"},
         "membership": {"enum": ["memberOf", "member"]},
         "memberAttribute": {"type": "string"},
+        "displayNameAttribute": {"type": "string"},
         "syncInterval": {"type": "string"},
         "timeout": {"type": "string"},
         "errorPolicy": {"enum": ["deny", "allow"]},

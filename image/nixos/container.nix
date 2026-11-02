@@ -38,7 +38,8 @@ in
     store = "daemon";
     # The build sandbox fails in the pod (pivot_root: EPERM under the user namespace).
     sandbox = false;
-    trusted-users = [ "root" config.services.webtop.user ];
+    # By group: the desktop user's name is chosen at runtime (identity.nix).
+    trusted-users = [ "root" "@wheel" ];
   };
   # %% : systemd would read the URL's %-escapes as unit specifiers.
   systemd.services.nix-daemon.environment.NIX_CONFIG =

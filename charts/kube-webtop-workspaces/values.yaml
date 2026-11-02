@@ -51,6 +51,9 @@ ldap:
   adminGroupDN: ""
   membership: memberOf        # memberOf | member
   memberAttribute: ""         # default: memberOf / member by mode
+  # The desktop user's display name (GECOS, shown by Plasma), read from the user's entry under
+  # baseDN at each start. Missing or empty: the login name.
+  displayNameAttribute: displayName
   syncInterval: 5m
   timeout: 10s
   errorPolicy: deny           # deny | allow, applies to new starts while LDAP is failing

@@ -155,6 +155,24 @@ func TestDeployment(t *testing.T) {
 	}
 }
 
+func TestDisplayNameEnvOnlyWhenSet(t *testing.T) {
+	cfg, d := testConfig(t), testDesktop()
+	env := func() map[string]string {
+		m := map[string]string{}
+		for _, e := range PodTemplate(cfg, d).Spec.Containers[0].Env {
+			m[e.Name] = e.Value
+		}
+		return m
+	}
+	if _, ok := env()["WEBTOP_DISPLAY_NAME"]; ok {
+		t.Fatal("WEBTOP_DISPLAY_NAME without a display name")
+	}
+	d.Status.DisplayName = "Alice Example"
+	if got := env()["WEBTOP_DISPLAY_NAME"]; got != "Alice Example" {
+		t.Fatalf("WEBTOP_DISPLAY_NAME = %q", got)
+	}
+}
+
 func selkiesEnvOf(t *testing.T, cfg *config.Config, d *v1alpha1.Desktop) map[string]string {
 	t.Helper()
 	got := map[string]string{}

@@ -22,15 +22,22 @@ const (
 // to the user manager's private socket under XDG_RUNTIME_DIR.
 type User struct {
 	UID, GID uint32
+	Name     string // login name; empty if unknown
+	Home     string // empty if unknown
 }
 
-// LookupUser resolves name, falling back to 1000:100.
+// LookupUser resolves name, or uid 1000 when name is empty (the image renames that account at
+// boot), falling back to 1000:100.
 func LookupUser(name string) User {
-	u := User{1000, 100}
-	if r, err := user.Lookup(name); err == nil {
+	u := User{UID: 1000, GID: 100}
+	lookup := func() (*user.User, error) { return user.Lookup(name) }
+	if name == "" {
+		lookup = func() (*user.User, error) { return user.LookupId("1000") }
+	}
+	if r, err := lookup(); err == nil {
 		if uid, err := strconv.ParseUint(r.Uid, 10, 32); err == nil {
 			if gid, err := strconv.ParseUint(r.Gid, 10, 32); err == nil {
-				u = User{uint32(uid), uint32(gid)}
+				u = User{UID: uint32(uid), GID: uint32(gid), Name: r.Username, Home: r.HomeDir}
 			}
 		}
 	}

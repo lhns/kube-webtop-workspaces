@@ -95,3 +95,25 @@ func TestEnsureServiceAddsMissingPort(t *testing.T) {
 		t.Fatalf("ports %+v, want %+v", got.Spec.Ports, want)
 	}
 }
+
+func TestLoginNameCondition(t *testing.T) {
+	d := &v1alpha1.Desktop{ObjectMeta: metav1.ObjectMeta{Name: "alice"}}
+	if _, ok := loginNameCondition(d); ok {
+		t.Fatal("condition before the agent reported")
+	}
+	for _, tc := range []struct{ name, login, reason string }{
+		{"alice", "alice", v1alpha1.ReasonDesktopName},
+		{"root", "user", v1alpha1.ReasonReservedName},
+		{"1abc", "user", v1alpha1.ReasonInvalidLoginName},
+	} {
+		d.Name, d.Status.LoginName = tc.name, tc.login
+		c, ok := loginNameCondition(d)
+		want := metav1.ConditionFalse
+		if tc.reason == v1alpha1.ReasonDesktopName {
+			want = metav1.ConditionTrue
+		}
+		if !ok || c.Reason != tc.reason || c.Status != want {
+			t.Errorf("%s/%s: %+v", tc.name, tc.login, c)
+		}
+	}
+}
