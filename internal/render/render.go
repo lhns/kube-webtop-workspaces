@@ -131,6 +131,7 @@ func PodTemplate(cfg *config.Config, d *v1alpha1.Desktop) corev1.PodTemplateSpec
 		{Name: "WEBTOP_HTTP_PORT", Value: strconv.Itoa(int(dc.Port))},
 		{Name: "WEBTOP_PERSIST_PATH", Value: cfg.Storage.MountPath},
 	}
+	env = append(env, SelkiesEnv(cfg, d)...)
 	env = append(env, dc.ExtraEnv...)
 
 	mounts := []corev1.VolumeMount{

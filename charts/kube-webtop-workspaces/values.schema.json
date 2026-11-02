@@ -134,6 +134,12 @@
             "extraTrustedPublicKeys": {"type": "array", "items": {"type": "string"}}
           }
         },
+        "selkies": {
+          "type": "object",
+          "propertyNames": {"pattern": "^SELKIES_[A-Z0-9_]+$"},
+          "additionalProperties": {"type": "string", "maxLength": 256}
+        },
+        "title": {"type": "string"},
         "securityContext": {"type": ["object", "null"]},
         "shmSize": {"type": ["string", "integer"]},
         "runSizeLimit": {"type": ["string", "integer"]},

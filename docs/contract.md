@@ -246,6 +246,31 @@ includes; unset adds nothing:
 | `WEBTOP_NIX_EXTRA_SUBSTITUTERS` | `extra-substituters`, space-separated URLs |
 | `WEBTOP_NIX_EXTRA_TRUSTED_PUBLIC_KEYS` | `extra-trusted-public-keys`, space-separated `name:key` |
 
+#### Selkies settings
+
+The controller sets one variable per entry of `desktop.selkies`, plus the rendered `desktop.title`
+as `SELKIES_UI_TITLE` (unless `desktop.selkies` has that key; then that literal value wins, untemplated).
+`SELKIES_X` is passed as `WEBTOP_SELKIES_X`, sorted by name so the template hash is stable.
+`webtop-init` writes them as `SELKIES_X="value"` to `/run/webtop/selkies.env` (root-owned, `0644`,
+before systemd starts; also `SELKIES_PORT=$WEBTOP_HTTP_PORT`, last) and leaves them out of
+`/run/webtop/env`. The image lists the file in `services.webtop.environmentFiles`.
+
+- `desktop.title` is a Go `text/template`, parsed once from the config. Fields: `.User` (login),
+  `.DisplayName` (the login for now), `.Desktop` (resource name). They are data: a name containing
+  `{{ ... }}` stays literal.
+- Values are one line. In the config, a key not matching `^SELKIES_[A-Z0-9_]+$`, `SELKIES_PORT`, or a
+  value with a control character (CR, LF, tab, DEL, C1, U+2028/9), invalid UTF-8 or more than 256
+  characters is a config error. The rendered title is cleaned instead: control characters become
+  spaces, it is cut to 256 characters.
+- The file is written double-quoted with `\` and `"` escaped; systemd does no `$` expansion. `webtop-init`
+  also skips a variable whose value has a control character or exceeds 1024 bytes.
+- Selkies shows `SELKIES_UI_TITLE` as `document.title` and as text in its sidebar (React text, no
+  HTML), and only when the variable is set: that is what makes the setting "overridden" for the client.
+  Anything else that shows the title (a gateway page) must go through `html/template`.
+- Precedence, low to high: the image (`extraEnvironment`) < the file above < the user's allowlisted
+  `~/.config/webtop/selkies.env`. The last is a convenience, not a boundary: the user can edit their own
+  systemd user units. Restrictions that matter (file transfers off) must not rely on it.
+
 Optional agent overrides, never set by the controller (the defaults are what ships):
 
 | Variable | Default |
@@ -593,6 +618,8 @@ desktop:
   podLabels: {}
   podAnnotations: {}
   extraEnv: []                    # []corev1.EnvVar
+  selkies: {}                     # SELKIES_* -> string, see "Selkies settings"
+  title: ""                       # text/template, see "Selkies settings"; the chart defaults it
   extraVolumes: []                # []corev1.Volume
   extraVolumeMounts: []           # []corev1.VolumeMount
   securityContext: null           # replaces the default container securityContext
