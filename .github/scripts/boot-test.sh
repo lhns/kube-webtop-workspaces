@@ -118,7 +118,7 @@ as_user hello >/dev/null || fail "hello is not on PATH after the switch"
 out=$(as_user nix profile list 2>&1)
 { grep -q 'hello' <<<"$out" && grep -q 'Backend: *declaration' <<<"$out"; } || fail "nix profile list: $out"
 ! grep -qE 'ignoring (the client-specified|untrusted)' <<<"$out" || fail "the daemon got the client-side settings: $out"
-as_user nix profile list --json | as_user jq -e '.elements.hello.backend == "declaration"
+as_user nix profile list --json | jq -e '.elements.hello.backend == "declaration"
   and (.elements | to_entries | any(.value.backend == "profile" and (.value.storePaths[0] // "" | endswith("home-manager-path"))))' >/dev/null \
   || fail "nix profile list --json is not marked or lacks home-manager-path"
 as_user home-manager switch --flake /home/user/.config/home-manager >/dev/null || fail "a direct home-manager switch failed"
@@ -136,7 +136,7 @@ grep -q "needs 'profile-hook'" <<<"$out" || fail "an empty hook was accepted: $o
 # Store paths and explicit profiles bypass the declaration.
 jqpath=$(as_user sh -c 'dirname "$(dirname "$(readlink -f /run/current-system/sw/bin/jq)")"')
 as_user nix profile add "$jqpath" || fail "adding a store path failed"
-as_user nix profile list --json | as_user jq -e '.elements.jq.backend == "profile"' >/dev/null || fail "the store path is not in the profile"
+as_user nix profile list --json | jq -e '.elements.jq.backend == "profile"' >/dev/null || fail "the store path is not in the profile"
 as_user nix profile remove jq || fail "removing the store path failed"
 { as_user nix profile add --profile-backend profile "$jqpath" && as_user nix profile remove --profile-backend profile jq; } \
   || fail "--profile-backend profile failed"
