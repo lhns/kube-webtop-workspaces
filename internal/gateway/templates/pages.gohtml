@@ -103,3 +103,23 @@ time{white-space:nowrap}
 })();
 </script>
 {{template "foot" .}}{{end}}
+
+{{define "asleep"}}{{template "head" .}}
+<h1>Your desktop is asleep</h1>
+<p class="lead">Wake it to pick up where you left off.</p>
+<form method="post" action="{{.WakeURL}}" id="wake">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+{{with .App}}<input type="hidden" name="app" value="{{.}}">
+{{end}}<button class="btn" type="submit">Wake desktop</button>
+</form>
+<script>
+(function(){
+  var f=document.getElementById("wake"),b=f.querySelector("button");
+  f.addEventListener("submit",function(e){
+    if(b.disabled){e.preventDefault();return}
+    setTimeout(function(){b.disabled=true;b.textContent="Waking…"},0);
+  });
+  addEventListener("pageshow",function(e){if(e.persisted){b.disabled=false;b.textContent="Wake desktop"}});
+})();
+</script>
+{{template "foot" .}}{{end}}

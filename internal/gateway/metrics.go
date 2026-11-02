@@ -11,6 +11,8 @@ const (
 	outOff         = "off"
 	outStart       = "start"
 	outApp         = "app"
+	outAsleep      = "asleep"
+	outWake        = "wake"
 	outUnavailable = "unavailable"
 	outDenied      = "denied"
 	outNotFound    = "notfound"
