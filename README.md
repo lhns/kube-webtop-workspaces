@@ -38,7 +38,9 @@ pod environment, gateway behaviour, configuration, RBAC and metrics.
 ## Desktop image
 
 Built from `flake.nix` with nix2container: `nix build .#image`, then
-`nix run .#image.copyTo -- docker://<ref>`. amd64 only (the Selkies/pixelflux wheels are x86_64).
+`nix run .#image.copyTo -- docker://<ref>`. Published for amd64 and arm64 as one multi-arch index
+([ADR 0011](docs/adr/0011-multi-arch-images-built-natively-published-as-one-index.md)); `packages.<system>`
+for `x86_64-linux` and `aarch64-linux`, each built on its own architecture.
 
 | path | what |
 | --- | --- |
@@ -141,7 +143,7 @@ nested under Selkies: [webtop-nix](https://github.com/lhns/webtop-nix) grafts a 
 software-presentation patch) over the stock one (`services.webtop.kwinSoftwarePresentation`, its ADR 0004).
 Plasma is otherwise plain nixpkgs, so `nix flake update` moves it; the patch only applies to KWin 6.8.x,
 and the evaluation fails on another minor version. Building that KWin takes 25–45 minutes on a GitHub runner, so
-the `desktop-image` job caches it (`packages.x86_64-linux.kwin`, keyed by its store path).
+the `desktop-image` job caches it (`packages.<system>.kwin`, keyed by its store path, so per architecture).
 
 **Known limits**
 
@@ -175,7 +177,8 @@ tar -cf - --exclude=.git . | docker run -i --rm -v kww-gocache:/root/.cache -v k
 
 `ci.yaml` checks every PR; a push to `main` or a `vX.Y.Z` tag then publishes, only when every check is
 green. `main` publishes `0.0.0-dev.<sha7>`; a tag publishes images `vX.Y.Z` (and `latest`) and chart
-`X.Y.Z`. The `desktop-image` job also builds the image on PRs and boots it under docker
+`X.Y.Z`. Both images are amd64+arm64 indexes and a tag's digest is the index's. The `desktop-image` job
+builds the image on PRs too, on an x86 and an arm runner, and boots each under docker
 (`.github/scripts/boot-test.sh`): it passes only when the agent reports Ready, which needs KWin
 compositing. `nixpkgs-sync` requires the nixpkgs in `flake.lock` to equal the one webtop-nix locks at
 the pinned commit. `prune.yaml` lists old dev versions weekly and deletes them only with the repo

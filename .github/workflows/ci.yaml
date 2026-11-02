@@ -5,6 +5,7 @@ name: ci
 #   - push to main:  0.0.0-dev.<sha7> (images also sha-<sha7> and main)
 #   - tag vX.Y.Z:    images vX.Y.Z (+ latest unless a prerelease), chart X.Y.Z; a GitHub Release gets the SBOMs
 #   - manual run with publish=true: as main, from any ref (to try the publish path)
+# Both images are multi-arch indexes (amd64, arm64); a tag's digest is the index's (docs/adr/0011).
 on:
   push:
     branches: [main]
@@ -28,6 +29,7 @@ concurrency:
 
 env:
   CONTROLLER_IMAGE: ghcr.io/lhns/kube-webtop-workspaces
+  CONTROLLER_PLATFORMS: linux/amd64,linux/arm64
   DESKTOP_IMAGE: ghcr.io/lhns/kube-webtop-workspaces-desktop
 
 jobs:
@@ -39,7 +41,6 @@ jobs:
       publish: ${{ steps.m.outputs.publish }}
       version: ${{ steps.m.outputs.version }}
       chart_version: ${{ steps.m.outputs.chart_version }}
-      platforms: ${{ steps.m.outputs.platforms }}
       controller_tags: ${{ steps.m.outputs.controller_tags }}
       desktop_tags: ${{ steps.m.outputs.desktop_tags }}
     steps:
@@ -55,7 +56,6 @@ jobs:
             publish=true
             version=$GITHUB_REF_NAME
             chart_version=${version#v}
-            platforms=linux/amd64,linux/arm64
             tags="$version"
             # A prerelease is not "latest".
             [[ "$version" == *-* ]] || tags="$tags latest"
@@ -66,7 +66,6 @@ jobs:
             short=${GITHUB_SHA::7}
             version=0.0.0-dev.$short
             chart_version=$version
-            platforms=linux/amd64
             tags="$version sha-$short"
             [[ "$GITHUB_REF" != refs/heads/main ]] || tags="$tags main"
           fi
@@ -74,7 +73,6 @@ jobs:
             echo "publish=$publish"
             echo "version=$version"
             echo "chart_version=$chart_version"
-            echo "platforms=$platforms"
             echo "controller_tags=$(for t in $tags; do echo "$CONTROLLER_IMAGE:$t"; done | paste -sd,)"
             echo "desktop_tags=$tags"
           } | tee -a "$GITHUB_OUTPUT"
@@ -287,7 +285,7 @@ jobs:
         with:
           context: .
           push: true
-          platforms: ${{ needs.meta.outputs.platforms }}
+          platforms: ${{ env.CONTROLLER_PLATFORMS }}
           cache-from: type=gha
           tags: ${{ needs.meta.outputs.controller_tags }}
       - name: install cosign
@@ -300,36 +298,51 @@ jobs:
         uses: anchore/sbom-action/download-syft@v0
         with:
           syft-version: v1.14.0
-      - name: sign image, SBOM attestation
+      # --recursive signs the index and each platform manifest; each SBOM is attested on its platform's manifest.
+      - name: sign image, SBOM attestations
         if: needs.meta.outputs.publish == 'true'
         env:
           COSIGN_YES: "true"
           REF: ${{ env.CONTROLLER_IMAGE }}@${{ steps.push.outputs.digest }}
         run: |
-          cosign sign "$REF"
-          syft "$REF" -o spdx-json=kube-webtop-workspaces-image.sbom.spdx.json
-          cosign attest --predicate kube-webtop-workspaces-image.sbom.spdx.json --type spdx "$REF"
+          set -euo pipefail
+          cosign sign --recursive "$REF"
+          for platform in ${CONTROLLER_PLATFORMS//,/ }; do
+            arch=${platform#*/}
+            digest=$(docker buildx imagetools inspect "$REF" --format '{{json .Manifest}}' \
+              | jq -r --arg a "$arch" '.manifests[] | select(.platform.os == "linux" and .platform.architecture == $a) | .digest')
+            sbom=kube-webtop-workspaces-image-$arch.sbom.spdx.json
+            syft "$CONTROLLER_IMAGE@$digest" -o "spdx-json=$sbom"
+            cosign attest --predicate "$sbom" --type spdx "$CONTROLLER_IMAGE@$digest"
+          done
           echo "controller image: \`$REF\`" >> "$GITHUB_STEP_SUMMARY"
-      - name: upload SBOM
+      - name: upload SBOMs
         if: needs.meta.outputs.publish == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: controller-sbom
-          path: kube-webtop-workspaces-image.sbom.spdx.json
+          path: kube-webtop-workspaces-image-*.sbom.spdx.json
 
   # ------ desktop image (NixOS) ----------------------------------------------
-  # Built with Nix (flake.nix, nix2container); amd64 only: the Selkies/pixelflux wheels are x86_64.
+  # Built with Nix (flake.nix, nix2container) natively per arch, no emulation: the system evaluates
+  # through webtop-nix's KWin graft (import from derivation), so evaluating it means building it.
   # A cold KWin build is 25-45 minutes; the rest is cache.nixos.org and the image layers.
   desktop-image:
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    name: desktop-image (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
     needs: [meta, unit, agent, integration, trivy-fs, helm, nixpkgs-sync, nix-store]
     permissions:
       contents: read
       packages: write
-      id-token: write
-    outputs:
-      digest: ${{ steps.push.outputs.digest }}
     steps:
       - uses: actions/checkout@v7
       # The Plasma closure is several GB, and the image is loaded into docker as well.
@@ -347,8 +360,12 @@ jobs:
         run: nix build .#image -L
 
       # Boots the image under docker and waits for the agent's Ready, which needs KWin compositing.
+      # The architecture check guards the index, whose platform entries come from each image's config.
       - name: load image into docker
-        run: nix run .#image.copyToDockerDaemon
+        run: |
+          nix run .#image.copyToDockerDaemon
+          arch=$(docker image inspect -f '{{.Architecture}}' "$DESKTOP_IMAGE:dev")
+          [ "$arch" = "${{ matrix.arch }}" ] || { echo "::error::image architecture is $arch"; exit 1; }
       - name: boot test
         timeout-minutes: 20
         run: .github/scripts/boot-test.sh ${{ env.DESKTOP_IMAGE }}:dev 900
@@ -372,23 +389,18 @@ jobs:
         run: docker rm -f desktop-boot || true
 
       # ------ publish (main, tags) ------
-      # copyTo is skopeo copy from the Nix store; layers already pushed are skipped.
+      # By digest only: desktop-index puts the tags on the index. copyTo is skopeo copy from the Nix
+      # store; layers already pushed are skipped.
       - name: push image
-        id: push
         if: needs.meta.outputs.publish == 'true'
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAGS: ${{ needs.meta.outputs.desktop_tags }}
         run: |
           set -euo pipefail
-          for tag in $TAGS; do
-            nix run .#image.copyTo -- --digestfile digest \
-              --dest-creds "${{ github.actor }}:${GHCR_TOKEN}" "docker://${DESKTOP_IMAGE}:${tag}"
-            echo "pushed ${DESKTOP_IMAGE}:${tag}" >> "$GITHUB_STEP_SUMMARY"
-          done
-          echo "digest=$(cat digest)" >> "$GITHUB_OUTPUT"
-          echo "desktop image: \`${DESKTOP_IMAGE}@$(cat digest)\`" >> "$GITHUB_STEP_SUMMARY"
-      # cosign pushes signatures with the Docker credentials; skopeo's --dest-creds do not reach it.
+          nix run .#image.copyTo -- --digestfile digest \
+            --dest-creds "${{ github.actor }}:${GHCR_TOKEN}" "docker://${DESKTOP_IMAGE}@@unknown-digest@@"
+          mkdir -p out && cp digest "out/${{ matrix.arch }}"
+          echo "desktop image (${{ matrix.arch }}): \`${DESKTOP_IMAGE}@$(cat digest)\`" >> "$GITHUB_STEP_SUMMARY"
       - name: log in to ghcr
         if: needs.meta.outputs.publish == 'true'
         uses: docker/login-action@v4
@@ -396,37 +408,80 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: install cosign
-        if: needs.meta.outputs.publish == 'true'
-        uses: sigstore/cosign-installer@v3
-        with:
-          cosign-release: v2.4.1
       - name: install syft
         if: needs.meta.outputs.publish == 'true'
         uses: anchore/sbom-action/download-syft@v0
         with:
           syft-version: v1.14.0
-      - name: cosign sign image (keyless)
-        if: needs.meta.outputs.publish == 'true'
-        env:
-          COSIGN_YES: "true"
-        run: |
-          # Rekor/Fulcio fail transiently; retry the whole call.
-          for i in 1 2 3 4 5; do
-            cosign sign "${DESKTOP_IMAGE}@${{ steps.push.outputs.digest }}" && exit 0
-            echo "cosign sign failed (attempt $i)"; sleep $((i * 15))
-          done
-          exit 1
       - name: generate image SBOM
         if: needs.meta.outputs.publish == 'true'
-        run: syft "${DESKTOP_IMAGE}@${{ steps.push.outputs.digest }}" -o spdx-json=kube-webtop-workspaces-desktop.sbom.spdx.json
+        run: syft "${DESKTOP_IMAGE}@$(cat digest)" -o spdx-json=kube-webtop-workspaces-desktop-${{ matrix.arch }}.sbom.spdx.json
       # No attestation: Rekor rejects the SBOM of the Nix closure. It is published as a file only.
       - name: upload SBOM
         if: needs.meta.outputs.publish == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: desktop-sbom
-          path: kube-webtop-workspaces-desktop.sbom.spdx.json
+          name: desktop-${{ matrix.arch }}-sbom
+          path: kube-webtop-workspaces-desktop-${{ matrix.arch }}.sbom.spdx.json
+      # Matrix legs cannot each set a job output, so the digest travels as an artifact.
+      - name: upload digest
+        if: needs.meta.outputs.publish == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-digest-${{ matrix.arch }}
+          path: out/${{ matrix.arch }}
+
+  # The multi-arch index over the per-arch images, every tag in one call: one index, one digest.
+  desktop-index:
+    if: needs.meta.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [meta, desktop-image]
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: desktop-digest-*
+          merge-multiple: true
+          path: digests
+      # imagetools and cosign push with the Docker credentials.
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: create index
+        id: index
+        env:
+          TAGS: ${{ needs.meta.outputs.desktop_tags }}
+        run: |
+          set -euo pipefail
+          args=()
+          for tag in $TAGS; do args+=(-t "${DESKTOP_IMAGE}:${tag}"); done
+          for f in digests/*; do args+=("${DESKTOP_IMAGE}@$(cat "$f")"); done
+          docker buildx imagetools create "${args[@]}"
+          digest=$(docker buildx imagetools inspect "${DESKTOP_IMAGE}:${TAGS%% *}" --format '{{json .Manifest}}' | jq -r .digest)
+          docker buildx imagetools inspect "${DESKTOP_IMAGE}@${digest}"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          for tag in $TAGS; do echo "pushed ${DESKTOP_IMAGE}:${tag}" >> "$GITHUB_STEP_SUMMARY"; done
+          echo "desktop image: \`${DESKTOP_IMAGE}@${digest}\`" >> "$GITHUB_STEP_SUMMARY"
+      - uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: v2.4.1
+      # --recursive: the index and each per-arch manifest.
+      - name: cosign sign image (keyless)
+        env:
+          COSIGN_YES: "true"
+        run: |
+          # Rekor/Fulcio fail transiently; retry the whole call.
+          for i in 1 2 3 4 5; do
+            cosign sign --recursive "${DESKTOP_IMAGE}@${{ steps.index.outputs.digest }}" && exit 0
+            echo "cosign sign failed (attempt $i)"; sleep $((i * 15))
+          done
+          exit 1
 
   # ------ Helm chart and GitHub Release --------------------------------------
   chart:
@@ -434,7 +489,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # After both images, so a published chart never points at a missing one.
-    needs: [meta, controller-image, desktop-image]
+    needs: [meta, controller-image, desktop-index]
     permissions:
       contents: write
       packages: write

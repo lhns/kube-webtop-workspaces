@@ -8,7 +8,7 @@ let
   home = config.users.users.${cfg.user}.home;
   vars = {
     user = cfg.user;
-    inherit home;
+    inherit home system;
     stateVersion = config.system.stateVersion;
   };
   # toFile, not replaceVars: home.nix is also imported below, which needs a plain path (no IFD).
