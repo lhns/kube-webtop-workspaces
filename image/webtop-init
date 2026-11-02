@@ -175,21 +175,29 @@ user_dir() {
 }
 
 # WEBTOP_HOME_PATHS: the current /home/<name> plus the valid lines of the user's home-paths file, at
-# most 16. The file is created when missing (listing /home/user too on a volume from before: its
-# data holds absolute /home/user paths), and the current path is appended when not listed.
+# most 16. A volume from before (its data holds absolute /home/user paths) keeps /home/user whenever
+# the file cannot be used. Writes to the file are best effort (a full volume must not stop the boot):
+# it is created when missing, and the current path is appended when not listed.
 home_paths() {
   cur=/home/$WEBTOP_LOGIN_NAME
-  export WEBTOP_HOME_PATHS="$cur"
-  old=
-  if [ -d "$H" ]; then old=1; else mkdir -p "$H" && chown 1000:100 "$H" && chmod 700 "$H" || return 1; fi
+  fallback=$cur
+  if [ -d "$H" ]; then
+    [ "$cur" = /home/user ] || fallback="$cur /home/user"
+  else
+    mkdir -p "$H" && chown 1000:100 "$H" && chmod 700 "$H" || return 1
+  fi
+  export WEBTOP_HOME_PATHS="$fallback"
   user_dir "$H/.config" && user_dir "$H/.config/webtop" || return 0
   f=$H/.config/webtop/home-paths
   if [ ! -e "$f" ] && [ ! -L "$f" ]; then
-    { echo "# Paths this home is mounted at. Your current one is added at every start and can't be removed."
-      echo "# Delete an old one once nothing refers to it anymore; it disappears at the next start."
-      echo "$cur"
-      [ -z "$old" ] || [ "$cur" = /home/user ] || echo /home/user
-    } > "$f" && chown 1000:100 "$f" || return 1
+    if { echo "# Paths this home is mounted at. Your current one is added at every start and can't be removed."
+         echo "# Delete an old one once nothing refers to it anymore; it disappears at the next start."
+         for p in $fallback; do echo "$p"; done
+       } > "$f.tmp" && chown 1000:100 "$f.tmp" && mv "$f.tmp" "$f"; then :; else
+      log "could not create $f"
+      rm -f "$f.tmp"
+      return 0
+    fi
   fi
   if [ -L "$f" ] || [ ! -f "$f" ]; then
     log "ignoring $f: not a regular file"
@@ -214,8 +222,7 @@ home_paths() {
 $lines
 EOF
   if [ -z "$listed" ]; then
-    [ -z "$(tail -c1 "$f")" ] || echo >> "$f"
-    echo "$cur" >> "$f"
+    { [ -z "$(tail -c1 "$f")" ] || echo; echo "$cur"; } >> "$f" || log "could not add $cur to $f"
   fi
   WEBTOP_HOME_PATHS=$paths
 }

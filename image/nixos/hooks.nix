@@ -109,8 +109,18 @@ let
           echo "home-manager generation restored"
         else
           aside "$g" "$profiles"/home-manager-*-link
-          echo "home-manager switch --flake $hm"
-          home-manager switch --flake "$hm" || failed=1
+          # A flake still written for the account's old name `user` (ADR 0011): switch that config
+          # as it expects, through the /home/user mount, until the user updates it.
+          has=$(nix eval --json "$hm#homeConfigurations" --apply "c: builtins.hasAttr \"$USER\" c" 2>/dev/null || echo true)
+          if [ "$has" = false ] && [ -d /home/user ] &&
+             [ "$(nix eval --json "$hm#homeConfigurations" --apply 'c: builtins.hasAttr "user" c' 2>/dev/null)" = true ]; then
+            echo "no homeConfigurations.\"$USER\" in $hm: switching the one for user (HOME=/home/user)"
+            USER=user HOME=/home/user home-manager switch --flake "$hm#user" || failed=1
+            notify "Update your home-manager flake" "It still names user. See: journalctl -u webtop-home-manager-template"
+          else
+            echo "home-manager switch --flake $hm"
+            home-manager switch --flake "$hm" || failed=1
+          fi
         fi
       fi
 

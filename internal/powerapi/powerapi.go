@@ -21,6 +21,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/lhns/kube-webtop-workspaces/api/v1alpha1"
@@ -74,6 +75,8 @@ type Server struct {
 	ServiceAccount string
 	Audience       string
 	Now            func() time.Time
+	// Recorder emits an Event when the reported login name changes; nil disables it.
+	Recorder record.EventRecorder
 }
 
 func (s *Server) now() time.Time {
@@ -402,6 +405,7 @@ func (s *Server) report(w http.ResponseWriter, r *http.Request) {
 	if req.Asleep != nil {
 		st.Asleep = *req.Asleep
 	}
+	prevLogin := st.LoginName
 	if req.LoginName != nil {
 		st.LoginName = *req.LoginName
 	}
@@ -415,7 +419,23 @@ func (s *Server) report(w http.ResponseWriter, r *http.Request) {
 		writeErr(sw, fail(http.StatusServiceUnavailable, "could not store the report"))
 		return
 	}
+	s.loginNameEvent(d, prevLogin)
 	sw.WriteHeader(http.StatusNoContent)
+}
+
+// loginNameEvent records a change of the desktop user's login name, e.g. an image update that adds
+// an account of that name: the user then becomes "user" (condition LoginName, ADR 0011).
+func (s *Server) loginNameEvent(d *v1alpha1.Desktop, prev string) {
+	cur := d.Status.LoginName
+	if s.Recorder == nil || cur == prev || (prev == "" && cur == d.Name) {
+		return
+	}
+	if cur != d.Name {
+		s.Recorder.Eventf(d, corev1.EventTypeWarning, "LoginNameFallback",
+			"the desktop user is %q, not %q: the name is not a valid login name or is an account of the image", cur, d.Name)
+		return
+	}
+	s.Recorder.Eventf(d, corev1.EventTypeNormal, "LoginName", "the desktop user is %q again", cur)
 }
 
 // Runnable serves the API as a manager Runnable on every replica.

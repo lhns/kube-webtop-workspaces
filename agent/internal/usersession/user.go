@@ -22,6 +22,7 @@ const (
 // to the user manager's private socket under XDG_RUNTIME_DIR.
 type User struct {
 	UID, GID uint32
+	Name     string // login name; empty if unknown
 	Home     string // empty if unknown
 }
 
@@ -36,7 +37,7 @@ func LookupUser(name string) User {
 	if r, err := lookup(); err == nil {
 		if uid, err := strconv.ParseUint(r.Uid, 10, 32); err == nil {
 			if gid, err := strconv.ParseUint(r.Gid, 10, 32); err == nil {
-				u = User{UID: uint32(uid), GID: uint32(gid), Home: r.HomeDir}
+				u = User{UID: uint32(uid), GID: uint32(gid), Name: r.Username, Home: r.HomeDir}
 			}
 		}
 	}

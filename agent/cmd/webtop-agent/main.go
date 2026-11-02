@@ -159,11 +159,11 @@ func run(cfg config.Config) {
 		return
 	}
 	client := api.New(cfg.ControllerURL, cfg.TokenPath)
-	client.LoginName, client.HomePaths = cfg.LoginName, cfg.HomePaths
-
 	// Idle detection is best effort and independent of readiness.
 	tracker := idle.NewTracker(cfg.StateDir)
 	du := usersession.LookupUser(cfg.User)
+	// What the account is (passwd, after the rename at activation), not what webtop-init asked for.
+	client.LoginName, client.HomePaths = du.Name, cfg.HomePaths
 	socket := du.WaylandSocket
 	if cfg.WaylandSocket != "" {
 		socket = func(context.Context) (string, error) { return cfg.WaylandSocket, nil }

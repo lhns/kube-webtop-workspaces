@@ -29,12 +29,11 @@ func TestOverrides(t *testing.T) {
 		"WEBTOP_AGENT_WAYLAND_SOCKET":  "/tmp/wl",
 		"WEBTOP_AGENT_USER":            "bob",
 		"WEBTOP_IDLE_REASON_THRESHOLD": "2m",
-		"WEBTOP_LOGIN_NAME":            "bob",
 		"WEBTOP_HOME_PATHS":            "/home/bob /home/user",
 	}))
 	if c.ControllerURL != "http://c:8082" || c.HTTPPort != 9090 || c.PowerHookTimeout != 5*time.Second ||
 		c.CompositorTimeout != 90*time.Second || c.WaylandSocket != "/tmp/wl" || c.User != "bob" || c.IdleThreshold != 2*time.Minute ||
-		c.LoginName != "bob" || !reflect.DeepEqual(c.HomePaths, []string{"/home/bob", "/home/user"}) {
+		!reflect.DeepEqual(c.HomePaths, []string{"/home/bob", "/home/user"}) {
 		t.Fatalf("got %+v", c)
 	}
 }

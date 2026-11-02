@@ -17,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -356,5 +357,24 @@ func TestHealthz(t *testing.T) {
 	e.srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	if rec.Code != 200 {
 		t.Fatal(rec.Code)
+	}
+}
+
+func TestReportLoginNameEvents(t *testing.T) {
+	e := newEnv(t, desktop(nil), desktopPod("pod-1"))
+	rec := record.NewFakeRecorder(10)
+	e.srv.Recorder = rec
+	for _, login := range []string{"alice", "alice", "user", "user", "alice"} {
+		if r := e.do("/api/v1/report", `{"loginName":"`+login+`"}`, "tok"); r.Code != 204 {
+			t.Fatal(r.Code, r.Body)
+		}
+	}
+	close(rec.Events)
+	var got []string
+	for ev := range rec.Events {
+		got = append(got, strings.Join(strings.Fields(ev)[:2], " "))
+	}
+	if strings.Join(got, ",") != "Warning LoginNameFallback,Normal LoginName" {
+		t.Fatalf("events: %q", got)
 	}
 }

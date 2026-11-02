@@ -24,12 +24,21 @@ in
     # Read, not sourced: the GECOS comes from LDAP.
     name=$(grep -m1 '^WEBTOP_LOGIN_NAME=' /run/webtop/env | cut -d= -f2-)
     gecos=$(grep -m1 '^WEBTOP_LOGIN_GECOS=' /run/webtop/env | cut -d= -f2-)
+    if [ -n "$name" ] && [ "$name" != ${cfg.user} ] && ! usermod -l "$name" ${cfg.user}; then
+      # Stay `user` with home /home/user, consistently; webtop-init mounted only /home/<name>.
+      echo "webtop-identity: renaming ${cfg.user} to $name failed; staying ${cfg.user}"
+      name=${cfg.user}
+      mountpoint -q /home/${cfg.user} || { mkdir -p /home/${cfg.user} && mount --bind /persist/home/user /home/${cfg.user}; }
+    fi
     if [ -n "$name" ]; then
-      if [ "$name" != ${cfg.user} ]; then
-        usermod -l "$name" ${cfg.user} || echo "webtop-identity: renaming ${cfg.user} to $name failed"
-      fi
-      usermod -d "/home/$name" -c "''${gecos:-$name}" "$(id -nu ${toString cfg.uid})" \
+      usermod -d "/home/$name" -c "''${gecos:-$name}" "$name" \
         || echo "webtop-identity: setting the home and GECOS of $name failed"
+      # usermod renames neither the subordinate id ranges nor the linger flag (logind reads that
+      # directory when it starts, after activation).
+      for f in /etc/subuid /etc/subgid; do
+        [ ! -f "$f" ] || sed -i "s/^${cfg.user}:/$name:/" "$f"
+      done
+      mkdir -p /var/lib/systemd/linger && touch "/var/lib/systemd/linger/$name"
     fi
   '';
 }

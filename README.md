@@ -95,9 +95,18 @@ checks the user name and home, so at every start `webtop-home-manager-template.s
 last wrote (hashes in `~/.local/state/webtop/templates.sha256`) or byte-identical to the starter
 template rendered for a name in `home-paths`. An edited flake is left alone; if it still names
 another user, the journal of that unit and a desktop notification list the lines to change
-(`homeConfigurations."…"`, `home.username`, `home.homeDirectory`), and until then `home-manager switch`
-and the reinstall after an image update fail. Remove `/home/user` from `home-paths` once nothing
-refers to it. `webtop-template write|unmodified` is the helper; other units that update files the image
+(`homeConfigurations."…"`, `home.username`, `home.homeDirectory`). Until then a plain
+`home-manager switch` fails, and the reinstall after an image update switches the old `user` config
+(as `USER=user HOME=/home/user`, through the `/home/user` mount) instead. A failed rename at
+activation leaves the account `user` with `/home/user` mounted.
+
+Remove `/home/user` from `home-paths` only once nothing refers to it. Known referrers: `~/.nix-profile`
+and other profile links (`~/.local/state/nix/profiles`), home-manager's `home.homeDirectory` and the
+generated `hm-session-vars.sh`, older generations kept as GC roots (a rollback to them expects
+`/home/user`), and KDE, Firefox and other app configs. To check:
+`grep -rl /home/user ~/.config ~/.local/state ~/.mozilla 2>/dev/null` and
+`ls -l ~/.nix-profile ~/.local/state/nix/profiles`; switch home-manager after updating its config so
+the current generation refers to the new path. `webtop-template write|unmodified` is the helper; other units that update files the image
 put into the home use it too.
 
 **home-manager.** On first boot, only if `~/.config/home-manager` is absent (and once), a starter

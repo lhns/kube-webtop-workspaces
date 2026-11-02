@@ -246,7 +246,8 @@ Env (plus `desktop.extraEnv`):
 The image's `webtop-init` writes every `WEBTOP_*` variable to `/run/webtop/env`, since systemd units
 do not inherit the container env. The controller and agent do not read the two informational ones;
 they are there for desktop-side units and scripts. `webtop-init` adds `WEBTOP_LOGIN_NAME`,
-`WEBTOP_LOGIN_GECOS` and `WEBTOP_HOME_PATHS` (space-separated), its decisions, which the agent reports.
+`WEBTOP_LOGIN_GECOS` and `WEBTOP_HOME_PATHS` (space-separated), its decisions. The agent reports the
+account's actual name (passwd entry of uid 1000) and the mounted home paths.
 
 Optional Nix settings, never set by the controller (the chart sets them from `desktop.nix.*` through
 `desktop.extraEnv`). `webtop-init` writes them to `/run/webtop/nix.conf`, which `/etc/nix/nix.conf`
@@ -498,7 +499,9 @@ All fields optional; absent fields are left unchanged:
 ```
 
 `loginName` must be a valid login name (section 4) and `homePaths` at most 16 entries of
-`/home/<login name>` (else `400`); they set `status.loginName` and `status.homePaths`.
+`/home/<login name>` (else `400`); they set `status.loginName` and `status.homePaths`. A change of
+`loginName` away from the desktop name (or back) also records an Event on the Desktop
+(`LoginNameFallback` warning / `LoginName`).
 
 Reports from a pod whose UID ≠ `status.podUID` → `409`, ignored; right after a pod starts the
 controller may not have recorded it yet, so the agent retries a 409 (every few seconds). `ready: true` sets `agentReady`.
