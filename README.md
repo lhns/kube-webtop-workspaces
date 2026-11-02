@@ -10,7 +10,7 @@ One Go binary (`cmd/kube-webtop-workspaces`), run as two Deployments:
 
 - **gateway** (`--mode=gateway`): sits behind a forward-auth proxy that sets the user and groups
   headers. It reverse-proxies each user to their own desktop (HTTP and websockets), starts it on a
-  top-level navigation, and serves the boot screen and the "desktop is off" page. Admins can open any
+  top-level navigation, and serves the boot screen, the "desktop is off" page and, after Sleep, a "desktop is asleep" page with a Wake button. Admins can open any
   desktop at `/u/<user>/`.
 - **single apps**: `/apps/<name>` (or `/u/<user>/apps/<name>` for admins) streams one application
   of the desktop instead of the whole desktop, where `<name>` is a desktop file id such as
@@ -170,8 +170,13 @@ prefix setting. Selkies' `SELKIES_SUBFOLDER` must stay empty: it would make the 
 prefix the gateway has already stripped.
 
 **Selkies settings** (`image/nixos/desktop.nix`): plain HTTP; audio sink, cursor path and library
-wrapper come from webtop-nix. Clipboard, file transfer (to `~/Desktop`) and browser cursors are
-Selkies' defaults.
+wrapper come from webtop-nix. Clipboard, file transfer and browser cursors are webtop-nix's defaults.
+Precedence, low to high: the image's defaults < the cluster (`desktop.selkies` and the tab title
+`desktop.title`, delivered through `/run/webtop/selkies.env`; contract, "Selkies settings") < the user's
+allowlisted `~/.config/webtop/selkies.env` (`services.webtop.userSettings`: stream quality and input
+feel). The per-user file is a convenience, not a security boundary, since the user can edit their own
+systemd user units; settings that must hold (file transfers off) cannot rely on it. A changed setting or
+title applies on the desktop's next start (ADR 0006).
 
 **KWin patch.** KWin 6.8 dropped QPainter compositing, so without a GPU it needs a patch to render
 nested under Selkies: [webtop-nix](https://github.com/lhns/webtop-nix) grafts a patched KWin (LinuxServer's

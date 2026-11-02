@@ -1,5 +1,5 @@
 // Served by the gateway and injected into the desktop's page. Reloads the tab when the desktop
-// leaves Running (or is replaced by another pod), so the gateway can show the right page.
+// leaves Running, falls asleep (or is replaced by another pod), so the gateway can show the right page.
 // It also pings the gateway every minute: the desktop's own traffic is one websocket, which the
 // forward-auth in front of the gateway never sees, so its session would otherwise go inactive.
 (function () {
@@ -8,6 +8,7 @@
   // The status stream is next to this script; watch=1 keeps it open while the desktop runs.
   var url = new URL("events?watch=1", script.src).href;
   var seen = null; // pod of the Running state this tab has observed
+  var awake = false; // this tab has seen the desktop Running and not asleep
   var delay = 1000;
   var es;
 
@@ -20,6 +21,9 @@
       if (s.phase === "Running") {
         if (seen === null) seen = s.podUID || "";
         else if (seen !== (s.podUID || "")) reload();
+        // Sleep freezes the stream: reload so the gateway shows its sleep page. A tab opened
+        // while the desktop is still waking is not awake yet, so it does not loop.
+        if (s.asleep) { if (awake) reload(); } else awake = true;
       } else if (seen !== null) {
         reload();
       }

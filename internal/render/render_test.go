@@ -3,7 +3,12 @@
 package render
 
 import (
+	"maps"
+	"slices"
+	"strings"
 	"testing"
+	"unicode"
+	"unicode/utf8"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -147,5 +152,127 @@ func TestDeployment(t *testing.T) {
 	}
 	if got := ServiceURL(cfg, d); got != "http://desktop-alice.webtop.svc:8080" {
 		t.Fatal(got)
+	}
+}
+
+func selkiesEnvOf(t *testing.T, cfg *config.Config, d *v1alpha1.Desktop) map[string]string {
+	t.Helper()
+	got := map[string]string{}
+	for _, e := range PodTemplate(cfg, d).Spec.Containers[0].Env {
+		if strings.HasPrefix(e.Name, "WEBTOP_SELKIES_") {
+			got[strings.TrimPrefix(e.Name, "WEBTOP_")] = e.Value
+		}
+	}
+	return got
+}
+
+func parse(t *testing.T, desktop string) *config.Config {
+	t.Helper()
+	cfg, err := config.Parse([]byte("namespace: webtop\npowerApi:\n  url: http://ctl:8082\ndesktop:\n  image: img:1\n" + desktop))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cfg
+}
+
+func TestSelkiesNothingConfigured(t *testing.T) {
+	if got := selkiesEnvOf(t, testConfig(t), testDesktop()); len(got) != 0 {
+		t.Fatalf("no title and no settings must add no env, got %v", got)
+	}
+}
+
+func TestSelkiesTitleAndSettings(t *testing.T) {
+	cfg := parse(t, "  title: '{{ .DisplayName }} ({{ .Desktop }})'\n  selkies:\n    SELKIES_FRAMERATE: \"60\"\n")
+	got := selkiesEnvOf(t, cfg, testDesktop())
+	want := map[string]string{"SELKIES_UI_TITLE": "Alice (alice)", "SELKIES_FRAMERATE": "60"}
+	if !maps.Equal(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+func TestSelkiesExplicitTitleWinsOverTemplate(t *testing.T) {
+	cfg := parse(t, "  title: '{{ .User }}'\n  selkies:\n    SELKIES_UI_TITLE: '{{ .User }} literal'\n")
+	if got := selkiesEnvOf(t, cfg, testDesktop())["SELKIES_UI_TITLE"]; got != "{{ .User }} literal" {
+		t.Fatalf("explicit setting must win and not be templated, got %q", got)
+	}
+}
+
+// User text is template data, never template source.
+func TestSelkiesTitleDataIsNotTemplate(t *testing.T) {
+	cfg := parse(t, "  title: '{{ .User }}'\n")
+	d := testDesktop()
+	d.Spec.User = "{{ .Desktop }}<b>x</b>"
+	if got := selkiesEnvOf(t, cfg, d)["SELKIES_UI_TITLE"]; got != "{{ .Desktop }}<b>x</b>" {
+		t.Fatalf("data was interpreted: %q", got)
+	}
+}
+
+func TestSelkiesTitleStripsControlCharacters(t *testing.T) {
+	cfg := parse(t, "  title: '{{ .User }}'\n")
+	d := testDesktop()
+	d.Spec.User = "a\r\nSELKIES_EVIL=1\x00\x1b[0m b\u0085c\x7f"
+	got := selkiesEnvOf(t, cfg, d)["SELKIES_UI_TITLE"]
+	for _, r := range got {
+		if r < ' ' || unicode.IsControl(r) || r == ' ' {
+			t.Fatalf("control character %q left in %q", r, got)
+		}
+	}
+	if got != "a  SELKIES_EVIL=1  [0m b c" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestSelkiesTitleCappedAndValidUTF8(t *testing.T) {
+	cfg := parse(t, "  title: '{{ .User }}'\n")
+	d := testDesktop()
+	d.Spec.User = strings.Repeat("é", 1000) + "\xff"
+	got := selkiesEnvOf(t, cfg, d)["SELKIES_UI_TITLE"]
+	if n := utf8.RuneCountInString(got); n != config.MaxSelkiesValueLen || !utf8.ValidString(got) {
+		t.Fatalf("got %d runes, valid=%v", n, utf8.ValidString(got))
+	}
+	d.Spec.User = "\xff"
+	if got := selkiesEnvOf(t, cfg, d)["SELKIES_UI_TITLE"]; got != "�" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestSelkiesEmptyTitleIsOmitted(t *testing.T) {
+	cfg := parse(t, "  title: '{{ \"\" }}'\n")
+	if got := selkiesEnvOf(t, cfg, testDesktop()); len(got) != 0 {
+		t.Fatalf("got %v", got)
+	}
+}
+
+func TestSelkiesDeterministicAndHashed(t *testing.T) {
+	cfg := parse(t, "  title: '{{ .User }}'\n  selkies:\n    SELKIES_B: b\n    SELKIES_A: a\n    SELKIES_C: c\n")
+	d := testDesktop()
+	var names []string
+	for _, e := range PodTemplate(cfg, d).Spec.Containers[0].Env {
+		if strings.HasPrefix(e.Name, "WEBTOP_SELKIES_") {
+			names = append(names, e.Name)
+		}
+	}
+	if !slices.IsSorted(names) || len(names) != 4 {
+		t.Fatalf("not sorted: %v", names)
+	}
+	h := TemplateHash(PodTemplate(cfg, d))
+	for range 20 {
+		if TemplateHash(PodTemplate(cfg, d)) != h {
+			t.Fatal("hash is not deterministic")
+		}
+	}
+	cfg.Desktop.Selkies["SELKIES_A"] = "other"
+	if TemplateHash(PodTemplate(cfg, d)) == h {
+		t.Fatal("a setting change must change the hash")
+	}
+}
+
+func TestSelkiesTitleDropsFormatCharacters(t *testing.T) {
+	cfg := parse(t, "  title: '{{ .User }}'\n")
+	d := testDesktop()
+	// LRM, RLM, LRE..RLO (U+202A-E), isolates (U+2066-9), BOM, zero-width space.
+	d.Spec.User = string([]rune{0x200E, 0x200F, 'a', 0x202A, 0x202B, 0x202C, 0x202D, 0x202E, 'b', 0x2066, 0x2067, 0x2068, 0x2069, 0xFEFF, 0x200B, 'c'})
+	if got := selkiesEnvOf(t, cfg, d)["SELKIES_UI_TITLE"]; got != "abc" {
+		t.Fatalf("got %q", got)
 	}
 }

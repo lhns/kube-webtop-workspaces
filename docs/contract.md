@@ -246,6 +246,31 @@ includes; unset adds nothing:
 | `WEBTOP_NIX_EXTRA_SUBSTITUTERS` | `extra-substituters`, space-separated URLs |
 | `WEBTOP_NIX_EXTRA_TRUSTED_PUBLIC_KEYS` | `extra-trusted-public-keys`, space-separated `name:key` |
 
+#### Selkies settings
+
+The controller sets one variable per entry of `desktop.selkies`, plus the rendered `desktop.title`
+as `SELKIES_UI_TITLE` (unless `desktop.selkies` has that key; then that literal value wins, untemplated).
+`SELKIES_X` is passed as `WEBTOP_SELKIES_X`, sorted by name so the template hash is stable.
+`webtop-init` writes them as `SELKIES_X="value"` to `/run/webtop/selkies.env` (root-owned, `0644`,
+before systemd starts; also `SELKIES_PORT=$WEBTOP_HTTP_PORT`, last) and leaves them out of
+`/run/webtop/env`. The image lists the file in `services.webtop.environmentFiles`.
+
+- `desktop.title` is a Go `text/template`, parsed once from the config. Fields: `.User` (login),
+  `.DisplayName` (the login for now), `.Desktop` (resource name). They are data: a name containing
+  `{{ ... }}` stays literal.
+- Values are one line. In the config, a key not matching `^SELKIES_[A-Z0-9_]+$`, `SELKIES_PORT`, or a
+  value with a control character (CR, LF, tab, DEL, C1, U+2028/9), invalid UTF-8 or more than 256
+  characters (or any Unicode format character, category Cf) is a config error. The rendered title is cleaned instead: format characters (bidi controls, zero-width, BOM) are dropped, control characters become
+  spaces, it is cut to 256 characters.
+- The file is written double-quoted with `\` and `"` escaped; systemd does no `$` expansion. `webtop-init`
+  also skips a variable whose value has a control character or exceeds 1024 bytes.
+- Selkies shows `SELKIES_UI_TITLE` as `document.title` and as text in its sidebar (React text, no
+  HTML), and only when the variable is set: that is what makes the setting "overridden" for the client.
+  Anything else that shows the title (a gateway page) must go through `html/template`.
+- Precedence, low to high: the image (`extraEnvironment`) < the file above < the user's allowlisted
+  `~/.config/webtop/selkies.env`. The last is a convenience, not a boundary: the user can edit their own
+  systemd user units. Restrictions that matter (file transfers off) must not rely on it.
+
 Optional agent overrides, never set by the controller (the defaults are what ships):
 
 | Variable | Default |
@@ -305,6 +330,7 @@ Enabled when `ldap.url` is set; otherwise every user is authorized (`LDAPDisable
 | `<base>/.webtop/reload.js` | the script injected into the desktop's page (section 7.3), never proxied |
 | `<base>/.webtop/ping` | GET/HEAD, `204` `no-store`, same authz as the desktop, never proxied. `reload.js` requests it every 60 s so the forward-auth in front of the gateway sees traffic and keeps its session active while a tab is open |
 | `<base>/.webtop/start` | POST start, never proxied |
+| `<base>/.webtop/wake` | POST wake from the sleep page (section 7.5), never proxied |
 | `<base>/.webtop/apps/<id>/icon` | GET/HEAD, same authz as the desktop, never proxied: the app's icon from the agent (section 7.6) |
 | `<base>/apps/` | top-level `GET` only: the apps overview (section 7.6). Any other request to it is proxied |
 | `<base>/apps/<name>` | top-level `GET` only: single-app streaming (section 7.6). The gateway owns this path for navigations; any other request to it is proxied like every other path |
@@ -384,6 +410,19 @@ cookie: the page sets cookie `webtop_csrf` (random 32 bytes, base64url, `HttpOnl
 accepted only if field = cookie (constant-time) and the request is same-origin (`Sec-Fetch-Site:
 same-origin` if present, else `Origin` host = `Host`; neither → reject). Success: patch
 `powerState: On`, `303` to `<base>/`. Failure: 403.
+
+**Sleep page / wake:** Sleep (ADR 0009) freezes the stream, so a tab would stay on the last frame.
+`status` carries `"asleep": true` while `status.asleep` is set (omitted otherwise), and `reload.js`
+reloads a tab that saw the desktop awake when it falls asleep (a tab opened while it is still waking
+does not). A navigation (section 7.4) `GET` to a `Running` desktop with `status.asleep` gets the
+**sleep page** "Your desktop is asleep" instead of being proxied; it has the off page's CSRF cookie,
+and a form `POST <base>/.webtop/wake` with fields `csrf` and optionally `app` (as for start). Any other
+request (websocket, XHR, a frame) is proxied as usual. `/apps/<name>` and `/apps/` navigations get the same page (the form carries `app`, `*` for the overview).
+Wake checks CSRF like start, sets cookie `webtop_wake=1` (`HttpOnly`, `SameSite=Lax`, `Path=<base>/`,
+`Max-Age=60`, `Secure` as above) and answers `303` to `<base>/` or `<base>/apps/<app>`. A navigation
+with that cookie is proxied while the desktop is asleep: it opens a new Selkies session, which makes
+the agent thaw the session. A navigation with the cookie to an awake desktop expires it, so the next
+Sleep shows the page again.
 
 ### 7.6 Single app: `<base>/apps/<name>`
 
@@ -593,6 +632,8 @@ desktop:
   podLabels: {}
   podAnnotations: {}
   extraEnv: []                    # []corev1.EnvVar
+  selkies: {}                     # SELKIES_* -> string, see "Selkies settings"
+  title: ""                       # text/template, see "Selkies settings"; the chart defaults it
   extraVolumes: []                # []corev1.Volume
   extraVolumeMounts: []           # []corev1.VolumeMount
   securityContext: null           # replaces the default container securityContext
@@ -683,7 +724,7 @@ Gateway:
 
 | metric | type | labels |
 | --- | --- | --- |
-| `webtop_gateway_requests_total` | counter | `outcome` (`proxy`, `boot`, `off`, `start`, `app`, `unavailable`, `denied`, `notfound`, `error`) |
+| `webtop_gateway_requests_total` | counter | `outcome` (`proxy`, `boot`, `off`, `start`, `asleep`, `wake`, `app`, `unavailable`, `denied`, `notfound`, `error`) |
 | `webtop_gateway_websockets` | gauge | — |
 | `webtop_gateway_starts_total` | counter | `trigger` (`create`, `navigate`, `button`) |
 
