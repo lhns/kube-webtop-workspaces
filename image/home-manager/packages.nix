@@ -7,14 +7,24 @@ let
   # "a.b.\"c.d\"" -> [ "a" "b" "c.d" ]: quoted segments may contain dots.
   attrPath = e: map (m: lib.removePrefix "\"" (lib.removeSuffix "\"" (lib.head m)))
     (lib.filter lib.isList (builtins.split ''("[^"]*"|[^."]+)'' e.attrPath));
+  # Nix records names with dots unquoted: at each level, take the shortest name that exists.
+  getPath = set: segs:
+    if segs == [ ] then set
+    else
+      let
+        name = n: lib.concatStringsSep "." (lib.take n segs);
+        n = lib.findFirst (k: set ? ${name k}) null (lib.range 1 (lib.length segs));
+      in
+      if n == null then throw "packages.json: no attribute '${lib.concatStringsSep "." segs}'"
+      else getPath set.${name n} (lib.drop n segs);
   # flake:nixpkgs entries use this configuration's nixpkgs (the image's); others their locked flake.
   fromNixpkgs = e:
     let p = attrPath e;
-    in lib.getAttrFromPath (if lib.length p > 2 && lib.elemAt p 1 == system then lib.drop 2 p else p) pkgs;
+    in getPath pkgs (if lib.length p > 2 && lib.elemAt p 1 == system then lib.drop 2 p else p);
   package = e:
     let
       drv = if (e.originalUrl or "") == "flake:nixpkgs" then fromNixpkgs e
-        else lib.getAttrFromPath (attrPath e) (builtins.getFlake e.url);
+        else getPath (builtins.getFlake e.url) (attrPath e);
       outputs = e.outputs or null;
       selected = if outputs == null then [ drv ]
         else map (o: drv.${o}) (if lib.elem "*" outputs then drv.outputs else outputs);
