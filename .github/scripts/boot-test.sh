@@ -106,8 +106,10 @@ pw=$(docker exec desktop-boot getent passwd ci || true)
 case $pw in "ci:x:1000:100:CI Tester:/home/ci:"?*) ;; *) echo "::error::passwd entry of ci: '$pw'"; exit 1 ;; esac
 [ "$(docker exec desktop-boot loginctl show-user 1000 --property=Name --value)" = ci ] \
   || { echo "::error::the logind user 1000 is not ci"; exit 1; }
-docker exec desktop-boot sh -c 'tr "\0" "\n" < /proc/$(pgrep -u 1000 -x kwin_wayland | head -1)/environ' | grep -qx 'HOME=/home/ci' \
-  || { echo "::error::the session's HOME is not /home/ci"; exit 1; }
+# The session leader's environment (startplasma-wayland, started by systemd with User=1000).
+senv=$(docker exec desktop-boot sh -c 'tr "\0" "\n" < /proc/$(systemctl show -P MainPID webtop-session)/environ' || true)
+echo "$senv" | grep -qx 'HOME=/home/ci' \
+  || { echo "::error::the session's HOME is not /home/ci"; echo "$senv" | grep -E '^(HOME|USER)='; exit 1; }
 groups=" $(docker exec desktop-boot id -nG ci) "
 case $groups in *" wheel "*) ;; *) echo "::error::groups of ci:$groups"; exit 1 ;; esac
 case $groups in *" webtop "*) ;; *) echo "::error::groups of ci:$groups"; exit 1 ;; esac
