@@ -19,8 +19,7 @@
       flake = false;
     };
     webtop-nix = {
-      # TEMPORARY: webtop-nix #18 (environmentFiles, userSettings); re-pin after it merges.
-      url = "github:lhns/webtop-nix/8c62ef4d340e52554d104b07160d905e19e2dc22";
+      url = "github:lhns/webtop-nix/236c129604a4e884093834dd051932b33a02e1f4";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
