@@ -55,6 +55,8 @@ type Launcher struct {
 	Home     string // the user's home, for ~/.local/share
 	// Exists reports whether a file exists; nil uses the file system.
 	Exists func(path string) bool
+	// DataDirs overrides the data directories (tests); nil derives them from the user manager.
+	DataDirs []string
 
 	mu sync.Mutex
 }
@@ -122,11 +124,7 @@ func (l *Launcher) desktopFile(ctx context.Context, name string) (string, error)
 	if exists == nil {
 		exists = func(p string) bool { st, err := os.Stat(p); return err == nil && st.Mode().IsRegular() }
 	}
-	env := ""
-	if out, err := l.Session.Systemctl(ctx, "show-environment"); err == nil {
-		env = string(out)
-	}
-	for _, d := range dataDirs(env, l.Home) {
+	for _, d := range l.dataDirList(ctx) {
 		if p := path.Join(d, "applications", name+".desktop"); exists(p) {
 			return p, nil
 		}
