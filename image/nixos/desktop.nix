@@ -4,6 +4,8 @@
 {
   services.webtop = {
     enable = true;
+    # A placeholder: renamed at activation to the user's login name (identity.nix). uid 1000 never
+    # changes, so the volume's file ownership does not either.
     user = "user";
     uid = 1000;
     # The gateway proxies to the pod; the NetworkPolicy admits only the gateway.

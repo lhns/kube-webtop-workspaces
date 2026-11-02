@@ -1,16 +1,16 @@
-# Brings the user's home-manager setup to the image's (README, "Software"): creates the starter
-# flake once, moves an earlier starter flake and its `nix profile` packages to packages.json
-# (ADR 0013), relocks the image-registry inputs an image update left stale, and switches when
-# any of that changed or the active generation did not survive the update.
-# Set by the caller: template_dir (rendered template), template_marker, known_flakes (sha256s of
-# earlier starter flake.nix files, user name replaced by @user@).
+# Brings the user's home-manager setup to the image's (README, "Software"), after
+# webtop-home-manager-template.service: imports the `nix profile` flake packages into packages.json
+# once that unit has added it (ADR 0013), relocks the image-registry inputs an image update left
+# stale, and switches when any of that, or the template unit, changed something, or the active
+# generation did not survive the update.
 
 hm=$HOME/.config/home-manager
 state=${XDG_STATE_HOME:-$HOME/.local/state}
 gen=$state/nix/profiles/home-manager
-migrated_marker=$state/webtop/packages-json
+import_marker=$state/webtop/packages-json-import
+switch_marker=$state/webtop/home-manager-switch
 switch=
-migrating=
+importing=
 
 # The notifications run in the background; the unit's cgroup ends with this script.
 trap wait EXIT
@@ -22,52 +22,28 @@ notify() {
   done) &
 }
 
-# Once: the marker keeps the template from coming back after the user deletes it.
-if [ ! -e "$hm" ] && [ ! -e "$template_marker" ]; then
-  mkdir -p "$hm" "$(dirname "$template_marker")"
-  for f in flake.nix home.nix packages.nix packages.json; do
-    cp "$template_dir/$f" "$hm/$f"
-    chmod u+w "$hm/$f"
-  done
-  touch "$template_marker" "$migrated_marker"
-  switch=1
-fi
+if [ -e "$switch_marker" ]; then switch=1; fi
 
-# An earlier starter flake (unmodified apart from the user name) gains packages.nix; its
-# `nix profile` packages move into packages.json. Anything else is left alone, once notified; so is
-# any ~/.config/nix/nix.conf, which packages.nix would have to own.
-if [ -f "$hm/flake.nix" ] && [ ! -e "$hm/packages.json" ] && [ ! -e "$migrated_marker" ]; then
-  mkdir -p "$(dirname "$migrated_marker")"
-  attr=$(grep -oE 'homeConfigurations\."[^"]*"' "$hm/flake.nix" | head -n1 || true)
-  sum=$(sed -E 's/homeConfigurations\."[^"]*"/homeConfigurations."@user@"/' "$hm/flake.nix" | sha256sum | cut -d' ' -f1)
-  conf=$HOME/.config/nix/nix.conf
-  if [ -n "$attr" ] && grep -qx "$sum" <<<"$known_flakes" && [ ! -e "$conf" ] && [ ! -L "$conf" ]; then
-    echo "moving the starter flake to packages.json"
-    backup=$state/webtop/home-manager-before-packages-json
-    rm -rf "$backup" && mkdir -p "$backup"
-    cp -a "$hm/flake.nix" "$backup/"
-    if [ -f "$hm/flake.lock" ]; then cp -a "$hm/flake.lock" "$backup/"; fi
-    sed -E "s/homeConfigurations\.\"[^\"]*\"/${attr//\//\/}/" "$template_dir/flake.nix" > "$hm/flake.nix"
-    cp "$template_dir/packages.nix" "$hm/packages.nix"
-    chmod u+w "$hm/flake.nix" "$hm/packages.nix"
-    # The profile's flake packages, by the fields `nix profile` records; store paths stay there.
-    profile_json=$(nix profile list --json --profile-backend profile)
-    jq '{version: 1, elements: (.elements | with_entries(select((.value.url // "") != "")
-          | .value |= {originalUrl, url, attrPath, outputs, priority}))}' <<<"$profile_json" > "$hm/packages.json"
-    mapfile -t moved < <(jq -r '.elements | keys[]' "$hm/packages.json")
-    if git -C "$hm" rev-parse --git-dir >/dev/null 2>&1; then
-      git -C "$hm" add --intent-to-add -- packages.nix packages.json
-    fi
-    profile_gen=$(readlink "$state/nix/profiles/profile" || true)
-    if [ "${#moved[@]}" -gt 0 ]; then
-      nix profile remove --profile-backend profile "${moved[@]}"
-    fi
-    migrating=1
-    switch=1
-  else
-    notify "Software installation" "nix profile now records packages in ~/.config/home-manager/packages.json. Your home-manager setup is customized, so it was left as is; see the README, \"Software\"."
+# The profile's flake packages, by the fields `nix profile` records; store paths stay there.
+if [ -e "$import_marker" ] && [ -f "$hm/packages.json" ]; then
+  echo "importing the nix profile's flake packages into packages.json"
+  before=$state/webtop/packages.json.before-import
+  cp -f "$hm/packages.json" "$before"
+  profile_json=$(nix profile list --json --profile-backend profile)
+  imported=$(jq '.elements | with_entries(select((.value.url // "") != "")
+                 | .value |= {originalUrl, url, attrPath, outputs, priority})' <<<"$profile_json")
+  mapfile -t moved < <(jq -r 'keys[]' <<<"$imported")
+  # Declared entries of the same name win.
+  jq --argjson new "$imported" '.elements = ($new + .elements)' "$before" > "$hm/packages.json"
+  if git -C "$hm" rev-parse --git-dir >/dev/null 2>&1; then
+    git -C "$hm" add --intent-to-add -- packages.nix packages.json
   fi
-  touch "$migrated_marker"
+  profile_gen=$(readlink "$state/nix/profiles/profile" || true)
+  if [ "${#moved[@]}" -gt 0 ]; then
+    nix profile remove --profile-backend profile "${moved[@]}"
+  fi
+  importing=1
+  switch=1
 fi
 
 # Root inputs resolved through the image's registry are locked to the old image's store paths;
@@ -97,20 +73,30 @@ if [ -L "$gen" ] && [ ! -e "$gen" ]; then
 fi
 
 if [ -z "$switch" ] || [ ! -f "$hm/flake.nix" ]; then exit 0; fi
-echo "home-manager switch --flake $hm"
 rc=0
-home-manager switch --flake "$hm" || rc=$?
+# A flake still written for the account's old name `user` (ADR 0011): switch that config as it
+# expects, through the /home/user mount, until the user updates it.
+has=$(nix eval --json "$hm#homeConfigurations" --apply "c: builtins.hasAttr \"$USER\" c" 2>/dev/null || echo true)
+if [ "$has" = false ] && [ -d /home/user ] &&
+   [ "$(nix eval --json "$hm#homeConfigurations" --apply 'c: builtins.hasAttr "user" c' 2>/dev/null)" = true ]; then
+  echo "no homeConfigurations.\"$USER\" in $hm: switching the one for user (HOME=/home/user)"
+  USER=user HOME=/home/user home-manager switch --flake "$hm#user" || rc=$?
+  notify "Update your home-manager flake" "It still names user. See: journalctl -u webtop-home-manager-template"
+else
+  echo "home-manager switch --flake $hm"
+  home-manager switch --flake "$hm" || rc=$?
+fi
 if [ "$rc" = 0 ]; then
-  if [ -n "$migrating" ]; then
+  rm -f "$switch_marker" "$import_marker"
+  if [ -n "$importing" ] && [ "${#moved[@]}" -gt 0 ]; then
     notify "Software installation" "Your ${#moved[@]} nix profile package(s) are now declared in ~/.config/home-manager/packages.json; nix profile edits that file."
   fi
   exit 0
 fi
 echo "home-manager switch failed (exit $rc)"
-if [ -n "$migrating" ]; then
-  echo "restoring the previous flake and nix profile"
-  cp -a "$backup/." "$hm/"
-  rm -f "$hm/packages.nix" "$hm/packages.json" "$migrated_marker"
+if [ -n "$importing" ]; then
+  echo "restoring packages.json and the nix profile; the import is retried next boot"
+  cp -f "$before" "$hm/packages.json"
   if [ -n "$profile_gen" ]; then ln -sfn "$profile_gen" "$state/nix/profiles/profile"; fi
   notify "Software installation" "Moving your packages to packages.json failed and was undone; see: journalctl -u webtop-home-manager"
 else

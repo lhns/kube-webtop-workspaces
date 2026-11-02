@@ -23,6 +23,23 @@ reports=$dir/reports
 touch "$reports"
 echo token > "$dir/token"
 mkdir "$dir/persist"
+# A volume from before the login names, its home-paths already edited: /home/user is kept, the rest
+# must be ignored (ADR 0011). Owned by uid 1000 like a real home.
+hp=$dir/persist/home/user/.config/webtop
+mkdir -p "$hp"
+printf '/home/user\nroot\n../x\n/home/root\n/home/../x\n' > "$hp/home-paths"
+# The starter home-manager flake as the image wrote it for `user`: rewritten for ci at boot. In the gray
+# run it is edited, so it must stay as it is, with the lines to change in the journal.
+hm=$dir/persist/home/user/.config/home-manager
+mkdir -p "$hm"
+sv=$(sed -n 's/.*system.stateVersion = "\(.*\)";.*/\1/p' "$(dirname "$0")/../../image/nixos/container.nix")
+for f in flake.nix home.nix; do
+  sed -e 's|@user@|user|g' -e 's|@home@|/home/user|g' -e "s|@stateVersion@|$sv|g" \
+    "$(dirname "$0")/../../image/home-manager/$f" > "$hm/$f"
+done
+if [ "$mode" = gray ]; then echo "# edited" >> "$hm/home.nix"; fi
+cp "$hm/flake.nix" "$hm/home.nix" "$dir/"
+sudo chown -R 1000:100 "$dir/persist/home"
 
 python3 "$(dirname "$0")/fake-controller.py" 8081 "$reports" &
 cleanup() {
@@ -36,8 +53,8 @@ docker rm -f desktop-boot >/dev/null 2>&1 || true
 args=(--privileged --cgroupns=private --shm-size=1g --add-host=host.docker.internal:host-gateway -p 8080:8080 -p 8083:8081
   -v "$dir/persist:/persist" -v "$dir/token:/token:ro"
   -e WEBTOP_CONTROLLER_URL=http://host.docker.internal:8081 -e WEBTOP_TOKEN_PATH=/token
-  -e WEBTOP_HTTP_PORT=8080 -e WEBTOP_USER=ci -e WEBTOP_DESKTOP=ci -e WEBTOP_NAMESPACE=ci
-  -e WEBTOP_NIX_EXTRA_SUBSTITUTERS=http://cache.invalid/ci -e "WEBTOP_NIX_EXTRA_TRUSTED_PUBLIC_KEYS=ci:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+  -e WEBTOP_HTTP_PORT=8080 -e WEBTOP_USER=ci -e WEBTOP_DESKTOP=ci -e WEBTOP_NAMESPACE=ci -e "WEBTOP_DISPLAY_NAME=CI Tester"
+  -e WEBTOP_NIX_EXTRA_SUBSTITUTERS=http://cache.invalid/ci -e "WEBTOP_NIX_EXTRA_TRUSTED_PUBLIC_KEYS=ci:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
   -e "WEBTOP_SELKIES_UI_TITLE=$title" -e "WEBTOP_SELKIES_CI_PROBE=$probe"
   -e "WEBTOP_SELKIES_CI_TAB=$tab" -e "WEBTOP_SELKIES_CI_NL=$nl")
 if [ "$mode" = gray ]; then
@@ -52,7 +69,7 @@ fi
 start=$(date +%s)
 docker run -d --name desktop-boot "${args[@]}" "$image" >/dev/null
 
-in_session() { docker exec desktop-boot runuser -u user -- env PATH=/run/current-system/sw/bin \
+in_session() { docker exec desktop-boot runuser -u ci -- env PATH=/run/current-system/sw/bin \
   XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus "$@"; }
 
 want='"ready":true'
@@ -78,12 +95,20 @@ while :; do
 done
 
 echo "container pid 1 age: $(docker exec desktop-boot ps -o etimes= -p 1) s; systemd: $(docker exec desktop-boot systemctl is-system-running || true)"
-in_session sh -c 'ps -u user -o etimes=,args= | grep -E "[k]win_wayland|[s]elkies"' | cut -c1-200 || true
+in_session sh -c 'ps -u ci -o etimes=,args= | grep -E "[k]win_wayland|[s]elkies"' | cut -c1-200 || true
 comp=$(in_session busctl --user get-property org.kde.KWin /Compositor org.kde.kwin.Compositing active || true)
 echo "Compositing active: ${comp:-<no answer>}"
 
 if [ "$mode" = gray ]; then
   [ "$comp" != "b true" ] || { echo "::error::KWin composites although KWIN_COMPOSE=Q"; exit 1; }
+  # The edited starter flake is left alone; the journal and a notification name the lines to change.
+  cmp -s "$hm/flake.nix" "$dir/flake.nix" && cmp -s "$hm/home.nix" "$dir/home.nix" \
+    || { echo "::error::the edited home-manager flake was changed"; exit 1; }
+  hmlog=$(docker exec desktop-boot journalctl -u webtop-home-manager-template -o cat)
+  grep -qF 'home.username = "user";  ->  home.username = "ci";' <<<"$hmlog" \
+    || { echo "::error::no home-manager notice in the journal"; echo "$hmlog"; exit 1; }
+  grep -q '^notifying:' <<<"$(docker exec desktop-boot journalctl -u webtop-home-manager-notice -o cat)" \
+    || { echo "::error::webtop-home-manager-notice did not run"; exit 1; }
   echo "gray-screen case failed as intended"
   exit 0
 fi
@@ -114,17 +139,60 @@ echo "Selkies environment carries the cluster settings exactly"
 subst=$(docker exec desktop-boot /run/current-system/sw/bin/nix config show substituters || true)
 case $subst in *cache.nixos.org*http://cache.invalid/ci*) echo "substituters: $subst" ;;
   *) echo "::error::WEBTOP_NIX_EXTRA_SUBSTITUTERS not in nix.conf (substituters: $subst)"; exit 1 ;; esac
+# The desktop user is the desktop's name with uid 1000 and the display name; its home is the
+# volume's, mounted at each valid home path and nothing else.
+# Read once: grep -q on a pipe would SIGPIPE docker logs, which fails the pipeline (pipefail).
+clog=$(docker logs desktop-boot 2>&1)
+! grep 'webtop-identity:' <<<"$clog" || { echo "::error::the rename at activation failed"; exit 1; }
+pw=$(docker exec desktop-boot getent passwd ci || true)
+case $pw in "ci:x:1000:100:CI Tester:/home/ci:"?*) ;; *) echo "::error::passwd entry of ci: '$pw'"; exit 1 ;; esac
+[ "$(docker exec desktop-boot loginctl show-user 1000 --property=Name --value)" = ci ] \
+  || { echo "::error::the logind user 1000 is not ci"; exit 1; }
+# The session leader's environment (startplasma-wayland, started by systemd with User=1000).
+senv=$(docker exec desktop-boot sh -c 'tr "\0" "\n" < /proc/$(systemctl show -P MainPID webtop-session)/environ' || true)
+grep -qx 'HOME=/home/ci' <<<"$senv" \
+  || { echo "::error::the session's HOME is not /home/ci"; echo "$senv" | grep -E '^(HOME|USER)='; exit 1; }
+docker exec desktop-boot sh -c 'grep -q "^ci:" /etc/subuid && grep -q "^ci:" /etc/subgid && ! grep -q "^user:" /etc/subuid /etc/subgid' \
+  || { echo "::error::subordinate id ranges not renamed to ci"; docker exec desktop-boot sh -c 'ls -l /etc/subuid /etc/subgid; cat /etc/subuid /etc/subgid'; exit 1; }
+docker exec desktop-boot test -e /var/lib/systemd/linger/ci || { echo "::error::ci does not linger"; exit 1; }
+groups=" $(docker exec desktop-boot id -nG ci) "
+case $groups in *" wheel "*) ;; *) echo "::error::groups of ci:$groups"; exit 1 ;; esac
+case $groups in *" webtop "*) ;; *) echo "::error::groups of ci:$groups"; exit 1 ;; esac
+homes=$(docker exec desktop-boot ls /home | tr '\n' ' ')
+[ "$homes" = "ci user " ] || { echo "::error::/home holds: $homes"; exit 1; }
+vol=$(docker exec desktop-boot stat -c %d:%i /persist/home/user)
+for h in /home/ci /home/user; do
+  docker exec desktop-boot mountpoint -q "$h" && [ "$(docker exec desktop-boot stat -c %d:%i "$h")" = "$vol" ] \
+    || { echo "::error::$h is not a mount of the volume's home"; exit 1; }
+done
+grep -qx /home/ci "$hp/home-paths" || { echo "::error::/home/ci not added to home-paths"; cat "$hp/home-paths"; exit 1; }
+for bad in root ../x /home/root /home/../x; do
+  grep -qF "home-paths: ignoring '$bad'" <<<"$clog" || { echo "::error::'$bad' not reported as ignored"; exit 1; }
+done
+grep -qF '"loginName":"ci","homePaths":["/home/ci","/home/user"]' "$reports" \
+  || { echo "::error::the agent did not report the login name and home paths"; exit 1; }
 
-# Software installation (ADR 0013): one declaration that `nix profile` edits.
+# Software installation (ADR 0013): one declaration that `nix profile` edits. First the setup unit
+# (after the template unit) imports and switches; the checks below follow.
 fail() { echo "::error::$*"; exit 1; }
-as_user() { in_session env HOME=/home/user PATH=/home/user/.nix-profile/bin:/home/user/.local/state/nix/profiles/profile/bin:/run/current-system/sw/bin "$@"; }
-decl=/home/user/.config/home-manager/packages.json
+as_user() { in_session env HOME=/home/ci PATH=/home/ci/.nix-profile/bin:/home/ci/.local/state/nix/profiles/profile/bin:/run/current-system/sw/bin "$@"; }
+decl=/home/ci/.config/home-manager/packages.json
 for _ in $(seq 1 150); do
   [ "$(docker exec desktop-boot systemctl show -P ActiveState webtop-home-manager)" = active ] || break
   sleep 2
 done
 [ "$(docker exec desktop-boot systemctl show -P Result webtop-home-manager)" = success ] \
   || { docker exec desktop-boot journalctl -u webtop-home-manager --no-pager | tail -n 50; fail "webtop-home-manager failed"; }
+# The starter flake written for `user` now names ci, and switches.
+grep -qF 'homeConfigurations."ci"' "$hm/flake.nix" \
+  && grep -qF 'home.username = "ci";' "$hm/home.nix" \
+  && grep -qF 'home.homeDirectory = "/home/ci";' "$hm/home.nix" \
+  || { echo "::error::the home-manager template does not name ci"; cat "$hm/home.nix"; exit 1; }
+start_hm=$(date +%s)
+docker exec desktop-boot timeout 900 runuser -l ci -c 'home-manager switch --flake ~/.config/home-manager' 2>&1 | tail -n 20 \
+  || { echo "::error::home-manager switch failed"; exit 1; }
+echo "home-manager switch took $(($(date +%s) - start_hm)) s"
+echo "identity: $pw; /home: $homes"
 ! docker exec desktop-boot sh -c 'command -v discover' || fail "Discover is installed"
 docker exec desktop-boot sh -c 'nix-store -qR /run/current-system | grep -q -- -knewstuff-' || fail "KNewStuff is not in the system"
 [ "$(as_user sh -c 'command -v nix')" = /run/current-system/sw/bin/nix ] || fail "nix on the user's PATH is not the system's"
@@ -139,7 +207,7 @@ out=$(as_user nix profile list 2>&1)
 as_user nix profile list --json | jq -e '.elements.hello.backend == "declaration"
   and (.elements | to_entries | any(.value.backend == "profile" and (.value.storePaths[0] // "" | endswith("home-manager-path"))))' >/dev/null \
   || fail "nix profile list --json is not marked or lacks home-manager-path"
-as_user home-manager switch --flake /home/user/.config/home-manager >/dev/null || fail "a direct home-manager switch failed"
+as_user home-manager switch --flake /home/ci/.config/home-manager >/dev/null || fail "a direct home-manager switch failed"
 as_user nix profile remove hello || fail "nix profile remove hello failed"
 ! as_user jq -e '.elements.hello' "$decl" >/dev/null || fail "hello is still in packages.json"
 ! as_user sh -c 'command -v hello' >/dev/null || fail "hello is still installed"
@@ -184,13 +252,13 @@ grep -q 'is declared in the declaration' <<<"$out" || fail "a store path shadowi
 # One command, two backends: when the declaration's hook fails, the profile change is undone too.
 as_user sh -c 'printf "#!/bin/sh\n[ \"\$NIX_PROFILE_BACKEND\" != declaration ]\n" > /tmp/ci-decl-fails && chmod +x /tmp/ci-decl-fails'
 sum=$(as_user sha256sum "$decl")
-plink=$(as_user readlink /home/user/.local/state/nix/profiles/profile)
+plink=$(as_user readlink /home/ci/.local/state/nix/profiles/profile)
 ! as_user nix profile add --profile-hook /tmp/ci-decl-fails "$jqpath" nixpkgs#tree 2>/dev/null \
   || fail "a failing declaration hook did not fail the command"
 [ "$(as_user sha256sum "$decl")" = "$sum" ] || fail "packages.json changed although the command failed"
 ! as_user nix profile list --profile-backend profile --json | jq -e '.elements.jq' >/dev/null \
   || fail "the profile part of a failed command was kept"
-[ "$(as_user readlink /home/user/.local/state/nix/profiles/profile)" = "$plink" ] || fail "the profile is not back at its generation"
+[ "$(as_user readlink /home/ci/.local/state/nix/profiles/profile)" = "$plink" ] || fail "the profile is not back at its generation"
 as_user hello >/dev/null || fail "hello went missing in a failed command"
 # Rollback right after a hand edit goes back to the last recorded version; the edit becomes a version.
 as_user sh -c "jq '.elements.handedit = {originalUrl: \"flake:nixpkgs\", attrPath: \"legacyPackages.x86_64-linux.tree\"}' $decl > /tmp/ci-decl && cat /tmp/ci-decl > $decl"
@@ -214,7 +282,7 @@ as_user jq -e '[.elements[] | select(.originalUrl | startswith("path:"))] | leng
   || fail "the local flake's packages are not declared: $(as_user cat "$decl")"
 as_user nix profile remove --regex '.*ci-flake.*' >/dev/null || fail "removing the local flake's packages failed"
 # A flake dir that is a git repo: packages.json is added with --intent-to-add; a git-ignored one is refused.
-hmdir=/home/user/.config/home-manager
+hmdir=/home/ci/.config/home-manager
 as_user sh -c "cd $hmdir && git init -q && git add -A && git rm -q --cached packages.json"
 as_user nix profile add nixpkgs#tree || fail "nix profile add in a git flake dir failed"
 as_user git -C "$hmdir" ls-files | grep -qx packages.json || fail "packages.json was not added to git"
@@ -225,10 +293,10 @@ grep -q 'git ignores' <<<"$out" || fail "a git-ignored packages.json was not ref
 [ "$(as_user sha256sum "$decl")" = "$sum" ] || fail "a refused change was not reverted"
 as_user rm -rf "$hmdir/.git" "$hmdir/.gitignore"
 as_user nix profile remove tree >/dev/null || fail "removing tree failed"
-# Migration of an earlier starter flake (webtop-home-manager): its `nix profile` flake packages move
-# into packages.json.
+# An earlier starter flake (before packages.nix, for the old name `user`): the template unit rewrites it
+# for ci with packages.nix, and the setup unit moves the `nix profile` flake packages into packages.json.
 as_user nix profile remove hello >/dev/null || fail "nix profile remove hello failed"
-cat > "$dir/flake.nix" <<'FLAKE'
+cat > "$dir/legacy-flake.nix" <<'FLAKE'
 {
   inputs = {
     # nixpkgs and home-manager are the image's (its flake registry): no download; relocked after image updates.
@@ -248,12 +316,15 @@ cat > "$dir/flake.nix" <<'FLAKE'
 }
 FLAKE
 # Not docker cp: /home is a bind mount inside the container, which docker cp does not see.
-as_user sh -c "echo $(base64 -w0 "$dir/flake.nix") | base64 -d > /home/user/.config/home-manager/flake.nix"
-as_user rm /home/user/.config/home-manager/packages.nix "$decl" /home/user/.local/state/webtop/packages-json
+as_user sh -c "echo $(base64 -w0 "$dir/legacy-flake.nix") | base64 -d > /home/ci/.config/home-manager/flake.nix"
+as_user rm /home/ci/.config/home-manager/packages.nix "$decl"
 # An earlier starter flake had no nix.conf (any nix.conf makes the setup "customized").
-as_user rm /home/user/.config/nix/nix.conf
+as_user rm /home/ci/.config/nix/nix.conf
 as_user nix profile add --profile-backend profile nixpkgs#hello || fail "adding hello to the profile failed"
 since=$(docker exec desktop-boot date '+%Y-%m-%d %H:%M:%S')
+docker exec desktop-boot systemctl restart webtop-home-manager-template
+docker exec desktop-boot journalctl -u webtop-home-manager-template --since "$since" -o cat | grep -q 'rewrote the starter flake' \
+  || fail "the template unit did not rewrite the earlier flake"
 docker exec desktop-boot systemctl start webtop-home-manager
 for _ in $(seq 1 150); do
   [ "$(docker exec desktop-boot systemctl show -P ActiveState webtop-home-manager)" = active ] || break
@@ -262,7 +333,8 @@ done
 [ "$(docker exec desktop-boot systemctl show -P Result webtop-home-manager)" = success ] \
   || { docker exec desktop-boot journalctl -u webtop-home-manager --no-pager | tail -n 50; fail "the migration failed"; }
 as_user jq -e '.elements.hello.originalUrl == "flake:nixpkgs"' "$decl" >/dev/null || fail "the migration did not declare hello"
-as_user grep -q 'packages.nix' /home/user/.config/home-manager/flake.nix || fail "the migration did not add packages.nix"
+as_user grep -q 'packages.nix' /home/ci/.config/home-manager/flake.nix || fail "the migration did not add packages.nix"
+as_user grep -qF 'homeConfigurations."ci"' /home/ci/.config/home-manager/flake.nix || fail "the migration did not rename the flake"
 as_user nix profile list --json | jq -e '.elements.hello.backend == "declaration" and (.elements["hello-1"] == null)' >/dev/null \
   || fail "hello is not (only) declared after the migration: $(as_user nix profile list --json)"
 as_user hello >/dev/null || fail "hello is not installed after the migration"
@@ -273,7 +345,7 @@ warns=$(docker exec desktop-boot journalctl -u webtop-home-manager --since "$sin
 [ -z "$warns" ] || fail "nix profile warned during the switch: $warns"
 # A failing switch fails the unit and says so.
 as_user sh -c "cp $decl /tmp/decl.bak && jq '.elements.broken = {originalUrl: \"flake:nixpkgs\", attrPath: \"legacyPackages.x86_64-linux.noSuchPackageCi\"}' /tmp/decl.bak > $decl"
-gen=/home/user/.local/state/nix/profiles/home-manager
+gen=/home/ci/.local/state/nix/profiles/home-manager
 link=$(as_user readlink "$gen")
 as_user ln -sfn /nix/store/00000000000000000000000000000000-gone "$gen"
 docker exec desktop-boot systemctl start webtop-home-manager

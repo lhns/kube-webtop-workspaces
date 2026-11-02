@@ -55,22 +55,24 @@ type PowerAPI struct {
 }
 
 type LDAP struct {
-	URL                string          `json:"url"`
-	StartTLS           bool            `json:"startTLS"`
-	CAFile             string          `json:"caFile"`
-	InsecureSkipVerify bool            `json:"insecureSkipVerify"`
-	BindDN             string          `json:"bindDN"`
-	BindPasswordFile   string          `json:"bindPasswordFile"`
-	BaseDN             string          `json:"baseDN"`
-	UserFilter         string          `json:"userFilter"`
-	UserAttribute      string          `json:"userAttribute"`
-	GroupDN            string          `json:"groupDN"`
-	AdminGroupDN       string          `json:"adminGroupDN"`
-	Membership         string          `json:"membership"`
-	MemberAttribute    string          `json:"memberAttribute"`
-	SyncInterval       metav1.Duration `json:"syncInterval"`
-	Timeout            metav1.Duration `json:"timeout"`
-	ErrorPolicy        string          `json:"errorPolicy"`
+	URL                string `json:"url"`
+	StartTLS           bool   `json:"startTLS"`
+	CAFile             string `json:"caFile"`
+	InsecureSkipVerify bool   `json:"insecureSkipVerify"`
+	BindDN             string `json:"bindDN"`
+	BindPasswordFile   string `json:"bindPasswordFile"`
+	BaseDN             string `json:"baseDN"`
+	UserFilter         string `json:"userFilter"`
+	UserAttribute      string `json:"userAttribute"`
+	GroupDN            string `json:"groupDN"`
+	AdminGroupDN       string `json:"adminGroupDN"`
+	Membership         string `json:"membership"`
+	MemberAttribute    string `json:"memberAttribute"`
+	// DisplayNameAttribute names the desktop user (GECOS, shown by Plasma); needs baseDN.
+	DisplayNameAttribute string          `json:"displayNameAttribute"`
+	SyncInterval         metav1.Duration `json:"syncInterval"`
+	Timeout              metav1.Duration `json:"timeout"`
+	ErrorPolicy          string          `json:"errorPolicy"`
 }
 
 const (
@@ -202,6 +204,7 @@ func (c *Config) Default() {
 	l := &c.LDAP
 	def(&l.UserFilter, "(objectClass=person)")
 	def(&l.UserAttribute, "uid")
+	def(&l.DisplayNameAttribute, "displayName")
 	def(&l.Membership, MembershipMemberOf)
 	if l.MemberAttribute == "" {
 		if l.Membership == MembershipMember {

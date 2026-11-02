@@ -58,15 +58,21 @@ Desktop whose name is not `sanitize(spec.user)`.
 | `connectedClients` | int | from the agent |
 | `idleSeconds` | int | from the agent |
 | `asleep` | bool | the agent froze the session (Sleep); the pod stays `Running`. Reset with the pod |
+| `loginName` | string | the desktop user's login name, from the agent (section 8.3); kept while off |
+| `homePaths` | []string, ≤ 16 | paths the user's home is mounted at, from the agent; kept while off |
+| `displayName` | string | the LDAP display name the current or last pod started with (section 6) |
 | `imagePull` | `{image, startedAt?, lastSizeBytes?, lastDurationSeconds?}` | the desktop image's pulls, for the boot page's download estimate (section 3.4); kept while off |
 | `observedGeneration` | int | |
-| `conditions` | `[]metav1.Condition` | `Authorized`, `Ready` |
+| `conditions` | `[]metav1.Condition` | `Authorized`, `Ready`, `LoginName` |
 
 Conditions:
 
 - `Authorized`: `True` (reason `Member` or `LDAPDisabled`), `False` (`NotMember`), `Unknown`
   (`LDAPError` — no successful lookup yet; `InvalidName` — name ≠ `sanitize(spec.user)`).
 - `Ready`: `True` iff phase `Running`.
+- `LoginName` (once the agent reported `loginName`): `True` (`DesktopName`) when the desktop user has
+  the desktop's name; `False` when the image fell back to `user` because the name starts with a digit
+  (`InvalidLoginName`) or is an account of the image (`ReservedName`).
 
 ## 3. Controller behaviour
 
@@ -195,6 +201,9 @@ duration, the numbers of any other Desktop that recorded the same ref are used.
 4. truncated to 40 characters, then trailing `-` trimmed again;
 5. empty → rejected (gateway 400 page).
 
+**Login name.** The desktop user's login name is the Desktop name when it starts with a letter and is
+not an account or group of the image; otherwise `user` (condition `LoginName`, ADR 0011).
+
 **Collision:** if a Desktop `sanitize(user)` exists with a different `spec.user`, the gateway
 refuses (409 page) and never touches it. LDAP IDs are immutable, so the mapping is stable.
 
@@ -227,15 +236,18 @@ Env (plus `desktop.extraEnv`):
 | --- | --- |
 | `WEBTOP_CONTROLLER_URL` | `powerApi.url` (no trailing slash) |
 | `WEBTOP_TOKEN_PATH` | `/run/webtop/sa/token` |
-| `WEBTOP_DESKTOP` | desktop name (informational) |
+| `WEBTOP_DESKTOP` | desktop name; the image's login name for the user (section 4) |
 | `WEBTOP_USER` | original user ID (informational) |
+| `WEBTOP_DISPLAY_NAME` | `status.displayName`, only when set: the user's GECOS (else the login name) |
 | `WEBTOP_NAMESPACE` | namespace (informational) |
 | `WEBTOP_HTTP_PORT` | `desktop.port` — the web client (Selkies) must listen here, plain HTTP |
 | `WEBTOP_PERSIST_PATH` | `storage.mountPath` |
 
 The image's `webtop-init` writes every `WEBTOP_*` variable to `/run/webtop/env`, since systemd units
-do not inherit the container env. The controller and agent do not read the three informational ones;
-they are there for desktop-side units and scripts.
+do not inherit the container env. The controller and agent do not read the two informational ones;
+they are there for desktop-side units and scripts. `webtop-init` adds `WEBTOP_LOGIN_NAME`,
+`WEBTOP_LOGIN_GECOS` and `WEBTOP_HOME_PATHS` (space-separated), its decisions. The agent reports the
+account's actual name (passwd entry of uid 1000) and the mounted home paths.
 
 Optional Nix settings, never set by the controller (the chart sets them from `desktop.nix.*` through
 `desktop.extraEnv`). `webtop-init` writes them to `/run/webtop/nix.conf`, which `/etc/nix/nix.conf`
@@ -280,7 +292,7 @@ Optional agent overrides, never set by the controller (the defaults are what shi
 | `WEBTOP_COMPOSITOR_TIMEOUT` | `3m`: how long KWin may stay non-compositing, once the target and the web port are up, before the agent reports the stuck stage `Compositor not active` |
 | `WEBTOP_AGENT_STATE_DIR` | `/run/webtop` |
 | `WEBTOP_AGENT_WAYLAND_SOCKET` | unset: the agent finds it from the user manager's `WAYLAND_DISPLAY` |
-| `WEBTOP_AGENT_USER` | `user` |
+| `WEBTOP_AGENT_USER` | unset: the account with uid 1000 (renamed at boot) |
 | `WEBTOP_SUSPEND_MODE` | `freeze`: Sleep freezes the session; `poweroff` saves it and powers off (reason `suspend`) |
 
 **Image obligations:**
@@ -290,6 +302,7 @@ Optional agent overrides, never set by the controller (the defaults are what shi
 - A poweroff from inside must end PID 1 with an exit code in `controller.cleanExitCodes`. The default `[0]` is not yet confirmed against a real
   container exit after a poweroff; set the list to the code the image actually exits with.
 - Re-read the token file on every request (kubelet rotates it).
+- Report the desktop user's login name and home paths (section 8.3).
 
 ## 6. LDAP
 
@@ -301,6 +314,10 @@ Enabled when `ldap.url` is set; otherwise every user is authorized (`LDAPDisable
   - `member`: read `ldap.groupDN`'s (and `adminGroupDN`'s, if set) `memberAttribute` (default `member`) DNs; each DN's
     `userAttribute` is the user ID.
 - `userAttribute` (default `uid`) is the user ID compared with `spec.user` (case-sensitive).
+- `displayNameAttribute` (default `displayName`): at each start (or applied restart) the controller
+  reads it from the user's entry under `baseDN` into `status.displayName`, without control
+  characters, `:` `,` quotes or backslashes, at most 128 characters. A failed lookup keeps the last
+  value; no `baseDN` or no value leaves it empty.
 - Sync every `ldap.syncInterval` (default 5m), leader only: users not in the set get
   `Authorized=False`; if `On`, they are stopped with reason `ldap`. The Desktop and PVC stay; being
   re-added does not auto-start.
@@ -556,8 +573,14 @@ All fields optional; absent fields are left unchanged:
 
 ```json
 {"stage": "Starting Plasma", "bootProgress": 60, "ready": false,
- "connectedClients": 1, "idleSeconds": 12, "asleep": false}
+ "connectedClients": 1, "idleSeconds": 12, "asleep": false,
+ "loginName": "alice", "homePaths": ["/home/alice", "/home/user"]}
 ```
+
+`loginName` must be a valid login name (section 4) and `homePaths` at most 16 entries of
+`/home/<login name>` (else `400`); they set `status.loginName` and `status.homePaths`. A change of
+`loginName` away from the desktop name (or back) also records an Event on the Desktop
+(`LoginNameFallback` warning / `LoginName`).
 
 Reports from a pod whose UID ≠ `status.podUID` → `409`, ignored; right after a pod starts the
 controller may not have recorded it yet, so the agent retries a 409 (every few seconds). `ready: true` sets `agentReady`.
@@ -612,6 +635,7 @@ ldap:
   adminGroupDN: ""               # optional: its members are authorized too
   membership: memberOf            # memberOf | member
   memberAttribute: ""             # default memberOf / member by mode
+  displayNameAttribute: displayName
   syncInterval: 5m
   timeout: 10s
   errorPolicy: deny               # deny | allow

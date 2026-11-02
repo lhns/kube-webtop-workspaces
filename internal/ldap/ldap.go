@@ -25,6 +25,8 @@ type Directory interface {
 	Members(ctx context.Context) (map[string]struct{}, error)
 	// IsMember reports whether one user is in the group.
 	IsMember(ctx context.Context, user string) (bool, error)
+	// DisplayName returns the user's displayNameAttribute, "" if the entry or value is missing.
+	DisplayName(ctx context.Context, user string) (string, error)
 }
 
 // ErrNoMembers is returned when the group has no members, which is never trusted.
@@ -213,6 +215,29 @@ func (c *client) membersByGroup(conn *goldap.Conn) (map[string]struct{}, error) 
 		}
 	}
 	return set, nil
+}
+
+// DisplayName searches the user's entry under baseDN; without a baseDN there is nothing to search.
+func (c *client) DisplayName(ctx context.Context, user string) (string, error) {
+	if user == "" || c.cfg.BaseDN == "" || c.cfg.DisplayNameAttribute == "" {
+		return "", nil
+	}
+	conn, err := c.connect(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer conn.Close()
+	entries, err := c.search(conn, c.cfg.BaseDN, goldap.ScopeWholeSubtree, UserFilter(c.cfg, user),
+		c.cfg.UserAttribute, c.cfg.DisplayNameAttribute)
+	if err != nil {
+		return "", err
+	}
+	for _, e := range entries {
+		if _, ok := c.userIDs([]*goldap.Entry{e})[user]; ok {
+			return e.GetAttributeValue(c.cfg.DisplayNameAttribute), nil
+		}
+	}
+	return "", nil
 }
 
 func (c *client) IsMember(ctx context.Context, user string) (bool, error) {

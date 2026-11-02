@@ -8,14 +8,18 @@
 #   nix/reinstall/        after an image update: manifests, and the `pending` / `restore` markers
 #   nix/trash-*/          the previous overlay, kept until webtop-nix-restore.service has copied the
 #                         users' paths out of it (webtop-nix-trash.service deletes it)
-#   home                  /home
-# WEBTOP_INIT_DEBUG=1        a failing step parks the container (shell / sleep) instead of exiting.
+#   home/user             the user's home, bind-mounted at each path in its .config/webtop/home-paths
+#                         (ADR 0011); /home is a tmpfs holding only those
+# WEBTOP_INIT_DEBUG=1       a failing step parks the container (shell / sleep) instead of exiting.
 # WEBTOP_INIT_SKIP_OVERLAY=1 skips the store overlay (boots on the image's store alone).
 export PATH=@busybox@/bin
 
 STAMP_FILE=/webtop-image-stamp
+# Account and group names of the image except the desktop user's, from its NixOS config.
+RESERVED=@reservedNames@
 P=/persist
 N=$P/nix
+H=$P/home/user
 
 log() { echo "webtop-init: $*"; }
 
@@ -136,7 +140,100 @@ mount_overlay() {
 
 bind_var() { mount --bind "$N/var" /nix/var/nix; }
 
-bind_home() { mkdir -p /home && mount --bind "$P/home" /home; }
+# Login name rule (docs/contract.md, section 4), and not an account of the image: those are not in
+# its passwd yet (activation writes it), hence the list. systemd-*: systemd's dynamic users.
+login_name_ok() {
+  [ ${#1} -le 40 ] || return 1
+  case $1 in [a-z]*) ;; *) return 1 ;; esac
+  case $1 in *[!a-z0-9-]* | systemd-*) return 1 ;; esac
+  ! grep -qxF -- "$1" "$RESERVED"
+}
+
+# For log lines quoting the user's file.
+printable() { printf '%s' "$1" | tr -d '\000-\037\177' | cut -c1-80; }
+
+# The account (uid 1000) is renamed to WEBTOP_LOGIN_NAME at activation (image/nixos/identity.nix).
+identity() {
+  n=$WEBTOP_DESKTOP
+  if ! login_name_ok "$n"; then
+    log "desktop name '$(printable "$n")' is not a valid login name or is an account of the image: using 'user'"
+    n=user
+  fi
+  # One passwd field, and a line of the env file: no separators, quotes or control characters.
+  g=$(printf '%s' "$WEBTOP_DISPLAY_NAME" | tr -d '\000-\037\177:,"\\'"'")
+  [ ${#g} -le 512 ] || g=
+  export WEBTOP_LOGIN_NAME="$n" WEBTOP_LOGIN_GECOS="${g:-$n}"
+}
+
+# A directory in the home that root writes into: never through a symlink; created owned by the user.
+user_dir() {
+  if [ -L "$1" ] || { [ -e "$1" ] && [ ! -d "$1" ]; }; then
+    log "ignoring the home paths file: $1 is not a directory"
+    return 1
+  fi
+  [ -d "$1" ] || { mkdir "$1" && chown 1000:100 "$1"; }
+}
+
+# WEBTOP_HOME_PATHS: the current /home/<name> plus the valid lines of the user's home-paths file, at
+# most 16. A volume from before (its data holds absolute /home/user paths) keeps /home/user whenever
+# the file cannot be used. Writes to the file are best effort (a full volume must not stop the boot):
+# it is created when missing, and the current path is appended when not listed.
+home_paths() {
+  cur=/home/$WEBTOP_LOGIN_NAME
+  fallback=$cur
+  if [ -d "$H" ]; then
+    [ "$cur" = /home/user ] || fallback="$cur /home/user"
+  else
+    mkdir -p "$H" && chown 1000:100 "$H" && chmod 700 "$H" || return 1
+  fi
+  export WEBTOP_HOME_PATHS="$fallback"
+  user_dir "$H/.config" && user_dir "$H/.config/webtop" || return 0
+  f=$H/.config/webtop/home-paths
+  if [ ! -e "$f" ] && [ ! -L "$f" ]; then
+    if { echo "# Paths this home is mounted at. Your current one is added at every start and can't be removed."
+         echo "# Delete an old one once nothing refers to it anymore; it disappears at the next start."
+         for p in $fallback; do echo "$p"; done
+       } > "$f.tmp" && chown 1000:100 "$f.tmp" && mv "$f.tmp" "$f"; then :; else
+      log "could not create $f"
+      rm -f "$f.tmp"
+      return 0
+    fi
+  fi
+  if [ -L "$f" ] || [ ! -f "$f" ]; then
+    log "ignoring $f: not a regular file"
+    return 0
+  fi
+  paths=$cur
+  listed=
+  lines=$(head -c 65536 "$f" | awk '{ sub(/#.*/, ""); gsub(/^[ \t\r]+|[ \t\r]+$/, ""); if ($0 != "") print }')
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    if [ "$p" = "$cur" ]; then listed=1; continue; fi
+    case " $paths " in *" $p "*) continue ;; esac
+    case $p in /home/*) n=${p#/home/} ;; *) n=/ ;; esac
+    if ! login_name_ok "$n"; then
+      log "home-paths: ignoring '$(printable "$p")': not /home/<login name>, or an account of the image"
+    elif [ "$(echo "$paths" | wc -w)" -ge 16 ]; then
+      log "home-paths: ignoring '$(printable "$p")': at most 16 paths"
+    else
+      paths="$paths $p"
+    fi
+  done <<EOF
+$lines
+EOF
+  if [ -z "$listed" ]; then
+    { [ -z "$(tail -c1 "$f")" ] || echo; echo "$cur"; } >> "$f" || log "could not add $cur to $f"
+  fi
+  WEBTOP_HOME_PATHS=$paths
+}
+
+mount_homes() {
+  mount -t tmpfs -o mode=755,size=1m tmpfs /home || return 1
+  for p in $WEBTOP_HOME_PATHS; do
+    mkdir "$p" && mount --bind "$H" "$p" || return 1
+  done
+  log "home at: $WEBTOP_HOME_PATHS"
+}
 
 # systemd (PID 1) replaces stdout with /dev/null, so /proc/1/fd/1 is useless for logs. Relay a fifo
 # (written by webtop-journal-relay.service) to our original stdout, which the runtime collects.
@@ -210,7 +307,9 @@ else
   step "overlay on /nix/store" mount_overlay
   step "bind $N/var on /nix/var/nix" bind_var
 fi
-step "bind $P/home on /home" bind_home
+step "login name" identity
+step "home paths" home_paths
+step "bind $H at the home paths" mount_homes
 step "console relay" console_relay
 step "write /run/webtop/env" write_env
 step "write /run/webtop/selkies.env" write_selkies_env

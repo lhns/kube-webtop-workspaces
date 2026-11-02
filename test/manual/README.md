@@ -32,7 +32,7 @@ kubectl -n webtop-test port-forward pod/desktop-test 8080:8080   # then open htt
 - systemd reaches `running` (or `degraded`), and `/persist` and the Nix overlay store are mounted.
 - A Wayland client (konsole) and an X11 client (konsole on xcb) both get a window.
 - The desktop renders and takes input in the browser.
-- Persistence: write a file under `/home/user` and install a package with `nix`, delete the pod,
+- Persistence: write a file under `/home/desktop-test` (the desktop user's home) and install a package with `nix`, delete the pod,
   `kubectl apply -k test/manual` again, and both are still there.
 - Poweroff: `kubectl -n webtop-test exec desktop-test -- systemctl poweroff` exits the container
   with 0 and the pod goes `Completed`. Pod deletion stops units in order well inside the 120 s

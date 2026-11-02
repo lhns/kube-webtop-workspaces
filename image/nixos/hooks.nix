@@ -32,7 +32,8 @@ let
     name = "webtop-nix-restore-unit";
     runtimeInputs = with pkgs; [ coreutils util-linux libnotify systemd restore ];
     text = ''
-      export NOTIFY_PREFIX="runuser -u ${cfg.user} -- env DBUS_SESSION_BUS_ADDRESS=${userBus}"
+      NOTIFY_PREFIX="runuser -u $(id -nu ${uid}) -- env DBUS_SESSION_BUS_ADDRESS=${userBus}"
+      export NOTIFY_PREFIX
       ${notifyFn}
       notify "Desktop image updated" "Restoring your Nix packages in the background."
       webtop-nix-restore || echo "webtop-nix-restore exit $?"
@@ -67,7 +68,8 @@ let
       done
 
       p="$profiles/profile"
-      manifest="$r/$USER.manifest.json"
+      # Named after the home's directory on the volume (webtop-init), not the login name.
+      manifest="$r/user.manifest.json"
       if [ -L "$p" ] && [ -e "$p" ]; then
         echo "nix profile restored"
       else
@@ -157,7 +159,7 @@ in
     serviceConfig = {
       Type = "oneshot";
       RemainAfterExit = true;
-      User = cfg.user;
+      User = uid;
       ExecStart = "${pkgs.coreutils}/bin/true";
       ExecStop = [ "+${exe} thaw" "${exe} save-session" ];
       EnvironmentFile = envFile;
@@ -212,7 +214,7 @@ in
     ];
     serviceConfig = {
       Type = "exec"; # see webtop-nix-restore
-      User = cfg.user;
+      User = uid;
       ExecStart = lib.getExe reinstall;
       TimeoutStopSec = 10;
       # "+": as root, the records belong to root. Only after success; a failure retries next boot.

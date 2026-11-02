@@ -18,6 +18,7 @@ import (
 type staticDir map[string]struct{}
 
 func (d staticDir) Members(context.Context) (map[string]struct{}, error) { return d, nil }
+func (d staticDir) DisplayName(context.Context, string) (string, error)  { return "", nil }
 func (d staticDir) IsMember(_ context.Context, u string) (bool, error) {
 	_, ok := d[u]
 	return ok, nil

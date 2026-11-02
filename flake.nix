@@ -19,7 +19,7 @@
       flake = false;
     };
     webtop-nix = {
-      url = "github:lhns/webtop-nix/236c129604a4e884093834dd051932b33a02e1f4";
+      url = "github:lhns/webtop-nix/18d69db042afa280a43bc25c9887cd026114a475";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
@@ -41,15 +41,24 @@
           ./image/nixos/desktop.nix
           ./image/nixos/hooks.nix
           ./image/nixos/home-manager.nix
+          ./image/nixos/identity.nix
         ];
       };
       toplevel = nixos.config.system.build.toplevel;
+
+      # Login names webtop-init refuses (ADR 0011): every users.users and users.groups name, i.e. what
+      # activation writes to the image's /etc/passwd and /etc/group (not there yet when webtop-init
+      # runs), except the desktop user's placeholder, which is renamed.
+      reservedNames = let c = nixos.config; in pkgs.writeText "webtop-reserved-names" (pkgs.lib.concatLines
+        (pkgs.lib.remove c.services.webtop.user (pkgs.lib.unique
+          (pkgs.lib.mapAttrsToList (_: u: u.name) c.users.users ++ pkgs.lib.mapAttrsToList (_: g: g.name) c.users.groups))));
 
       # The shebang is a static busybox: it runs before /nix/store is overlaid.
       webtopInit = pkgs.runCommand "webtop-init" { } ''
         mkdir -p $out
         substitute ${./image/webtop-init} $out/webtop-init \
-          --subst-var-by busybox ${pkgs.pkgsStatic.busybox}
+          --subst-var-by busybox ${pkgs.pkgsStatic.busybox} \
+          --subst-var-by reservedNames ${reservedNames}
         chmod +x $out/webtop-init
       '';
 
