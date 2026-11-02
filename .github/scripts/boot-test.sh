@@ -101,14 +101,16 @@ case $subst in *cache.nixos.org*http://cache.invalid/ci*) echo "substituters: $s
   *) echo "::error::WEBTOP_NIX_EXTRA_SUBSTITUTERS not in nix.conf (substituters: $subst)"; exit 1 ;; esac
 # The desktop user is the desktop's name with uid 1000 and the display name; its home is the
 # volume's, mounted at each valid home path and nothing else.
-! docker logs desktop-boot 2>&1 | grep 'webtop-identity:' || { echo "::error::the rename at activation failed"; exit 1; }
+# Read once: grep -q on a pipe would SIGPIPE docker logs, which fails the pipeline (pipefail).
+clog=$(docker logs desktop-boot 2>&1)
+! grep 'webtop-identity:' <<<"$clog" || { echo "::error::the rename at activation failed"; exit 1; }
 pw=$(docker exec desktop-boot getent passwd ci || true)
 case $pw in "ci:x:1000:100:CI Tester:/home/ci:"?*) ;; *) echo "::error::passwd entry of ci: '$pw'"; exit 1 ;; esac
 [ "$(docker exec desktop-boot loginctl show-user 1000 --property=Name --value)" = ci ] \
   || { echo "::error::the logind user 1000 is not ci"; exit 1; }
 # The session leader's environment (startplasma-wayland, started by systemd with User=1000).
 senv=$(docker exec desktop-boot sh -c 'tr "\0" "\n" < /proc/$(systemctl show -P MainPID webtop-session)/environ' || true)
-echo "$senv" | grep -qx 'HOME=/home/ci' \
+grep -qx 'HOME=/home/ci' <<<"$senv" \
   || { echo "::error::the session's HOME is not /home/ci"; echo "$senv" | grep -E '^(HOME|USER)='; exit 1; }
 groups=" $(docker exec desktop-boot id -nG ci) "
 case $groups in *" wheel "*) ;; *) echo "::error::groups of ci:$groups"; exit 1 ;; esac
@@ -122,7 +124,7 @@ for h in /home/ci /home/user; do
 done
 grep -qx /home/ci "$hp/home-paths" || { echo "::error::/home/ci not added to home-paths"; cat "$hp/home-paths"; exit 1; }
 for bad in root ../x /home/root /home/../x; do
-  docker logs desktop-boot 2>&1 | grep -qF "home-paths: ignoring '$bad'" || { echo "::error::'$bad' not reported as ignored"; exit 1; }
+  grep -qF "home-paths: ignoring '$bad'" <<<"$clog" || { echo "::error::'$bad' not reported as ignored"; exit 1; }
 done
 grep -qF '"loginName":"ci","homePaths":["/home/ci","/home/user"]' "$reports" \
   || { echo "::error::the agent did not report the login name and home paths"; exit 1; }
