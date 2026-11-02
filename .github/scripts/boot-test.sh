@@ -101,11 +101,12 @@ case $subst in *cache.nixos.org*http://cache.invalid/ci*) echo "substituters: $s
   *) echo "::error::WEBTOP_NIX_EXTRA_SUBSTITUTERS not in nix.conf (substituters: $subst)"; exit 1 ;; esac
 # The desktop user is the desktop's name with uid 1000 and the display name; its home is the
 # volume's, mounted at each valid home path and nothing else.
+! docker logs desktop-boot 2>&1 | grep 'webtop-identity:' || { echo "::error::the rename at activation failed"; exit 1; }
 pw=$(docker exec desktop-boot getent passwd ci || true)
 case $pw in "ci:x:1000:100:CI Tester:/home/ci:"?*) ;; *) echo "::error::passwd entry of ci: '$pw'"; exit 1 ;; esac
-docker exec desktop-boot loginctl list-sessions --no-legend | grep -q ' 1000 ci ' \
-  || { echo "::error::no logind session of ci"; docker exec desktop-boot loginctl list-sessions; exit 1; }
-in_session systemctl --user show-environment | grep -qx 'HOME=/home/ci' \
+[ "$(docker exec desktop-boot loginctl show-user 1000 --property=Name --value)" = ci ] \
+  || { echo "::error::the logind user 1000 is not ci"; exit 1; }
+docker exec desktop-boot sh -c 'tr "\0" "\n" < /proc/$(pgrep -u 1000 -x kwin_wayland | head -1)/environ' | grep -qx 'HOME=/home/ci' \
   || { echo "::error::the session's HOME is not /home/ci"; exit 1; }
 groups=" $(docker exec desktop-boot id -nG ci) "
 case $groups in *" wheel "*) ;; *) echo "::error::groups of ci:$groups"; exit 1 ;; esac
@@ -123,5 +124,11 @@ for bad in root ../x /home/root /home/../x; do
 done
 grep -qF '"loginName":"ci","homePaths":["/home/ci","/home/user"]' "$reports" \
   || { echo "::error::the agent did not report the login name and home paths"; exit 1; }
+# The starter home-manager flake names the real user.
+hm=/persist/home/user/.config/home-manager
+docker exec desktop-boot grep -qF 'homeConfigurations."ci"' $hm/flake.nix \
+  && docker exec desktop-boot grep -qF 'home.username = "ci";' $hm/home.nix \
+  && docker exec desktop-boot grep -qF 'home.homeDirectory = "/home/ci";' $hm/home.nix \
+  || { echo "::error::the home-manager template does not name ci"; docker exec desktop-boot cat $hm/home.nix; exit 1; }
 echo "identity: $pw; /home: $homes"
 echo "boot test passed"
