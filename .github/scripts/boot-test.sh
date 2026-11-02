@@ -178,6 +178,51 @@ as_user nix profile remove jq >/dev/null || fail "removing the declared jq faile
 # --all matches the declaration only: upgrade does not look at home-manager-path.
 out=$(as_user nix profile upgrade --all 2>&1) || fail "nix profile upgrade --all failed: $out"
 ! grep -q 'not added from a flake' <<<"$out" || fail "upgrade --all reached the profile: $out"
+# A store path may not shadow a declared package.
+out=$(as_user nix profile add "$(as_user sh -c 'dirname "$(dirname "$(readlink -f "$(command -v hello)")")"')" 2>&1 || true)
+grep -q 'is declared in the declaration' <<<"$out" || fail "a store path shadowing a declared package was accepted: $out"
+# One command, two backends: when the declaration's hook fails, the profile change is undone too.
+as_user sh -c 'printf "#!/bin/sh\n[ \"\$NIX_PROFILE_BACKEND\" != declaration ]\n" > /tmp/ci-decl-fails && chmod +x /tmp/ci-decl-fails'
+sum=$(as_user sha256sum "$decl")
+plink=$(as_user readlink /home/user/.local/state/nix/profiles/profile)
+! as_user nix profile add --profile-hook /tmp/ci-decl-fails "$jqpath" nixpkgs#tree 2>/dev/null \
+  || fail "a failing declaration hook did not fail the command"
+[ "$(as_user sha256sum "$decl")" = "$sum" ] || fail "packages.json changed although the command failed"
+! as_user nix profile list --profile-backend profile --json | jq -e '.elements.jq' >/dev/null \
+  || fail "the profile part of a failed command was kept"
+[ "$(as_user readlink /home/user/.local/state/nix/profiles/profile)" = "$plink" ] || fail "the profile is not back at its generation"
+as_user hello >/dev/null || fail "hello went missing in a failed command"
+# Rollback right after a hand edit goes back to the last recorded version; the edit becomes a version.
+as_user sh -c "jq '.elements.handedit = {originalUrl: \"flake:nixpkgs\", attrPath: \"legacyPackages.x86_64-linux.tree\"}' $decl > /tmp/ci-decl && cat /tmp/ci-decl > $decl"
+as_user nix profile rollback || fail "rollback after a hand edit failed"
+[ "$(as_user sha256sum "$decl")" = "$sum" ] || fail "rollback after a hand edit did not restore the recorded version"
+hist=$(as_user nix profile history | sed 's/\x1b\[[0-9;]*m//g')
+newest=$(grep -o '^Version [0-9]*' <<<"$hist" | tail -n1 | cut -d' ' -f2)
+tail -n 3 <<<"$hist" | grep -q 'tree' || fail "the hand edit is not the newest version: $hist"
+as_user nix profile rollback --to "$newest" || fail "rollback --to the hand edit failed"
+as_user jq -e '.elements.handedit' "$decl" >/dev/null || fail "rollback --to did not restore the hand edit"
+as_user nix profile remove handedit >/dev/null || fail "removing the hand edit failed"
+# Packages from another flake (builtins.getFlake), including a quoted attribute name with a dot.
+as_user sh -c 'mkdir -p /tmp/ci-flake && printf "%s\n" "{" "  inputs.nixpkgs.url = \"nixpkgs\";" \
+  "  outputs = { nixpkgs, ... }: { packages.x86_64-linux = { ci-hello = nixpkgs.legacyPackages.x86_64-linux.hello;" \
+  "    \"ci.dotted\" = nixpkgs.legacyPackages.x86_64-linux.hello; }; };" "}" > /tmp/ci-flake/flake.nix'
+as_user nix profile add path:/tmp/ci-flake#ci-hello 'path:/tmp/ci-flake#"ci.dotted"' \
+  || fail "adding packages from a local flake failed"
+as_user jq -e '[.elements[] | select(.originalUrl | startswith("path:"))] | length == 2' "$decl" >/dev/null \
+  || fail "the local flake's packages are not declared: $(as_user cat "$decl")"
+as_user nix profile remove --regex '.*ci-flake.*' >/dev/null || fail "removing the local flake's packages failed"
+# A flake dir that is a git repo: packages.json is added with --intent-to-add; a git-ignored one is refused.
+hmdir=/home/user/.config/home-manager
+as_user sh -c "cd $hmdir && git init -q && git add -A && git rm -q --cached packages.json"
+as_user nix profile add nixpkgs#tree || fail "nix profile add in a git flake dir failed"
+as_user git -C "$hmdir" ls-files | grep -qx packages.json || fail "packages.json was not added to git"
+as_user sh -c "cd $hmdir && echo packages.json > .gitignore && git rm -q --cached packages.json"
+sum=$(as_user sha256sum "$decl")
+out=$(as_user nix profile remove tree 2>&1 || true)
+grep -q 'git ignores' <<<"$out" || fail "a git-ignored packages.json was not refused: $out"
+[ "$(as_user sha256sum "$decl")" = "$sum" ] || fail "a refused change was not reverted"
+as_user rm -rf "$hmdir/.git" "$hmdir/.gitignore"
+as_user nix profile remove tree >/dev/null || fail "removing tree failed"
 # Migration of an earlier starter flake (webtop-home-manager): its `nix profile` flake packages move
 # into packages.json.
 as_user nix profile remove hello >/dev/null || fail "nix profile remove hello failed"
