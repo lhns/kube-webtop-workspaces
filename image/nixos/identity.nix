@@ -1,7 +1,7 @@
 # The desktop user's identity (ADR 0011): the account is declared as the placeholder
 # `services.webtop.user` (uid 1000) and renamed at activation to the login name webtop-init chose,
 # with home /home/<name> and the display name as GECOS. Everything else refers to uid 1000.
-{ config, lib, ... }:
+{ config, lib, pkgs, ... }:
 
 let
   cfg = config.services.webtop;
@@ -19,7 +19,8 @@ in
   users.users.${cfg.user}.createHome = lib.mkForce false;
 
   # Activation runs once per container (its rootfs, /etc included, is fresh every start), so the
-  # rename holds until the container stops. usermod also renames the group memberships.
+  # rename holds until the container stops. usermod also renames the group memberships. The
+  # activation PATH has coreutils, grep, shadow and util-linux, not sed.
   system.activationScripts.webtop-identity = lib.stringAfter [ "users" "groups" "etc" ] ''
     # Read, not sourced: the GECOS comes from LDAP.
     name=$(grep -m1 '^WEBTOP_LOGIN_NAME=' /run/webtop/env | cut -d= -f2-)
@@ -36,7 +37,7 @@ in
       # usermod renames neither the subordinate id ranges nor the linger flag (logind reads that
       # directory when it starts, after activation).
       for f in /etc/subuid /etc/subgid; do
-        [ ! -f "$f" ] || sed -i "s/^${cfg.user}:/$name:/" "$f"
+        [ ! -f "$f" ] || ${pkgs.gnused}/bin/sed -i "s/^${cfg.user}:/$name:/" "$f"
       done
       mkdir -p /var/lib/systemd/linger && touch "/var/lib/systemd/linger/$name"
     fi
