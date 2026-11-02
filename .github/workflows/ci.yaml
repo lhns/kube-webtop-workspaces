@@ -333,8 +333,10 @@ jobs:
       matrix:
         include:
           - arch: amd64
+            system: x86_64-linux
             runner: ubuntu-latest
           - arch: arm64
+            system: aarch64-linux
             runner: ubuntu-24.04-arm
     name: desktop-image (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
@@ -354,8 +356,10 @@ jobs:
           df -h /
       - uses: ./.github/actions/kwin-cache
 
-      - name: nix flake check
-        run: nix flake check -L
+      # Not `nix flake check`: it evaluates every system's checks, and the KWin graft (import from
+      # derivation) makes evaluating the other system's toplevel a build of it.
+      - name: checks
+        run: nix build .#checks.${{ matrix.system }}.agent .#checks.${{ matrix.system }}.toplevel-eval -L
       - name: build image
         run: nix build .#image -L
 
