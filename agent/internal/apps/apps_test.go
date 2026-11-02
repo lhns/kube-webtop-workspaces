@@ -184,6 +184,10 @@ type fakeOpener struct{ err error }
 
 func (f fakeOpener) Open(context.Context, string) error { return f.err }
 
+func (f fakeOpener) List(context.Context) ([]App, error) { return nil, nil }
+
+func (f fakeOpener) Icon(context.Context, string) (string, string, error) { return "", "", ErrNotFound }
+
 func TestHandlerMapsErrors(t *testing.T) {
 	for _, c := range []struct {
 		err  error

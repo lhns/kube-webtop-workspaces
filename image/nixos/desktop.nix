@@ -21,6 +21,8 @@
     };
   };
 
-  # webtop-init writes SELKIES_PORT=$WEBTOP_HTTP_PORT here; EnvironmentFile wins over Environment.
-  systemd.user.services.selkies.serviceConfig.EnvironmentFile = "-/run/webtop/selkies.env";
+  # webtop-init writes SELKIES_PORT and the cluster's desktop.selkies / desktop.title here
+  # (docs/contract.md, "Selkies settings"); it wins over extraEnvironment above, and the user's
+  # allowlisted ~/.config/webtop/selkies.env (services.webtop.userSettings) wins over it.
+  services.webtop.environmentFiles = [ "-/run/webtop/selkies.env" ];
 }

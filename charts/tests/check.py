@@ -168,6 +168,7 @@ refuse("networkPolicy.ingressController needs a namespaceSelector",
        "--set", "desktop.image=x", "--set-json", "networkPolicy.ingressController.namespaceSelector=null")
 refuse("networkPolicy.dns needs a namespaceSelector",
        "--set", "desktop.image=x", "--set-json", "networkPolicy.dns={\"namespaceSelector\":null,\"podSelector\":null}")
+refuse("SELKIES_[A-Z0-9_]+", "--set", "desktop.image=x", "--set-string", "desktop.selkies.selkies_x=1")
 print("ok: invalid values refused")
 
 sys.exit(1 if errors else 0)
