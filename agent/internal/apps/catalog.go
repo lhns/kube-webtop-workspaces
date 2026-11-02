@@ -161,7 +161,7 @@ func parseDesktop(g *guard, file string) (map[string]string, bool) {
 	if !ok {
 		return nil, false
 	}
-	f, err := os.Open(file)
+	f, err := openNoSymlinks(file)
 	if err != nil {
 		return nil, false
 	}

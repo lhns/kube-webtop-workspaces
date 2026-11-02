@@ -65,11 +65,11 @@ func Handler(o Opener) http.Handler {
 		file, ct, err := o.Icon(r.Context(), r.PathValue("name"))
 		if err == nil {
 			var f *os.File
-			if f, err = os.Open(file); err == nil {
+			if f, err = openNoSymlinks(file); err == nil {
 				defer f.Close()
 				st, serr := f.Stat()
-				if serr != nil {
-					http.Error(w, "icon unreadable", http.StatusInternalServerError)
+				if serr != nil || !st.Mode().IsRegular() || st.Size() > maxIcon {
+					http.Error(w, "icon unreadable", http.StatusNotFound)
 					return
 				}
 				h := w.Header()
