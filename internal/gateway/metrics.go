@@ -11,6 +11,7 @@ const (
 	outOff         = "off"
 	outStart       = "start"
 	outApp         = "app"
+	outApps        = "apps"
 	outUnavailable = "unavailable"
 	outDenied      = "denied"
 	outNotFound    = "notfound"

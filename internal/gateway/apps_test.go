@@ -21,6 +21,21 @@ import (
 type fakeAgent struct {
 	calls []string // "<base host> <app>"
 	err   error
+
+	list    []AppInfo
+	listErr error
+	icon    *AppIcon
+	iconErr error
+}
+
+func (f *fakeAgent) List(_ context.Context, base *url.URL) ([]AppInfo, error) {
+	f.calls = append(f.calls, base.Host+" list")
+	return f.list, f.listErr
+}
+
+func (f *fakeAgent) Icon(_ context.Context, base *url.URL, app string) (*AppIcon, error) {
+	f.calls = append(f.calls, base.Host+" icon "+app)
+	return f.icon, f.iconErr
 }
 
 func (f *fakeAgent) Open(_ context.Context, base *url.URL, app string) error {
@@ -124,7 +139,7 @@ func TestAppRoute(t *testing.T) {
 		e := newEnv(t, nil, desktop("alice", "alice", running(backend.URL)))
 		ag := &fakeAgent{}
 		e.h.agent = ag
-		for _, p := range []string{"/apps/", "/apps/a/b", "/apps/a%20b", "/apps/x;y"} {
+		for _, p := range []string{"/apps/a/b", "/apps/a%20b", "/apps/x;y"} {
 			if rec := e.do("GET", p, nav()...); rec.Code == 303 || len(ag.calls) != 0 {
 				t.Errorf("%s: code %d, agent calls %v", p, rec.Code, ag.calls)
 			}
@@ -223,6 +238,194 @@ func TestAppStoppedDesktopBootsAndReturns(t *testing.T) {
 	})
 }
 
+func TestAppsOverview(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("backend " + r.URL.Path))
+	}))
+	defer backend.Close()
+	admin := func(g *config.Gateway) { g.AdminGroup = "admins" }
+	list := []AppInfo{
+		{ID: "org.kde.dolphin", Name: "Dolphin", Icon: true, Running: true},
+		{ID: "zed", Name: "<b>Zed</b>"},
+	}
+
+	t.Run("running desktop lists the apps", func(t *testing.T) {
+		e := newEnv(t, nil, desktop("alice", "alice", running(backend.URL)))
+		ag := &fakeAgent{list: list}
+		e.h.agent = ag
+		rec := e.do("GET", "/apps/", navHeaders)
+		body := rec.Body.String()
+		if rec.Code != 200 || rec.Header().Get("Cache-Control") != "no-store" {
+			t.Fatalf("code %d cache %q", rec.Code, rec.Header().Get("Cache-Control"))
+		}
+		for _, want := range []string{
+			`href="/apps/org.kde.dolphin"`, `src="/.webtop/apps/org.kde.dolphin/icon"`, ">Dolphin<", `class="badge"`,
+			`href="/apps/zed"`, `&lt;b&gt;Zed&lt;/b&gt;`, `class="ph"`,
+		} {
+			if !strings.Contains(body, want) {
+				t.Errorf("page lacks %q:\n%s", want, body)
+			}
+		}
+		if strings.Count(body, `class="badge"`) != 1 || strings.Contains(body, "/apps/zed/icon") {
+			t.Errorf("badge or icon on the wrong app:\n%s", body)
+		}
+		if len(ag.calls) != 1 || !strings.HasSuffix(ag.calls[0], " list") {
+			t.Errorf("agent calls %v", ag.calls)
+		}
+		if counter(t, e.reg, "webtop_gateway_requests_total", map[string]string{"outcome": outApps}) != 1 {
+			t.Error("overview not counted")
+		}
+	})
+	t.Run("admin prefix links stay under the prefix", func(t *testing.T) {
+		e := newEnv(t, admin, desktop("bob", "bob", running(backend.URL)))
+		e.h.agent = &fakeAgent{list: list}
+		for _, p := range []string{"/u/bob/apps/", "/u/bob/apps/?x=1"} {
+			body := e.do("GET", p, navHeaders, map[string]string{"Remote-Groups": "admins"}).Body.String()
+			if !strings.Contains(body, `href="/u/bob/apps/zed"`) || !strings.Contains(body, `src="/u/bob/.webtop/apps/org.kde.dolphin/icon"`) {
+				t.Errorf("%s: %s", p, body)
+			}
+		}
+	})
+	t.Run("empty list", func(t *testing.T) {
+		e := newEnv(t, nil, desktop("alice", "alice", running(backend.URL)))
+		e.h.agent = &fakeAgent{}
+		if rec := e.do("GET", "/apps/", navHeaders); rec.Code != 200 || !strings.Contains(rec.Body.String(), "no applications") {
+			t.Fatalf("code %d body %s", rec.Code, rec.Body)
+		}
+	})
+	t.Run("agent failure", func(t *testing.T) {
+		e := newEnv(t, nil, desktop("alice", "alice", running(backend.URL)))
+		e.h.agent = &fakeAgent{listErr: errors.New("connection refused")}
+		rec := e.do("GET", "/apps/", navHeaders)
+		if rec.Code != 503 || rec.Header().Get("Retry-After") == "" {
+			t.Fatalf("code %d retry-after %q", rec.Code, rec.Header().Get("Retry-After"))
+		}
+	})
+	t.Run("another user may not", func(t *testing.T) {
+		e := newEnv(t, nil, desktop("bob", "bob", running(backend.URL)))
+		ag := &fakeAgent{list: list}
+		e.h.agent = ag
+		if rec := e.do("GET", "/u/bob/apps/", navHeaders); rec.Code != 403 || len(ag.calls) != 0 {
+			t.Fatalf("code %d calls %v", rec.Code, ag.calls)
+		}
+	})
+	t.Run("only top-level navigation, otherwise proxied", func(t *testing.T) {
+		e := newEnv(t, nil, desktop("alice", "alice", running(backend.URL)))
+		ag := &fakeAgent{list: list}
+		e.h.agent = ag
+		rec := e.do("GET", "/apps/", map[string]string{"Sec-Fetch-Mode": "cors"})
+		if rec.Body.String() != "backend /apps/" || len(ag.calls) != 0 {
+			t.Fatalf("body %q calls %v", rec.Body, ag.calls)
+		}
+		if rec := e.do("POST", "/apps/", navHeaders); rec.Body.String() != "backend /apps/" {
+			t.Fatalf("POST body %q", rec.Body)
+		}
+	})
+	t.Run("stopped desktop boots and returns to the overview", func(t *testing.T) {
+		ag := &fakeAgent{list: list}
+		e := newEnv(t, nil, desktop("alice", "alice", powered(v1alpha1.PowerOff)))
+		e.h.agent = ag
+		if rec := e.do("GET", "/apps/", navHeaders); rec.Code != 200 || !strings.Contains(rec.Body.String(), "Starting your desktop") || len(ag.calls) != 0 {
+			t.Fatalf("code %d body %s", rec.Code, rec.Body)
+		}
+		e = newEnv(t, nil, desktop("alice", "alice", lastStop(v1alpha1.StopIdle)))
+		if rec := e.do("GET", "/apps/", navHeaders); !strings.Contains(rec.Body.String(), `name="app" value="*"`) {
+			t.Fatalf("off page lacks the overview return: %s", rec.Body)
+		}
+		form := url.Values{csrfField: {"tok"}, "app": {appsOverview}}
+		req := httptest.NewRequest("POST", "/.webtop/start", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Remote-User", "alice")
+		req.Header.Set("Sec-Fetch-Site", "same-origin")
+		req.AddCookie(&http.Cookie{Name: csrfCookie, Value: "tok"})
+		rec := httptest.NewRecorder()
+		e.h.ServeHTTP(rec, req)
+		if rec.Code != 303 || rec.Header().Get("Location") != "/apps/" {
+			t.Fatalf("code %d loc %q", rec.Code, rec.Header().Get("Location"))
+		}
+	})
+}
+
+func TestAppIconRoute(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("backend " + r.URL.Path))
+	}))
+	defer backend.Close()
+	const path = "/.webtop/apps/org.kde.dolphin/icon"
+	get := func(e *env, p string) *httptest.ResponseRecorder {
+		return e.do("GET", p, map[string]string{"Sec-Fetch-Mode": "no-cors", "Sec-Fetch-Dest": "image"})
+	}
+
+	t.Run("svg gets a locked-down CSP", func(t *testing.T) {
+		e := newEnv(t, nil, desktop("alice", "alice", running(backend.URL)))
+		ag := &fakeAgent{icon: &AppIcon{ContentType: "image/svg+xml", CacheControl: "max-age=3600", Body: []byte("<svg/>")}}
+		e.h.agent = ag
+		rec := get(e, path)
+		h := rec.Header()
+		if rec.Code != 200 || rec.Body.String() != "<svg/>" || h.Get("Content-Type") != "image/svg+xml" || h.Get("Cache-Control") != "max-age=3600" ||
+			h.Get("Content-Security-Policy") != "default-src 'none'; style-src 'unsafe-inline'" || h.Get("X-Content-Type-Options") != "nosniff" {
+			t.Fatalf("code %d %v %q", rec.Code, h, rec.Body)
+		}
+		if len(ag.calls) != 1 || !strings.HasSuffix(ag.calls[0], " icon org.kde.dolphin") {
+			t.Errorf("agent calls %v", ag.calls)
+		}
+	})
+	t.Run("png", func(t *testing.T) {
+		e := newEnv(t, nil, desktop("alice", "alice", running(backend.URL)))
+		e.h.agent = &fakeAgent{icon: &AppIcon{ContentType: "image/png", Body: []byte("png")}}
+		rec := get(e, path)
+		if rec.Code != 200 || rec.Header().Get("Content-Type") != "image/png" || rec.Header().Get("Content-Security-Policy") != "" {
+			t.Fatalf("code %d %v", rec.Code, rec.Header())
+		}
+	})
+	t.Run("other types are refused", func(t *testing.T) {
+		for _, ct := range []string{"text/html", "image/x-xpixmap", ""} {
+			e := newEnv(t, nil, desktop("alice", "alice", running(backend.URL)))
+			e.h.agent = &fakeAgent{icon: &AppIcon{ContentType: ct, Body: []byte("<script>")}}
+			if rec := get(e, path); rec.Code != 502 || strings.Contains(rec.Body.String(), "<script>") {
+				t.Errorf("%q: code %d", ct, rec.Code)
+			}
+		}
+	})
+	t.Run("not found and agent failure", func(t *testing.T) {
+		e := newEnv(t, nil, desktop("alice", "alice", running(backend.URL)))
+		e.h.agent = &fakeAgent{iconErr: ErrAppNotFound}
+		if rec := get(e, path); rec.Code != 404 {
+			t.Errorf("code %d", rec.Code)
+		}
+		e.h.agent = &fakeAgent{iconErr: errors.New("boom")}
+		if rec := get(e, path); rec.Code != 503 {
+			t.Errorf("code %d", rec.Code)
+		}
+	})
+	t.Run("not running is 503 without calling the agent", func(t *testing.T) {
+		e := newEnv(t, nil, desktop("alice", "alice", lastStop(v1alpha1.StopIdle)))
+		ag := &fakeAgent{}
+		e.h.agent = ag
+		if rec := get(e, path); rec.Code != 503 || len(ag.calls) != 0 {
+			t.Errorf("code %d calls %v", rec.Code, ag.calls)
+		}
+	})
+	t.Run("authz and methods", func(t *testing.T) {
+		e := newEnv(t, nil, desktop("bob", "bob", running(backend.URL)))
+		ag := &fakeAgent{icon: &AppIcon{ContentType: "image/png", Body: []byte("x")}}
+		e.h.agent = ag
+		if rec := get(e, "/u/bob"+path); rec.Code != 403 || len(ag.calls) != 0 {
+			t.Errorf("other user: code %d calls %v", rec.Code, ag.calls)
+		}
+		e = newEnv(t, nil, desktop("alice", "alice", running(backend.URL)))
+		e.h.agent = ag
+		if rec := e.do("POST", path); rec.Code != 405 {
+			t.Errorf("POST: code %d", rec.Code)
+		}
+		for _, p := range []string{"/.webtop/apps/a%20b/icon", "/.webtop/apps/x/y/icon", "/.webtop/apps/x"} {
+			if rec := get(e, p); rec.Code != 404 {
+				t.Errorf("%s: code %d", p, rec.Code)
+			}
+		}
+	})
+}
+
 func TestAgentClient(t *testing.T) {
 	var gotPath, gotMethod string
 	status := http.StatusNoContent
@@ -257,6 +460,52 @@ func TestAgentClient(t *testing.T) {
 	srv.Close()
 	if err := c.Open(context.Background(), base, "x"); err == nil {
 		t.Fatal("closed agent: no error")
+	}
+}
+
+func TestAgentClientListAndIcon(t *testing.T) {
+	var gotPath string
+	status, ctype, body := http.StatusOK, "application/json", `[{"id":"a","name":"A","icon":true,"running":true}]`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", ctype)
+		w.Header().Set("Cache-Control", "max-age=3600")
+		w.WriteHeader(status)
+		w.Write([]byte(body))
+	}))
+	defer srv.Close()
+	u, _ := url.Parse(srv.URL)
+	port, _ := strconv.Atoi(u.Port())
+	base, _ := url.Parse("http://" + u.Hostname() + ":8080")
+	c := newAgentClient(http.DefaultTransport)
+	c.port = port
+	ctx := context.Background()
+
+	list, err := c.List(ctx, base)
+	if err != nil || gotPath != "/api/v1/apps" || len(list) != 1 || list[0] != (AppInfo{ID: "a", Name: "A", Icon: true, Running: true}) {
+		t.Fatalf("list %+v %v path %s", list, err, gotPath)
+	}
+	body = "not json"
+	if _, err := c.List(ctx, base); err == nil {
+		t.Error("bad JSON: no error")
+	}
+	status = http.StatusInternalServerError
+	if _, err := c.List(ctx, base); err == nil {
+		t.Error("HTTP 500: no error")
+	}
+
+	status, ctype, body = http.StatusOK, "image/png", "png"
+	ic, err := c.Icon(ctx, base, "a")
+	if err != nil || gotPath != "/api/v1/apps/a/icon" || ic.ContentType != "image/png" || ic.CacheControl != "max-age=3600" || string(ic.Body) != "png" {
+		t.Fatalf("icon %+v %v path %s", ic, err, gotPath)
+	}
+	status = http.StatusNotFound
+	if _, err := c.Icon(ctx, base, "a"); !errors.Is(err, ErrAppNotFound) {
+		t.Errorf("404: %v", err)
+	}
+	status, body = http.StatusOK, strings.Repeat("x", maxIconBytes+1)
+	if _, err := c.Icon(ctx, base, "a"); err == nil {
+		t.Error("oversized icon: no error")
 	}
 }
 
