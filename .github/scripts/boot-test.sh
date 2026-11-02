@@ -206,6 +206,7 @@ as_user rm /home/user/.config/home-manager/packages.nix "$decl" /home/user/.loca
 # An earlier starter flake had no nix.conf (any nix.conf makes the setup "customized").
 as_user rm /home/user/.config/nix/nix.conf
 as_user nix profile add --profile-backend profile nixpkgs#hello || fail "adding hello to the profile failed"
+since=$(docker exec desktop-boot date '+%Y-%m-%d %H:%M:%S')
 docker exec desktop-boot systemctl start webtop-home-manager
 for _ in $(seq 1 150); do
   [ "$(docker exec desktop-boot systemctl show -P ActiveState webtop-home-manager)" = active ] || break
@@ -220,7 +221,7 @@ as_user nix profile list --json | jq -e '.elements.hello.backend == "declaration
 as_user hello >/dev/null || fail "hello is not installed after the migration"
 # home-manager's own `nix profile` calls in that switch went through the profile backend quietly
 # (the deprecated `install` alias warning is stock Nix's).
-warns=$(docker exec desktop-boot journalctl -u webtop-home-manager --no-pager | grep 'warning:' \
+warns=$(docker exec desktop-boot journalctl -u webtop-home-manager --since "$since" --no-pager | grep 'warning:' \
   | grep -v "deprecated alias\|cache.invalid" || true)
 [ -z "$warns" ] || fail "nix profile warned during the switch: $warns"
 # A failing switch fails the unit and says so.
