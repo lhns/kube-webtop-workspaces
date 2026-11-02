@@ -1,6 +1,6 @@
 # Brings the user's home-manager setup to the image's (README, "Software"): creates the starter
 # flake once, moves an earlier starter flake and its `nix profile` packages to packages.json
-# (ADR 0011), relocks the image-registry inputs an image update left stale, and switches when
+# (ADR 0013), relocks the image-registry inputs an image update left stale, and switches when
 # any of that changed or the active generation did not survive the update.
 # Set by the caller: template_dir (rendered template), template_marker, known_flakes (sha256s of
 # earlier starter flake.nix files, user name replaced by @user@).

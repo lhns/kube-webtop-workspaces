@@ -1,4 +1,4 @@
-# Nix with `nix profile` backends (profile-backends.patch, ADR 0011). Only `nix profile` changes;
+# Nix with `nix profile` backends (profile-backends.patch, ADR 0013). Only `nix profile` changes;
 # its settings are client-side, the daemon (same binary) never reads them.
 { nixVersions }:
 

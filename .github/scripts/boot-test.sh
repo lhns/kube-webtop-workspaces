@@ -115,7 +115,7 @@ subst=$(docker exec desktop-boot /run/current-system/sw/bin/nix config show subs
 case $subst in *cache.nixos.org*http://cache.invalid/ci*) echo "substituters: $subst" ;;
   *) echo "::error::WEBTOP_NIX_EXTRA_SUBSTITUTERS not in nix.conf (substituters: $subst)"; exit 1 ;; esac
 
-# Software installation (ADR 0011): one declaration that `nix profile` edits.
+# Software installation (ADR 0013): one declaration that `nix profile` edits.
 fail() { echo "::error::$*"; exit 1; }
 as_user() { in_session env HOME=/home/user PATH=/home/user/.nix-profile/bin:/home/user/.local/state/nix/profiles/profile/bin:/run/current-system/sw/bin "$@"; }
 decl=/home/user/.config/home-manager/packages.json

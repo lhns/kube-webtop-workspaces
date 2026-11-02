@@ -50,7 +50,7 @@ Built from `flake.nix` with nix2container: `nix build .#image`, then
 | `image/nixos/hooks.nix` | agent units: power hook, session save, suspend, image-update restore and reinstall |
 | `image/nixos/home-manager.nix` | home-manager from the image (registry, CLI), the patched Nix, starter flake and migration unit, prebuilt generation |
 | `image/home-manager/` | the starter flake: `flake.nix`, `home.nix`, `packages.nix` (reads `packages.json`) |
-| `image/nix/` | Nix with `nix profile` backends (`profile-backends.patch`, ADR 0011) |
+| `image/nix/` | Nix with `nix profile` backends (`profile-backends.patch`, ADR 0013) |
 | `image/webtop-home-manager.sh` | creates or migrates the starter flake, relocks after image updates, switches |
 | `image/webtop-profile-hook.sh` | `profile-hook`: applies a changed `packages.json` with `home-manager switch` |
 | `image/webtop-nix-restore.sh` | copies the users' paths from the old store overlay into the new one |
@@ -91,7 +91,7 @@ tools from cache.nixos.org. A flake in a git repo ignores untracked files (`git 
 hook does `git add --intent-to-add packages.json`). After an image update the image-registry inputs are
 relocked automatically (`webtop-home-manager.service`, or the reinstall unit after an image update).
 
-**Software** (ADR 0011). One declaration, `~/.config/home-manager/packages.json`, which the
+**Software** (ADR 0013). One declaration, `~/.config/home-manager/packages.json`, which the
 starter flake's `packages.nix` installs and points `nix profile` at:
 
 | to | run |

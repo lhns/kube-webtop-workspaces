@@ -1,4 +1,4 @@
-# 0011 — Software installation: one declaration, patched `nix profile`
+# 0013 — Software installation: one declaration, patched `nix profile`
 
 - Status: Accepted
 - Date: 2026-11-02

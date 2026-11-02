@@ -1,4 +1,4 @@
-# profile-hook of the patched `nix profile` (ADR 0011): applies a changed packages.json with
+# profile-hook of the patched `nix profile` (ADR 0013): applies a changed packages.json with
 # home-manager. Exits 0 only once it is applied; on failure the previous generation is active again.
 
 # Profile changes, home-manager's own install of its generation included: nothing to apply. Must

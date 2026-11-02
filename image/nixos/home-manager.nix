@@ -1,6 +1,6 @@
 # home-manager for the desktop user: the image's copy resolves from the registry, a starter flake is
 # created on first boot, and its generation is prebuilt into the image. It also owns software
-# installation (ADR 0011): the patched `nix profile` records packages in the flake's packages.json.
+# installation (ADR 0013): the patched `nix profile` records packages in the flake's packages.json.
 { config, lib, pkgs, nixpkgs, home-manager, flake-registry, ... }:
 
 let
@@ -65,7 +65,7 @@ in
   });
   environment.systemPackages = [ hmPackage profileHook ];
 
-  # `nix profile` with backends (ADR 0011).
+  # `nix profile` with backends (ADR 0013).
   nix.package = nixpkgs.legacyPackages.${system}.callPackage ../nix { };
 
   # So `home-manager switch` of the unchanged template builds nothing: the generation and the news
@@ -78,7 +78,8 @@ in
     description = "Bring the user's home-manager setup to the image's";
     wantedBy = [ "multi-user.target" ];
     wants = [ "network-online.target" ];
-    after = [ "network-online.target" "nix-daemon.socket" "webtop-session.service" ];
+    # After webtop-home-manager-template.service where it exists (it refreshes starter files).
+    after = [ "network-online.target" "nix-daemon.socket" "webtop-session.service" "webtop-home-manager-template.service" ];
     unitConfig.ConditionPathExists = "!/persist/nix/reinstall/pending";
     environment = {
       DBUS_SESSION_BUS_ADDRESS = "unix:path=/run/user/${toString cfg.uid}/bus";
