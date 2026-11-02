@@ -266,3 +266,13 @@ func TestSelkiesDeterministicAndHashed(t *testing.T) {
 		t.Fatal("a setting change must change the hash")
 	}
 }
+
+func TestSelkiesTitleDropsFormatCharacters(t *testing.T) {
+	cfg := parse(t, "  title: '{{ .User }}'\n")
+	d := testDesktop()
+	// LRM, RLM, LRE..RLO (U+202A-E), isolates (U+2066-9), BOM, zero-width space.
+	d.Spec.User = string([]rune{0x200E, 0x200F, 'a', 0x202A, 0x202B, 0x202C, 0x202D, 0x202E, 'b', 0x2066, 0x2067, 0x2068, 0x2069, 0xFEFF, 0x200B, 'c'})
+	if got := selkiesEnvOf(t, cfg, d)["SELKIES_UI_TITLE"]; got != "abc" {
+		t.Fatalf("got %q", got)
+	}
+}

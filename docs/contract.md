@@ -260,7 +260,7 @@ before systemd starts; also `SELKIES_PORT=$WEBTOP_HTTP_PORT`, last) and leaves t
   `{{ ... }}` stays literal.
 - Values are one line. In the config, a key not matching `^SELKIES_[A-Z0-9_]+$`, `SELKIES_PORT`, or a
   value with a control character (CR, LF, tab, DEL, C1, U+2028/9), invalid UTF-8 or more than 256
-  characters is a config error. The rendered title is cleaned instead: control characters become
+  characters (or any Unicode format character, category Cf) is a config error. The rendered title is cleaned instead: format characters (bidi controls, zero-width, BOM) are dropped, control characters become
   spaces, it is cut to 256 characters.
 - The file is written double-quoted with `\` and `"` escaped; systemd does no `$` expansion. `webtop-init`
   also skips a variable whose value has a control character or exceeds 1024 bytes.

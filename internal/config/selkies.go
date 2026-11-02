@@ -52,11 +52,15 @@ func parseTitle(src string) (*template.Template, error) {
 	return template.New("title").Option("missingkey=error").Parse(src)
 }
 
-// SingleLine makes s safe for one KEY="value" line: invalid UTF-8 becomes U+FFFD, control
+// SingleLine makes s safe for one KEY="value" line: format characters (category Cf: bidi
+// controls, zero-width, BOM) are dropped, invalid UTF-8 becomes U+FFFD, control
 // characters (CR, LF, tab, DEL, C1) and the Unicode line separators become spaces, the ends are
 // trimmed, and it is cut to MaxSelkiesValueLen characters.
 func SingleLine(s string) string {
 	s = strings.Map(func(r rune) rune {
+		if unicode.Is(unicode.Cf, r) { // bidi overrides, zero-width, BOM: could spoof a title
+			return -1
+		}
 		if unicode.IsControl(r) || r == ' ' || r == ' ' {
 			return ' '
 		}
