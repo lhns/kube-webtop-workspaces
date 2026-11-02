@@ -27,6 +27,54 @@ type App struct {
 // iconNameRE is a themed icon name; no slash, so it cannot leave the icon directories.
 var iconNameRE = regexp.MustCompile(`^[A-Za-z0-9._+-]+$`)
 
+// guard decides which files the agent, which runs as root, may read on behalf of the gateway.
+// The user's ~/.local/share is user-controlled, so a symlink there could point at a root-only file.
+// A file is readable if, with symlinks resolved, it lies in the Nix store or in the user's own
+// data home (a link leaving that tree is refused).
+type guard struct{ roots []string }
+
+func (l *Launcher) newGuard() *guard {
+	g := &guard{}
+	store := l.StoreRoot
+	if store == "" {
+		store = "/nix/store"
+	}
+	if r, err := filepath.EvalSymlinks(store); err == nil {
+		g.roots = append(g.roots, r)
+	}
+	if l.Home != "" {
+		// ~/.local/share itself may be a link: it only counts if it stays inside the home.
+		home, err1 := filepath.EvalSymlinks(l.Home)
+		data, err2 := filepath.EvalSymlinks(filepath.Join(l.Home, ".local", "share"))
+		if err1 == nil && err2 == nil && within(home, data) {
+			g.roots = append(g.roots, data)
+		}
+	}
+	return g
+}
+
+func within(root, p string) bool {
+	rel, err := filepath.Rel(root, p)
+	return err == nil && filepath.IsLocal(rel)
+}
+
+// resolve returns p with symlinks resolved if that is a regular file the guard allows.
+func (g *guard) resolve(p string) (string, bool) {
+	r, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		return "", false
+	}
+	if st, err := os.Stat(r); err != nil || !st.Mode().IsRegular() {
+		return "", false
+	}
+	for _, root := range g.roots {
+		if within(root, r) {
+			return r, true
+		}
+	}
+	return "", false
+}
+
 // dataDirList is the user's data directories (Launcher.DataDirs if set).
 func (l *Launcher) dataDirList(ctx context.Context) []string {
 	if l.DataDirs != nil {
@@ -45,6 +93,7 @@ func (l *Launcher) dataDirList(ctx context.Context) []string {
 // find them either.
 func (l *Launcher) List(ctx context.Context) ([]App, error) {
 	dirs := l.dataDirList(ctx)
+	g := l.newGuard()
 	units, err := l.Session.ActiveUnits(ctx)
 	if err != nil {
 		log.Printf("apps: list running units: %v", err) // the list is still useful
@@ -61,7 +110,7 @@ func (l *Launcher) List(ctx context.Context) ([]App, error) {
 			if !ok || !NameRE.MatchString(id) || seen[id] {
 				continue
 			}
-			fields, ok := parseDesktop(filepath.Join(d, "applications", f.Name()))
+			fields, ok := parseDesktop(g, filepath.Join(d, "applications", f.Name()))
 			if !ok {
 				continue
 			}
@@ -69,7 +118,7 @@ func (l *Launcher) List(ctx context.Context) ([]App, error) {
 			if !listed(fields) {
 				continue
 			}
-			p, _ := resolveIcon(dirs, fields["Icon"])
+			p, _ := resolveIcon(g, dirs, fields["Icon"])
 			out = append(out, App{
 				ID: id, Name: fields["Name"], Icon: p != "",
 				Running: slices.ContainsFunc(units, func(u string) bool { return unitIsApp(u, id) }),
@@ -93,9 +142,10 @@ func (l *Launcher) Icon(ctx context.Context, name string) (string, string, error
 		return "", "", ErrInvalidName
 	}
 	dirs := l.dataDirList(ctx)
+	g := l.newGuard()
 	for _, d := range dirs {
-		if fields, ok := parseDesktop(filepath.Join(d, "applications", name+".desktop")); ok {
-			if p, ct := resolveIcon(dirs, fields["Icon"]); p != "" {
+		if fields, ok := parseDesktop(g, filepath.Join(d, "applications", name+".desktop")); ok {
+			if p, ct := resolveIcon(g, dirs, fields["Icon"]); p != "" {
 				return p, ct, nil
 			}
 			break
@@ -105,8 +155,12 @@ func (l *Launcher) Icon(ctx context.Context, name string) (string, string, error
 }
 
 // parseDesktop reads the unlocalized keys of the [Desktop Entry] group; ok is false if the file
-// cannot be read.
-func parseDesktop(file string) (map[string]string, bool) {
+// does not exist or the guard refuses it.
+func parseDesktop(g *guard, file string) (map[string]string, bool) {
+	file, ok := g.resolve(file)
+	if !ok {
+		return nil, false
+	}
 	f, err := os.Open(file)
 	if err != nil {
 		return nil, false
@@ -146,7 +200,7 @@ func listed(f map[string]string) bool {
 
 // resolveIcon finds the image file for an Icon= value: an absolute path inside a data dir, or a
 // name in the breeze/hicolor themes, then pixmaps. Only PNG and SVG files up to maxIcon count.
-func resolveIcon(dirs []string, icon string) (file, contentType string) {
+func resolveIcon(g *guard, dirs []string, icon string) (file, contentType string) {
 	if icon == "" {
 		return "", ""
 	}
@@ -154,7 +208,7 @@ func resolveIcon(dirs []string, icon string) (file, contentType string) {
 		icon = filepath.Clean(icon)
 		for _, d := range dirs {
 			if rel, err := filepath.Rel(d, icon); err == nil && filepath.IsLocal(rel) {
-				return iconFile(icon)
+				return iconFile(g, icon)
 			}
 		}
 		return "", ""
@@ -166,14 +220,14 @@ func resolveIcon(dirs []string, icon string) (file, contentType string) {
 		for _, theme := range []string{"breeze", "hicolor"} {
 			for _, size := range []string{"scalable", "256x256", "128x128", "64x64", "48x48"} {
 				for _, ext := range []string{".svg", ".png"} {
-					if f, ct := iconFile(filepath.Join(d, "icons", theme, size, "apps", icon+ext)); f != "" {
+					if f, ct := iconFile(g, filepath.Join(d, "icons", theme, size, "apps", icon+ext)); f != "" {
 						return f, ct
 					}
 				}
 			}
 		}
 		for _, ext := range []string{".svg", ".png"} {
-			if f, ct := iconFile(filepath.Join(d, "pixmaps", icon+ext)); f != "" {
+			if f, ct := iconFile(g, filepath.Join(d, "pixmaps", icon+ext)); f != "" {
 				return f, ct
 			}
 		}
@@ -181,7 +235,7 @@ func resolveIcon(dirs []string, icon string) (file, contentType string) {
 	return "", ""
 }
 
-func iconFile(p string) (string, string) {
+func iconFile(g *guard, p string) (string, string) {
 	var ct string
 	switch strings.ToLower(filepath.Ext(p)) {
 	case ".svg":
@@ -191,7 +245,11 @@ func iconFile(p string) (string, string) {
 	default:
 		return "", ""
 	}
-	if st, err := os.Stat(p); err != nil || !st.Mode().IsRegular() || st.Size() == 0 || st.Size() > maxIcon {
+	p, ok := g.resolve(p)
+	if !ok {
+		return "", ""
+	}
+	if st, err := os.Stat(p); err != nil || st.Size() == 0 || st.Size() > maxIcon {
 		return "", ""
 	}
 	return p, ct

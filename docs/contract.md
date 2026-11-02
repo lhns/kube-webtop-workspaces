@@ -466,6 +466,11 @@ absolute path (served only if it is inside one of the data dirs) or a name, sear
 `<datadir>/pixmaps/<icon>.{svg,png}`. Files over 1 MiB, empty files and other formats (XPM, SVGZ) are
 ignored.
 
+The agent runs as root and `~/.local/share` is the user's, so both endpoints read a desktop or icon
+file only if, with symlinks resolved, it is a regular file in the Nix store (`/nix/store`) or inside
+the user's own `~/.local/share` (itself resolved inside the home). A link leading anywhere else is
+ignored.
+
 `GET /healthz` answers `ok`.
 
 ## 8. Power/report API (controller, every replica)

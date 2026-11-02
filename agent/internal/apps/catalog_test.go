@@ -31,7 +31,8 @@ func entry(name, extra string) string {
 
 func catalog(t *testing.T) (*Launcher, string, string) {
 	t.Helper()
-	user, sys := t.TempDir(), t.TempDir()
+	home, sys := t.TempDir(), t.TempDir() // sys stands in for the Nix store
+	user := filepath.Join(home, ".local", "share")
 	apps := func(d, f, body string) { write(t, d, "applications", f, body) }
 	apps(sys, "org.kde.dolphin.desktop", entry("Dolphin", "Icon=system-file-manager"))
 	apps(sys, "firefox.desktop", entry("firefox", "Icon=firefox"))
@@ -49,7 +50,7 @@ func catalog(t *testing.T) (*Launcher, string, string) {
 	write(t, sys, "icons", "hicolor", "48x48", "apps", "firefox.png", "png")
 	write(t, sys, "icons", "breeze", "scalable", "apps", "system-file-manager.svg", "<svg/>")
 	f := &fakeSession{units: "app-org.kde.dolphin@abc.service loaded active\napp-kate-1234.scope loaded active\n"}
-	return &Launcher{Session: f, DataDirs: []string{user, sys}}, user, sys
+	return &Launcher{Session: f, DataDirs: []string{user, sys}, Home: home, StoreRoot: sys}, user, sys
 }
 
 func TestListFiltersSortsAndPrefersEarlierDirs(t *testing.T) {
@@ -97,6 +98,7 @@ func TestResolveIcon(t *testing.T) {
 	write(t, d, "app", "abs.xpm", "x")
 	write(t, outside, "secret.png", "x")
 	dirs := []string{d}
+	g := (&Launcher{StoreRoot: d}).newGuard()
 	for _, c := range []struct{ icon, file, ct string }{
 		{"small", "icons/hicolor/256x256/apps/small.png", "image/png"},
 		{"both", "icons/breeze/scalable/apps/both.svg", "image/svg+xml"},
@@ -112,7 +114,7 @@ func TestResolveIcon(t *testing.T) {
 		{filepath.Join(d, "app", "..", "..", "x", "secret.png"), "", ""},
 		{filepath.Join(outside, "secret.png"), "", ""},
 	} {
-		file, ct := resolveIcon(dirs, c.icon)
+		file, ct := resolveIcon(g, dirs, c.icon)
 		want := ""
 		if c.file != "" {
 			want = filepath.Join(d, filepath.FromSlash(c.file))
@@ -156,5 +158,86 @@ func TestListAndIconHandlers(t *testing.T) {
 	write(t, sys, "applications", "hidden.desktop", entry("Hidden", "NoDisplay=true\nIcon=hidden"))
 	if rec := get("/api/v1/apps/hidden/icon"); rec.Code != 200 {
 		t.Errorf("hidden entry icon: %d", rec.Code)
+	}
+}
+
+func link(t *testing.T, target, name string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, name); err != nil {
+		t.Skipf("no symlinks: %v", err)
+	}
+}
+
+// The agent runs as root and ~/.local/share belongs to the user: links out of it must not be followed.
+func TestSymlinksOutOfTheUserTreeAreRefused(t *testing.T) {
+	l, user, _ := catalog(t)
+	secret := write(t, t.TempDir(), "secret.png", "root only")
+	secretDesktop := write(t, t.TempDir(), "secret.desktop", entry("Leaked", "Icon=leak"))
+	link(t, secret, filepath.Join(user, "icons", "hicolor", "48x48", "apps", "leak.png"))
+	link(t, secret, filepath.Join(user, "pixmaps", "abs.png"))
+	link(t, secretDesktop, filepath.Join(user, "applications", "leak.desktop"))
+	write(t, user, "applications", "viaabs.desktop", entry("Via abs", "Icon="+filepath.Join(user, "pixmaps", "abs.png")))
+	write(t, user, "applications", "viaicon.desktop", entry("Via icon", "Icon=leak"))
+	// A user dir that is itself a link to somewhere else is refused as a whole.
+	elsewhere := t.TempDir()
+	write(t, elsewhere, "applications", "evil.desktop", entry("Evil", ""))
+
+	got, err := l.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range got {
+		if a.ID == "leak" || a.Name == "Leaked" {
+			t.Errorf("listed a desktop file reached through a link out of the user tree: %+v", a)
+		}
+		if (a.ID == "viaabs" || a.ID == "viaicon") && a.Icon {
+			t.Errorf("%s: icon resolved through a link out of the user tree", a.ID)
+		}
+	}
+	for _, id := range []string{"viaabs", "viaicon"} {
+		if p, _, err := l.Icon(context.Background(), id); err == nil {
+			t.Errorf("%s: served %s", id, p)
+		}
+	}
+
+	// Links inside the user tree are fine.
+	write(t, user, "pixmaps", "real.png", "x")
+	link(t, filepath.Join(user, "pixmaps", "real.png"), filepath.Join(user, "pixmaps", "alias.png"))
+	write(t, user, "applications", "alias.desktop", entry("Alias", "Icon=alias"))
+	if p, _, err := l.Icon(context.Background(), "alias"); err != nil || filepath.Base(p) != "real.png" {
+		t.Errorf("link inside the user tree: %q %v", p, err)
+	}
+
+	// The whole user data home redirected out of the home is not trusted.
+	home2 := t.TempDir()
+	link(t, elsewhere, filepath.Join(home2, ".local", "share"))
+	l2 := &Launcher{Session: &fakeSession{}, DataDirs: []string{filepath.Join(home2, ".local", "share")}, Home: home2, StoreRoot: t.TempDir()}
+	if got, _ := l2.List(context.Background()); len(got) != 0 {
+		t.Errorf("redirected data home was read: %+v", got)
+	}
+}
+
+// A Nix profile is a farm of links into the store: those are accepted.
+func TestStoreSymlinkFarmIsAccepted(t *testing.T) {
+	store, profile, home := t.TempDir(), t.TempDir(), t.TempDir()
+	write(t, store, "pkg", "share", "applications", "farm.desktop", entry("Farm", "Icon=farm"))
+	write(t, store, "pkg", "share", "icons", "hicolor", "48x48", "apps", "farm.png", "x")
+	link(t, filepath.Join(store, "pkg", "share", "applications", "farm.desktop"), filepath.Join(profile, "applications", "farm.desktop"))
+	link(t, filepath.Join(store, "pkg", "share", "icons"), filepath.Join(profile, "icons"))
+	l := &Launcher{Session: &fakeSession{}, DataDirs: []string{profile}, Home: home, StoreRoot: store}
+	got, err := l.List(context.Background())
+	if err != nil || len(got) != 1 || got[0].ID != "farm" || !got[0].Icon {
+		t.Fatalf("got %+v %v", got, err)
+	}
+	if _, ct, err := l.Icon(context.Background(), "farm"); err != nil || ct != "image/png" {
+		t.Errorf("icon: %q %v", ct, err)
+	}
+	// The same farm pointing outside the store is refused.
+	l.StoreRoot = t.TempDir()
+	if got, _ := l.List(context.Background()); len(got) != 0 {
+		t.Errorf("farm outside the store listed: %+v", got)
 	}
 }

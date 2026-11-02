@@ -57,6 +57,8 @@ type Launcher struct {
 	Exists func(path string) bool
 	// DataDirs overrides the data directories (tests); nil derives them from the user manager.
 	DataDirs []string
+	// StoreRoot is the Nix store whose files may be served (default /nix/store).
+	StoreRoot string
 
 	mu sync.Mutex
 }
