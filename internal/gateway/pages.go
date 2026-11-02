@@ -25,10 +25,11 @@ type pageData struct {
 	// EventsURL and StartURL are escaped paths; html/template escapes them per context.
 	EventsURL string
 	StartURL  string
+	WakeURL   string
 	Reason    string
 	StoppedAt time.Time // zero: not shown
 	CSRF      string
-	App       string // off page: the app to return to after Start (appsOverview for the overview), empty for the desktop
+	App       string // off and asleep pages: the app to return to after Start (appsOverview for the overview), empty for the desktop
 	Apps      []appView
 	Wide      bool // the main card is wide (overview)
 }

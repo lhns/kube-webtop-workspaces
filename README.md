@@ -10,7 +10,7 @@ One Go binary (`cmd/kube-webtop-workspaces`), run as two Deployments:
 
 - **gateway** (`--mode=gateway`): sits behind a forward-auth proxy that sets the user and groups
   headers. It reverse-proxies each user to their own desktop (HTTP and websockets), starts it on a
-  top-level navigation, and serves the boot screen and the "desktop is off" page. Admins can open any
+  top-level navigation, and serves the boot screen, the "desktop is off" page and, after Sleep, a "desktop is asleep" page with a Wake button. Admins can open any
   desktop at `/u/<user>/`.
 - **single apps**: `/apps/<name>` (or `/u/<user>/apps/<name>` for admins) streams one application
   of the desktop instead of the whole desktop, where `<name>` is a desktop file id such as
