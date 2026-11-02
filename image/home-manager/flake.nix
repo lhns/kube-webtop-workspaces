@@ -11,7 +11,7 @@
   outputs = { nixpkgs, home-manager, ... }: {
     homeConfigurations."@user@" = home-manager.lib.homeManagerConfiguration {
       pkgs = nixpkgs.legacyPackages.x86_64-linux;
-      # packages.nix: what `nix profile add` and the software center install (packages.json).
+      # packages.nix: what `nix profile add` installs (packages.json).
       modules = [ ./home.nix ./packages.nix ];
     };
   };

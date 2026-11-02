@@ -6,8 +6,12 @@
 [ "${NIX_PROFILE_BACKEND:-}" = declaration ] || exit 0
 
 dir=$(dirname "$NIX_PROFILE_DECLARATION")
-# A flake in a git repo ignores untracked files.
+# A flake in a git repo (its own, or a dotfiles repo around it) sees only files git knows.
 if git -C "$dir" rev-parse --git-dir >/dev/null 2>&1; then
+  if git -C "$dir" check-ignore -q -- "$NIX_PROFILE_DECLARATION"; then
+    echo "webtop-profile-hook: git ignores $NIX_PROFILE_DECLARATION, so the flake cannot read it; un-ignore it" >&2
+    exit 1
+  fi
   git -C "$dir" add --intent-to-add -- "$NIX_PROFILE_DECLARATION"
 fi
 

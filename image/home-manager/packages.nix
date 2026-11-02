@@ -4,7 +4,9 @@
 
 let
   system = pkgs.stdenv.hostPlatform.system;
-  attrPath = e: lib.splitString "." e.attrPath;
+  # "a.b.\"c.d\"" -> [ "a" "b" "c.d" ]: quoted segments may contain dots.
+  attrPath = e: map (m: lib.removePrefix "\"" (lib.removeSuffix "\"" (lib.head m)))
+    (lib.filter lib.isList (builtins.split ''("[^"]*"|[^."]+)'' e.attrPath));
   # flake:nixpkgs entries use this configuration's nixpkgs (the image's); others their locked flake.
   fromNixpkgs = e:
     let p = attrPath e;
@@ -22,7 +24,11 @@ in
   home.packages = lib.concatMap package (lib.attrValues (lib.importJSON ./packages.json).elements);
 
   # Not nix.settings: home-manager validates those with nix.package, which would have to be the
-  # image's patched Nix. Moving them there needs that, or the file conflicts with nix.settings.
+  # image's patched Nix, and its nix.conf would replace this one.
+  assertions = [{
+    assertion = config.nix.settings == { } && config.nix.extraOptions == "";
+    message = "packages.nix writes ~/.config/nix/nix.conf: put further Nix settings into its text, or drop the module.";
+  }];
   xdg.configFile."nix/nix.conf".text = ''
     profile-backend = declaration:${config.xdg.configHome}/home-manager/packages.json
     profile-hook = /run/current-system/sw/bin/webtop-profile-hook

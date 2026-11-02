@@ -25,7 +25,8 @@ separately from home-manager, and nothing showed one list of what the user insta
   `add` resolves and builds flake installables and records them in the file, `remove`/`upgrade`
   edit it, `list` shows it together with the profile's undeclared elements (marked, stock format).
   Store paths and undeclared elements go to the profile as before, which is what home-manager's
-  own activation does, so any home-manager version works unmodified.
+  own activation does, so any home-manager version works unmodified. A command that changes both
+  is reverted as a whole if either fails; `--all`/`--regex` match the file only.
 - **A hook applies changes.** `profile-hook` runs after every change, in either backend; if it
   fails, the change is reverted (the file's previous contents, or the profile's previous
   generation). It must exit 0 only once the change is fully applied; it is required for the

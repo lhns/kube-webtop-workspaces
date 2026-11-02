@@ -12,6 +12,8 @@ migrated_marker=$state/webtop/packages-json
 switch=
 migrating=
 
+# The notifications run in the background; the unit's cgroup ends with this script.
+trap wait EXIT
 notify() {
   # Best effort and in the background: Plasma's notification server may not be up yet.
   (for _ in $(seq 1 12); do
@@ -32,14 +34,14 @@ if [ ! -e "$hm" ] && [ ! -e "$template_marker" ]; then
 fi
 
 # An earlier starter flake (unmodified apart from the user name) gains packages.nix; its
-# `nix profile` packages move into packages.json. Anything else is left alone, once notified.
+# `nix profile` packages move into packages.json. Anything else is left alone, once notified; so is
+# any ~/.config/nix/nix.conf, which packages.nix would have to own.
 if [ -f "$hm/flake.nix" ] && [ ! -e "$hm/packages.json" ] && [ ! -e "$migrated_marker" ]; then
   mkdir -p "$(dirname "$migrated_marker")"
   attr=$(grep -oE 'homeConfigurations\."[^"]*"' "$hm/flake.nix" | head -n1 || true)
   sum=$(sed -E 's/homeConfigurations\."[^"]*"/homeConfigurations."@user@"/' "$hm/flake.nix" | sha256sum | cut -d' ' -f1)
   conf=$HOME/.config/nix/nix.conf
-  if [ -n "$attr" ] && grep -qx "$sum" <<<"$known_flakes" \
-    && { [ ! -e "$conf" ] || [[ "$(readlink -f "$conf")" == /nix/store/* ]]; }; then
+  if [ -n "$attr" ] && grep -qx "$sum" <<<"$known_flakes" && [ ! -e "$conf" ] && [ ! -L "$conf" ]; then
     echo "moving the starter flake to packages.json"
     backup=$state/webtop/home-manager-before-packages-json
     rm -rf "$backup" && mkdir -p "$backup"
@@ -96,18 +98,22 @@ fi
 
 if [ -z "$switch" ] || [ ! -f "$hm/flake.nix" ]; then exit 0; fi
 echo "home-manager switch --flake $hm"
-if home-manager switch --flake "$hm"; then
+rc=0
+home-manager switch --flake "$hm" || rc=$?
+if [ "$rc" = 0 ]; then
   if [ -n "$migrating" ]; then
-    notify "Software installation" "Your ${#moved[@]} nix profile package(s) are now declared in ~/.config/home-manager/packages.json; nix profile and the software center edit that file."
+    notify "Software installation" "Your ${#moved[@]} nix profile package(s) are now declared in ~/.config/home-manager/packages.json; nix profile edits that file."
   fi
   exit 0
 fi
-rc=$?
+echo "home-manager switch failed (exit $rc)"
 if [ -n "$migrating" ]; then
-  echo "switch failed: restoring the previous flake and nix profile"
+  echo "restoring the previous flake and nix profile"
   cp -a "$backup/." "$hm/"
   rm -f "$hm/packages.nix" "$hm/packages.json" "$migrated_marker"
   if [ -n "$profile_gen" ]; then ln -sfn "$profile_gen" "$state/nix/profiles/profile"; fi
   notify "Software installation" "Moving your packages to packages.json failed and was undone; see: journalctl -u webtop-home-manager"
+else
+  notify "home-manager switch failed" "See: journalctl -u webtop-home-manager"
 fi
 exit "$rc"

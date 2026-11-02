@@ -97,7 +97,7 @@ starter flake's `packages.nix` installs and points `nix profile` at:
 | to | run |
 | --- | --- |
 | install | `nix profile add nixpkgs#hello` (any flake installable) |
-| remove | `nix profile remove hello` (names, `--regex`, `--all`) |
+| remove | `nix profile remove hello` (names and store paths; `--regex` and `--all` match packages.json only) |
 | list | `nix profile list` (declared packages, then undeclared profile elements, marked `Backend:`) |
 | upgrade | `nix profile upgrade --all`: relocks packages from other flakes; nixpkgs ones follow the image |
 | undo | `nix profile history`, `nix profile rollback [--to N]`: versions of packages.json only |
@@ -108,8 +108,10 @@ Nix is patched (`image/nix/`): with `profile-backend = declaration:<file>` (set 
 file the way `manifest.json` records an element, then runs `profile-hook`
 (`webtop-profile-hook`: `home-manager switch`); if the hook fails the file is restored. Store
 paths and elements the file does not declare stay in the profile as before (home-manager's own
-generation is one); `--profile-backend profile` or `--profile <path>` gives stock behaviour for one
-call. Packages in `home.nix` work as before. KDE add-ons from Plasma's "Get New…" dialogs live in
+generation is one); a profile element of the same name moves into the file when added. If any part
+of a command fails, all of it is reverted. `--profile-backend profile` or `--profile <path>` gives
+stock behaviour for one call. Entries are locked: a package from a local `path:` flake picks up edits only with
+`nix profile upgrade`. Packages in `home.nix` work as before. KDE add-ons from Plasma's "Get New…" dialogs live in
 `~/.local/share`, outside the declaration; there is no Discover.
 
 An earlier starter flake (unmodified apart from the user name) is migrated once at boot:

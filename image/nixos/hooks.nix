@@ -61,6 +61,11 @@ let
         done
       }
 
+      # The declaration's versions (ADR 0013) are only a history; dangling ones are moved aside.
+      if [ -L "$profiles/declaration" ] && [ ! -e "$profiles/declaration" ]; then
+        aside "$profiles/declaration" "$profiles"/declaration-*-link
+      fi
+
       p="$profiles/profile"
       manifest="$r/$USER.manifest.json"
       if [ -L "$p" ] && [ -e "$p" ]; then

@@ -169,6 +169,15 @@ as_user nix profile remove jq || fail "removing the store path failed"
 [ "$(as_user sha256sum "$decl")" = "$sum" ] || fail "a profile backend changed packages.json"
 out=$(as_user nix profile list --profile /tmp/ci-profile --profile-backend profile 2>&1 || true)
 grep -q 'cannot be used together' <<<"$out" || fail "--profile with --profile-backend was accepted: $out"
+# A profile element of the same name moves into the declaration.
+as_user nix profile add --profile-backend profile "$jqpath" || fail "adding jq to the profile failed"
+as_user nix profile add nixpkgs#jq || fail "adding nixpkgs#jq failed"
+as_user jq -e '.elements.jq' "$decl" >/dev/null || fail "jq is not declared"
+! as_user nix profile list --profile-backend profile --json | jq -e '.elements.jq' >/dev/null || fail "jq is still in the profile"
+as_user nix profile remove jq >/dev/null || fail "removing the declared jq failed"
+# --all matches the declaration only: upgrade leaves home-manager-path alone.
+out=$(as_user nix profile upgrade --all 2>&1) || fail "nix profile upgrade --all failed: $out"
+! grep -q 'home-manager-path' <<<"$out" || fail "upgrade --all reached the profile: $out"
 # Migration of an earlier starter flake (webtop-home-manager): its `nix profile` flake packages move
 # into packages.json.
 as_user nix profile remove hello >/dev/null || fail "nix profile remove hello failed"
@@ -194,6 +203,8 @@ FLAKE
 # Not docker cp: /home is a bind mount inside the container, which docker cp does not see.
 as_user sh -c "echo $(base64 -w0 "$dir/flake.nix") | base64 -d > /home/user/.config/home-manager/flake.nix"
 as_user rm /home/user/.config/home-manager/packages.nix "$decl" /home/user/.local/state/webtop/packages-json
+# An earlier starter flake had no nix.conf (any nix.conf makes the setup "customized").
+as_user rm /home/user/.config/nix/nix.conf
 as_user nix profile add --profile-backend profile nixpkgs#hello || fail "adding hello to the profile failed"
 docker exec desktop-boot systemctl start webtop-home-manager
 for _ in $(seq 1 150); do
@@ -207,5 +218,25 @@ as_user grep -q 'packages.nix' /home/user/.config/home-manager/flake.nix || fail
 as_user nix profile list --json | jq -e '.elements.hello.backend == "declaration" and (.elements["hello-1"] == null)' >/dev/null \
   || fail "hello is not (only) declared after the migration: $(as_user nix profile list --json)"
 as_user hello >/dev/null || fail "hello is not installed after the migration"
+# home-manager's own `nix profile` calls in that switch went through the profile backend quietly
+# (the deprecated `install` alias warning is stock Nix's).
+warns=$(docker exec desktop-boot journalctl -u webtop-home-manager --no-pager | grep 'warning:' \
+  | grep -v "deprecated alias\|cache.invalid" || true)
+[ -z "$warns" ] || fail "nix profile warned during the switch: $warns"
+# A failing switch fails the unit and says so.
+as_user sh -c "cp $decl /tmp/decl.bak && jq '.elements.broken = {originalUrl: \"flake:nixpkgs\", attrPath: \"legacyPackages.x86_64-linux.noSuchPackageCi\"}' /tmp/decl.bak > $decl"
+gen=/home/user/.local/state/nix/profiles/home-manager
+link=$(as_user readlink "$gen")
+as_user ln -sfn /nix/store/00000000000000000000000000000000-gone "$gen"
+docker exec desktop-boot systemctl start webtop-home-manager
+for _ in $(seq 1 150); do
+  [ "$(docker exec desktop-boot systemctl show -P ActiveState webtop-home-manager)" = active ] || break
+  sleep 2
+done
+[ "$(docker exec desktop-boot systemctl show -P Result webtop-home-manager)" = exit-code ] || fail "a failing switch did not fail the unit"
+docker exec desktop-boot journalctl -u webtop-home-manager --no-pager | grep -q 'home-manager switch failed' \
+  || fail "a failing switch was not reported"
+as_user cp /tmp/decl.bak "$decl"
+as_user ln -sfn "$link" "$gen"
 echo "software installation: ok"
 echo "boot test passed"
