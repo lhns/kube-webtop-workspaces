@@ -125,7 +125,9 @@ as_user home-manager switch --flake /home/user/.config/home-manager >/dev/null |
 as_user nix profile remove hello || fail "nix profile remove hello failed"
 ! as_user jq -e '.elements.hello' "$decl" >/dev/null || fail "hello is still in packages.json"
 ! as_user sh -c 'command -v hello' >/dev/null || fail "hello is still installed"
-as_user nix profile history | grep -q 'hello' || fail "nix profile history does not show hello"
+# Not piped into grep -q: with pipefail, nix dying of SIGPIPE fails the pipeline.
+out=$(as_user nix profile history)
+grep -q 'hello' <<<"$out" || fail "nix profile history does not show hello: $out"
 as_user nix profile rollback || fail "nix profile rollback failed"
 as_user hello >/dev/null || fail "rollback did not bring hello back"
 sum=$(as_user sha256sum "$decl")
