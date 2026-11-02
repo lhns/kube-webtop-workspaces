@@ -147,5 +147,43 @@ as_user nix profile remove jq || fail "removing the store path failed"
 [ "$(as_user sha256sum "$decl")" = "$sum" ] || fail "a profile backend changed packages.json"
 out=$(as_user nix profile list --profile /tmp/ci-profile --profile-backend profile 2>&1 || true)
 grep -q 'cannot be used together' <<<"$out" || fail "--profile with --profile-backend was accepted: $out"
+# Migration of an earlier starter flake (webtop-home-manager): its `nix profile` flake packages move
+# into packages.json.
+as_user nix profile remove hello >/dev/null || fail "nix profile remove hello failed"
+cat > "$dir/flake.nix" <<'FLAKE'
+{
+  inputs = {
+    # nixpkgs and home-manager are the image's (its flake registry): no download; relocked after image updates.
+    nixpkgs.url = "nixpkgs";
+    home-manager = {
+      url = "home-manager";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+  };
+
+  outputs = { nixpkgs, home-manager, ... }: {
+    homeConfigurations."user" = home-manager.lib.homeManagerConfiguration {
+      pkgs = nixpkgs.legacyPackages.x86_64-linux;
+      modules = [ ./home.nix ];
+    };
+  };
+}
+FLAKE
+docker cp "$dir/flake.nix" desktop-boot:/home/user/.config/home-manager/flake.nix
+docker exec desktop-boot chown 1000 /home/user/.config/home-manager/flake.nix
+as_user rm /home/user/.config/home-manager/packages.nix "$decl" /home/user/.local/state/webtop/packages-json
+as_user nix profile add --profile-backend profile nixpkgs#hello || fail "adding hello to the profile failed"
+docker exec desktop-boot systemctl start webtop-home-manager
+for _ in $(seq 1 150); do
+  [ "$(docker exec desktop-boot systemctl show -P ActiveState webtop-home-manager)" = active ] || break
+  sleep 2
+done
+[ "$(docker exec desktop-boot systemctl show -P Result webtop-home-manager)" = success ] \
+  || { docker exec desktop-boot journalctl -u webtop-home-manager --no-pager | tail -n 50; fail "the migration failed"; }
+as_user jq -e '.elements.hello.originalUrl == "flake:nixpkgs"' "$decl" >/dev/null || fail "the migration did not declare hello"
+as_user grep -q 'packages.nix' /home/user/.config/home-manager/flake.nix || fail "the migration did not add packages.nix"
+as_user nix profile list --json | jq -e '.elements.hello.backend == "declaration" and (.elements["hello-1"] == null)' >/dev/null \
+  || fail "hello is not (only) declared after the migration: $(as_user nix profile list --json)"
+as_user hello >/dev/null || fail "hello is not installed after the migration"
 echo "software installation: ok"
 echo "boot test passed"
