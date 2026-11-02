@@ -125,7 +125,7 @@ The template is written for the login name; its generation is prebuilt for the p
 first switch builds the few derivations that carry the name. Building a changed config may substitute build
 tools from cache.nixos.org. A flake in a git repo ignores untracked files (`git add` them; the profile
 hook does `git add --intent-to-add packages.json`). After an image update the image-registry inputs are
-relocked automatically (`webtop-home-manager.service`, or the reinstall unit after an image update).
+relocked automatically (`webtop-home-manager`, which the reinstall unit runs).
 
 **Software** (ADR 0013). One declaration, `~/.config/home-manager/packages.json`, which the
 starter flake's `packages.nix` installs and points `nix profile` at:

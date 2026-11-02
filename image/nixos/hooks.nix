@@ -49,7 +49,8 @@ let
     runtimeInputs = with pkgs; [ coreutils gnused jq config.nix.package libnotify ];
     text = ''
       r=/persist/nix/reinstall
-      export DBUS_SESSION_BUS_ADDRESS=${userBus}
+      # As webtop-home-manager.service has them, for the setup script it runs.
+      export DBUS_SESSION_BUS_ADDRESS=${userBus} XDG_RUNTIME_DIR=/run/user/${uid}
       ${notifyFn}
       failed=0
       profiles="$HOME/.local/state/nix/profiles"

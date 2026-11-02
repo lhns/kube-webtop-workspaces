@@ -173,14 +173,19 @@ grep -qF '"loginName":"ci","homePaths":["/home/ci","/home/user"]' "$reports" \
   || { echo "::error::the agent did not report the login name and home paths"; exit 1; }
 
 # Software installation (ADR 0013): one declaration that `nix profile` edits. First the setup unit
-# (after the template unit) imports and switches; the checks below follow.
+# (after the template unit) switches to the new starter flake; the checks below follow.
 fail() { echo "::error::$*"; exit 1; }
 as_user() { in_session env HOME=/home/ci PATH=/home/ci/.nix-profile/bin:/home/ci/.local/state/nix/profiles/profile/bin:/run/current-system/sw/bin "$@"; }
+unit_prop() { docker exec desktop-boot systemctl show -P "$1" webtop-home-manager; }
+# Until the setup unit's run ends; a unit that has not run yet also has Result=success.
+wait_setup() {
+  for _ in $(seq 1 150); do
+    [ "$(unit_prop ActiveState)" = active ] || [ "$(unit_prop ExecMainExitTimestampMonotonic)" = 0 ] || return 0
+    sleep 2
+  done
+}
 decl=/home/ci/.config/home-manager/packages.json
-for _ in $(seq 1 150); do
-  [ "$(docker exec desktop-boot systemctl show -P ActiveState webtop-home-manager)" = active ] || break
-  sleep 2
-done
+wait_setup
 [ "$(docker exec desktop-boot systemctl show -P Result webtop-home-manager)" = success ] \
   || { docker exec desktop-boot journalctl -u webtop-home-manager --no-pager | tail -n 50; fail "webtop-home-manager failed"; }
 # The starter flake written for `user` now names ci, and switches.
@@ -188,10 +193,8 @@ grep -qF 'homeConfigurations."ci"' "$hm/flake.nix" \
   && grep -qF 'home.username = "ci";' "$hm/home.nix" \
   && grep -qF 'home.homeDirectory = "/home/ci";' "$hm/home.nix" \
   || { echo "::error::the home-manager template does not name ci"; cat "$hm/home.nix"; exit 1; }
-start_hm=$(date +%s)
-docker exec desktop-boot timeout 900 runuser -l ci -c 'home-manager switch --flake ~/.config/home-manager' 2>&1 | tail -n 20 \
-  || { echo "::error::home-manager switch failed"; exit 1; }
-echo "home-manager switch took $(($(date +%s) - start_hm)) s"
+as_user test -e /home/ci/.local/state/nix/profiles/home-manager || fail "the setup unit did not switch"
+echo "home-manager switch took $((($(unit_prop ExecMainExitTimestampMonotonic) - $(unit_prop ExecMainStartTimestampMonotonic)) / 1000000)) s"
 echo "identity: $pw; /home: $homes"
 ! docker exec desktop-boot sh -c 'command -v discover' || fail "Discover is installed"
 docker exec desktop-boot sh -c 'nix-store -qR /run/current-system | grep -q -- -knewstuff-' || fail "KNewStuff is not in the system"
@@ -326,10 +329,7 @@ docker exec desktop-boot systemctl restart webtop-home-manager-template
 docker exec desktop-boot journalctl -u webtop-home-manager-template --since "$since" -o cat | grep -q 'rewrote the starter flake' \
   || fail "the template unit did not rewrite the earlier flake"
 docker exec desktop-boot systemctl start webtop-home-manager
-for _ in $(seq 1 150); do
-  [ "$(docker exec desktop-boot systemctl show -P ActiveState webtop-home-manager)" = active ] || break
-  sleep 2
-done
+wait_setup
 [ "$(docker exec desktop-boot systemctl show -P Result webtop-home-manager)" = success ] \
   || { docker exec desktop-boot journalctl -u webtop-home-manager --no-pager | tail -n 50; fail "the migration failed"; }
 as_user jq -e '.elements.hello.originalUrl == "flake:nixpkgs"' "$decl" >/dev/null || fail "the migration did not declare hello"
@@ -349,14 +349,26 @@ gen=/home/ci/.local/state/nix/profiles/home-manager
 link=$(as_user readlink "$gen")
 as_user ln -sfn /nix/store/00000000000000000000000000000000-gone "$gen"
 docker exec desktop-boot systemctl start webtop-home-manager
-for _ in $(seq 1 150); do
-  [ "$(docker exec desktop-boot systemctl show -P ActiveState webtop-home-manager)" = active ] || break
-  sleep 2
-done
+wait_setup
 [ "$(docker exec desktop-boot systemctl show -P Result webtop-home-manager)" = exit-code ] || fail "a failing switch did not fail the unit"
 docker exec desktop-boot journalctl -u webtop-home-manager --no-pager | grep -q 'home-manager switch failed' \
   || fail "a failing switch was not reported"
 as_user cp /tmp/decl.bak "$decl"
 as_user ln -sfn "$link" "$gen"
+# A setup with a nix.conf of its own gets the rename only, and only once.
+as_user sh -c "echo $(base64 -w0 "$dir/legacy-flake.nix") | base64 -d > /home/ci/.config/home-manager/flake.nix"
+as_user rm /home/ci/.config/home-manager/packages.nix
+as_user sh -c 'rm -f /home/ci/.config/nix/nix.conf && echo "# own" > /home/ci/.config/nix/nix.conf'
+for run in 1 2; do
+  since=$(docker exec desktop-boot date '+%Y-%m-%d %H:%M:%S')
+  docker exec desktop-boot systemctl restart webtop-home-manager-template
+  out=$(docker exec desktop-boot journalctl -u webtop-home-manager-template --since "$since" -o cat)
+  case $run in
+    1) grep -q 'kept without packages.nix' <<<"$out" || fail "an own nix.conf did not keep the flake without packages.nix: $out" ;;
+    2) ! grep -q 'rewrote' <<<"$out" || fail "the rename-only rewrite repeats: $out" ;;
+  esac
+  sleep 1 # --since has second resolution
+done
+as_user grep -qF 'homeConfigurations."ci"' /home/ci/.config/home-manager/flake.nix || fail "the rename-only rewrite did not rename"
 echo "software installation: ok"
 echo "boot test passed"

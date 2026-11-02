@@ -150,10 +150,11 @@ in
           if webtop-template unmodified "$dir/flake.nix" "$tmp"/old/*/flake.nix "$tmp"/legacy/*/flake-*.nix &&
              webtop-template unmodified "$dir/home.nix" "$tmp"/old/*/home.nix "$tmp"/legacy/*/home.nix; then
             if [ ! -e "$dir/packages.nix" ] && own_nix_conf; then
-              # Rename only: the earlier template, without packages.nix.
-              legacy "$USER" "$tmp/new-legacy"
-              webtop-template write "$dir/flake.nix" "$tmp/new-legacy/flake-2.nix"
-              webtop-template write "$dir/home.nix" "$tmp/new-legacy/home.nix"
+              # Rename only: the earlier template, without packages.nix; already done is a no-op.
+              cur=$tmp/legacy/$USER
+              if cmp -s "$dir/flake.nix" "$cur/flake-2.nix" && cmp -s "$dir/home.nix" "$cur/home.nix"; then exit 0; fi
+              webtop-template write "$dir/flake.nix" "$cur/flake-2.nix"
+              webtop-template write "$dir/home.nix" "$cur/home.nix"
               echo "rewrote the starter flake for $USER; kept without packages.nix: ~/.config/nix/nix.conf is the user's"
             else
               if [ ! -e "$dir/packages.nix" ]; then
