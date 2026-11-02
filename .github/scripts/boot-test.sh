@@ -22,6 +22,17 @@ mkdir "$dir/persist"
 hp=$dir/persist/home/user/.config/webtop
 mkdir -p "$hp"
 printf '/home/user\nroot\n../x\n/home/root\n/home/../x\n' > "$hp/home-paths"
+# The starter home-manager flake as the image wrote it for `user`: rewritten for ci at boot. In the gray
+# run it is edited, so it must stay as it is, with the lines to change in the journal.
+hm=$dir/persist/home/user/.config/home-manager
+mkdir -p "$hm"
+sv=$(sed -n 's/.*system.stateVersion = "\(.*\)";.*/\1/p' "$(dirname "$0")/../../image/nixos/container.nix")
+for f in flake.nix home.nix; do
+  sed -e 's|@user@|user|g' -e 's|@home@|/home/user|g' -e "s|@stateVersion@|$sv|g" \
+    "$(dirname "$0")/../../image/home-manager/$f" > "$hm/$f"
+done
+if [ "$mode" = gray ]; then echo "# edited" >> "$hm/home.nix"; fi
+cp "$hm/flake.nix" "$hm/home.nix" "$dir/"
 sudo chown -R 1000:100 "$dir/persist/home"
 
 python3 "$(dirname "$0")/fake-controller.py" 8081 "$reports" &
@@ -82,6 +93,14 @@ echo "Compositing active: ${comp:-<no answer>}"
 
 if [ "$mode" = gray ]; then
   [ "$comp" != "b true" ] || { echo "::error::KWin composites although KWIN_COMPOSE=Q"; exit 1; }
+  # The edited starter flake is left alone; the journal and a notification name the lines to change.
+  cmp -s "$hm/flake.nix" "$dir/flake.nix" && cmp -s "$hm/home.nix" "$dir/home.nix" \
+    || { echo "::error::the edited home-manager flake was changed"; exit 1; }
+  hmlog=$(docker exec desktop-boot journalctl -u webtop-home-manager-template -o cat)
+  grep -qF 'home.username = "user";  ->  home.username = "ci";' <<<"$hmlog" \
+    || { echo "::error::no home-manager notice in the journal"; echo "$hmlog"; exit 1; }
+  grep -q '^notifying:' <<<"$(docker exec desktop-boot journalctl -u webtop-home-manager-notice -o cat)" \
+    || { echo "::error::webtop-home-manager-notice did not run"; exit 1; }
   echo "gray-screen case failed as intended"
   exit 0
 fi
@@ -128,11 +147,14 @@ for bad in root ../x /home/root /home/../x; do
 done
 grep -qF '"loginName":"ci","homePaths":["/home/ci","/home/user"]' "$reports" \
   || { echo "::error::the agent did not report the login name and home paths"; exit 1; }
-# The starter home-manager flake names the real user.
-hm=/persist/home/user/.config/home-manager
-docker exec desktop-boot grep -qF 'homeConfigurations."ci"' $hm/flake.nix \
-  && docker exec desktop-boot grep -qF 'home.username = "ci";' $hm/home.nix \
-  && docker exec desktop-boot grep -qF 'home.homeDirectory = "/home/ci";' $hm/home.nix \
-  || { echo "::error::the home-manager template does not name ci"; docker exec desktop-boot cat $hm/home.nix; exit 1; }
+# The starter flake written for `user` now names ci, and switches.
+grep -qF 'homeConfigurations."ci"' "$hm/flake.nix" \
+  && grep -qF 'home.username = "ci";' "$hm/home.nix" \
+  && grep -qF 'home.homeDirectory = "/home/ci";' "$hm/home.nix" \
+  || { echo "::error::the home-manager template does not name ci"; cat "$hm/home.nix"; exit 1; }
+start_hm=$(date +%s)
+docker exec desktop-boot timeout 900 runuser -l ci -c 'home-manager switch --flake ~/.config/home-manager' 2>&1 | tail -n 20 \
+  || { echo "::error::home-manager switch failed"; exit 1; }
+echo "home-manager switch took $(($(date +%s) - start_hm)) s"
 echo "identity: $pw; /home: $homes"
 echo "boot test passed"

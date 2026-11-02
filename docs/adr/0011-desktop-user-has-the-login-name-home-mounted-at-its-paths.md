@@ -44,8 +44,9 @@ directory breaks existing data, and a user's name may change.
 ## Consequences
 
 - Old absolute paths keep working for as long as the user keeps them listed; no data is rewritten.
-- An existing home-manager config names `user` and `/home/user`; home-manager refuses to switch until
-  the user changes both to the new name, and the post-update reinstall reports that failure.
+- home-manager refuses a config naming another user. The image rewrites its starter flake for the new
+  name only while it is unmodified (byte-identical to what it wrote or to the template for an old
+  name); an edited one stays as it is, and the user is told which lines to change.
 - The starter home-manager template is written with the real name; the generation prebuilt into the
   image is the placeholder's, so the first switch builds the few derivations that carry the name.
 - Relies on update-users-groups.pl (asserted: not sysusers or userborn) and on activation running once

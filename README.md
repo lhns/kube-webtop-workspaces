@@ -90,10 +90,15 @@ show the result.
 
 *Existing volumes.* The first start creates `home-paths` with the new path and `/home/user`, so profile
 links, `home.homeDirectory` and KDE configs that name `/home/user` keep working. home-manager itself
-checks the user name and home: change `user`/`/home/user` in `~/.config/home-manager/flake.nix`
-(`homeConfigurations."user"`) and `home.nix` (`home.username`, `home.homeDirectory`) to the new name
-and `/home/<name>`, then `home-manager switch`; until then switches, and the reinstall after an image
-update, fail. Remove `/home/user` from `home-paths` once nothing refers to it.
+checks the user name and home, so at every start `webtop-home-manager-template.service` rewrites
+`~/.config/home-manager/{flake.nix,home.nix}` for the current name while they are unmodified: what it
+last wrote (hashes in `~/.local/state/webtop/templates.sha256`) or byte-identical to the starter
+template rendered for a name in `home-paths`. An edited flake is left alone; if it still names
+another user, the journal of that unit and a desktop notification list the lines to change
+(`homeConfigurations."…"`, `home.username`, `home.homeDirectory`), and until then `home-manager switch`
+and the reinstall after an image update fail. Remove `/home/user` from `home-paths` once nothing
+refers to it. `webtop-template write|unmodified` is the helper; other units that update files the image
+put into the home use it too.
 
 **home-manager.** On first boot, only if `~/.config/home-manager` is absent (and once), a starter
 flake is created there (`image/home-manager/`). Its `nixpkgs` and `home-manager` inputs come from the
