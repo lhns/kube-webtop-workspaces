@@ -9,6 +9,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"text/template"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -30,6 +31,8 @@ type Config struct {
 	Desktop     Desktop    `json:"desktop"`
 	Storage     Storage    `json:"storage"`
 	Gateway     Gateway    `json:"gateway"`
+
+	titleTmpl *template.Template // desktop.title, parsed once by validate
 }
 
 type Names struct {
@@ -109,6 +112,10 @@ type Desktop struct {
 	ShmSize                       resource.Quantity             `json:"shmSize"`
 	RunSizeLimit                  resource.Quantity             `json:"runSizeLimit"`
 	TerminationGracePeriodSeconds *int64                        `json:"terminationGracePeriodSeconds"`
+	// Selkies is SELKIES_* settings for every desktop (docs/contract.md, "Selkies settings").
+	Selkies map[string]string `json:"selkies"`
+	// Title is a text/template for the browser tab title; see TitleData. Empty: Selkies' own.
+	Title string `json:"title"`
 }
 
 type Storage struct {
@@ -274,6 +281,7 @@ func (c *Config) validate() error {
 			errs = append(errs, errors.New("ldap.baseDN: required for membership memberOf"))
 		}
 	}
+	errs = append(errs, c.validateSelkies())
 	return errors.Join(errs...)
 }
 

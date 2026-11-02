@@ -58,6 +58,8 @@ unknown keys. Defaults are in `values.yaml`.
 | `desktop.port`, `resources`, `nodeSelector`, `tolerations`, `affinity`, `priorityClassName`, `podLabels`, `podAnnotations` | see values.yaml | desktop pod scheduling |
 | `desktop.extraEnv`, `extraVolumes`, `extraVolumeMounts`, `securityContext` | | extra pod config; `securityContext` replaces the default container one |
 | `desktop.nix.extraSubstituters` / `extraTrustedPublicKeys` | `[]` / `[]` | extra binary caches in the desktops' `nix.conf`, after cache.nixos.org (passed as `WEBTOP_NIX_*` env) |
+| `desktop.selkies` | `{}` | `SELKIES_*` settings (strings, one line, at most 256 characters) for every desktop; override the image defaults, are overridden by the user's allowlisted file. Not a security boundary: the user can edit their own units |
+| `desktop.title` | `{{ .User }} – Desktop` | text/template for the browser tab title (`.User`, `.DisplayName`, `.Desktop`; data, never template text); sent as `SELKIES_UI_TITLE` unless `desktop.selkies` sets it; `""` keeps Selkies' title. Applies on the desktop's next start |
 | `desktop.shmSize`, `runSizeLimit`, `terminationGracePeriodSeconds` | `1Gi`, `256Mi`, `120` | |
 | `desktop.serviceAccountName` | `""` | empty: `<release>-desktop` |
 | `desktopServiceAccount.create` | `true` | shared desktop ServiceAccount (token automount off) |

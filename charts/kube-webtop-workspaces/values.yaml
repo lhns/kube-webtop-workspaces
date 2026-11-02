@@ -90,6 +90,15 @@ desktop:
   nix:
     extraSubstituters: []       # ["http://cache.example.org/desktops"]
     extraTrustedPublicKeys: []  # ["desktops:<base64>"]
+  # SELKIES_* settings for every desktop, as strings (docs/contract.md, "Selkies settings"). They
+  # override the image's defaults; a user's allowlisted ~/.config/webtop/selkies.env overrides them.
+  # Single line, at most 256 characters. Not a security boundary against the desktop user.
+  selkies: {}                 # e.g. {SELKIES_FRAMERATE: "30", SELKIES_FILE_TRANSFERS: "none"}
+  # Browser tab and sidebar title: a Go text/template, evaluated per desktop. Fields: .User (login),
+  # .DisplayName (the login until a display name is available), .Desktop (resource name). They are
+  # template data, never template text. Becomes SELKIES_UI_TITLE unless selkies sets it; "" keeps
+  # Selkies' own title.
+  title: "{{ .User }} – Desktop"
   securityContext: null       # when set, replaces the whole default container securityContext (default caps: SYS_ADMIN, SYS_NICE for NixOS's kwin_wayland wrapper)
   shmSize: 1Gi
   runSizeLimit: 256Mi

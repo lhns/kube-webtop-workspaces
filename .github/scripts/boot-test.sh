@@ -13,6 +13,12 @@ image=$1
 timeout=$2
 mode=${3:-ready}
 dir=$(mktemp -d)
+# Cluster-level Selkies settings (docs/contract.md): quote, backslash, $, =, backtick, non-ASCII.
+title='Ci "q" $HOME `x` \ a=b ä – Desktop'
+probe='\\"$X=1 #'
+# webtop-init refuses a tab; a newline ends the value, so the injected second line is dropped.
+tab=$(printf 'a\tb')
+nl=$(printf 'x\nSELKIES_CI_INJECT=1')
 reports=$dir/reports
 touch "$reports"
 echo token > "$dir/token"
@@ -31,7 +37,9 @@ args=(--privileged --cgroupns=private --shm-size=1g --add-host=host.docker.inter
   -v "$dir/persist:/persist" -v "$dir/token:/token:ro"
   -e WEBTOP_CONTROLLER_URL=http://host.docker.internal:8081 -e WEBTOP_TOKEN_PATH=/token
   -e WEBTOP_HTTP_PORT=8080 -e WEBTOP_USER=ci -e WEBTOP_DESKTOP=ci -e WEBTOP_NAMESPACE=ci
-  -e WEBTOP_NIX_EXTRA_SUBSTITUTERS=http://cache.invalid/ci -e "WEBTOP_NIX_EXTRA_TRUSTED_PUBLIC_KEYS=ci:AAAA")
+  -e WEBTOP_NIX_EXTRA_SUBSTITUTERS=http://cache.invalid/ci -e "WEBTOP_NIX_EXTRA_TRUSTED_PUBLIC_KEYS=ci:AAAA"
+  -e "WEBTOP_SELKIES_UI_TITLE=$title" -e "WEBTOP_SELKIES_CI_PROBE=$probe"
+  -e "WEBTOP_SELKIES_CI_TAB=$tab" -e "WEBTOP_SELKIES_CI_NL=$nl")
 if [ "$mode" = gray ]; then
   mkdir -p "$dir/dropin"
   printf '[Service]\nEnvironment=KWIN_COMPOSE=Q\n' > "$dir/dropin/gray.conf"
@@ -93,6 +101,16 @@ code=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:8083/api/
 # The overview's source: the application list is a non-empty JSON array of entries with an id.
 curl -fsS http://localhost:8083/api/v1/apps | python3 -c 'import json,sys; a=json.load(sys.stdin); assert a and all(x["id"] and x["name"] for x in a), a' \
   || { echo "::error::the agent's app list is not a non-empty JSON array of apps"; exit 1; }
+# webtop-init -> /run/webtop/selkies.env -> the Selkies process: values arrive exactly, refused ones not at all.
+pid=$(in_session systemctl --user show -p MainPID --value selkies)
+sel=$(docker exec desktop-boot cat "/proc/$pid/environ" | tr '\0' '\n' | grep -a '^SELKIES_' || true)
+for want in "SELKIES_UI_TITLE=$title" "SELKIES_CI_PROBE=$probe" "SELKIES_PORT=8080"; do
+  grep -qaFx -- "$want" <<<"$sel" || { echo "::error::Selkies' environment lacks '$want':"; echo "$sel"; exit 1; }
+done
+if grep -qE 'SELKIES_CI_(TAB|INJECT)' <<<"$sel"; then
+  echo "::error::a refused Selkies setting reached the process:"; echo "$sel"; exit 1
+fi
+echo "Selkies environment carries the cluster settings exactly"
 subst=$(docker exec desktop-boot /run/current-system/sw/bin/nix config show substituters || true)
 case $subst in *cache.nixos.org*http://cache.invalid/ci*) echo "substituters: $subst" ;;
   *) echo "::error::WEBTOP_NIX_EXTRA_SUBSTITUTERS not in nix.conf (substituters: $subst)"; exit 1 ;; esac

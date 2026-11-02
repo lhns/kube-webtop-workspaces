@@ -161,9 +161,30 @@ fake_sys_power() {
 # systemd does not pass the container env to units; they read these files.
 write_env() {
   mkdir -p /run/webtop &&
-  { env | grep '^WEBTOP_'; [ -n "$WEBTOP_HTTP_PORT" ] || echo WEBTOP_HTTP_PORT=8080; } > /run/webtop/env.tmp &&
-  mv /run/webtop/env.tmp /run/webtop/env &&
-  echo "SELKIES_PORT=${WEBTOP_HTTP_PORT:-8080}" > /run/webtop/selkies.env
+  { env | grep '^WEBTOP_' | grep -v '^WEBTOP_SELKIES_'; [ -n "$WEBTOP_HTTP_PORT" ] || echo WEBTOP_HTTP_PORT=8080; } > /run/webtop/env.tmp &&
+  mv /run/webtop/env.tmp /run/webtop/env
+}
+
+# EnvironmentFile= of the Selkies unit (services.webtop.environmentFiles). WEBTOP_SELKIES_X=v in the
+# pod env (docs/contract.md, "Selkies settings") becomes SELKIES_X="v". A value is written
+# double-quoted with \ and " escaped, which systemd reads back literally (it does no $ expansion).
+# The controller only sends single-line values; a line that is not one, or is too long, is skipped
+# here too, so a stray newline cannot add settings. The port goes last and so wins.
+write_selkies_env() {
+  f=/run/webtop/selkies.env
+  mkdir -p /run/webtop &&
+  {
+    env | grep '^WEBTOP_SELKIES_[A-Z0-9_]*=' | while IFS= read -r line; do
+      k=${line%%=*}; k=${k#WEBTOP_}; v=${line#*=}
+      if [ "$(printf %s "$v" | tr -d '\000-\037\177')" != "$v" ] || [ ${#v} -gt 1024 ]; then
+        log "skipping $k: not a single line of at most 1024 bytes" >&2
+        continue
+      fi
+      printf '%s="%s"\n' "$k" "$(printf %s "$v" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')"
+    done
+    echo "SELKIES_PORT=${WEBTOP_HTTP_PORT:-8080}"
+  } > $f.tmp &&
+  chmod 0644 $f.tmp && mv $f.tmp $f
 }
 
 # Extra binary caches, !included by /etc/nix/nix.conf (container.nix). Newlines are folded so a
@@ -192,6 +213,7 @@ fi
 step "bind $P/home on /home" bind_home
 step "console relay" console_relay
 step "write /run/webtop/env" write_env
+step "write /run/webtop/selkies.env" write_selkies_env
 step "write /run/webtop/nix.conf" write_nix_conf
 log "step: writable /sys/power stand-in"
 fake_sys_power || log "no /sys/power stand-in: the desktop will not offer sleep"
