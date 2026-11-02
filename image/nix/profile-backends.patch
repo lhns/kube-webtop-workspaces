@@ -1,5 +1,5 @@
 diff --git a/profile.cc b/profile.cc
-index 4f56319..abf276f 100644
+index 4f56319..d44a844 100644
 --- a/profile.cc
 +++ b/profile.cc
 @@ -12,10 +12,18 @@
@@ -40,7 +40,7 @@ index 4f56319..abf276f 100644
          StringSet versions;
          for (auto & path : storePaths)
              versions.insert(DrvName(path.name()).version);
-@@ -312,6 +332,515 @@ struct ProfileManifest
+@@ -312,6 +332,518 @@ struct ProfileManifest
      }
  };
  
@@ -445,6 +445,9 @@ index 4f56319..abf276f 100644
 +    {
 +        auto previous = current();
 +        auto contents = serialize(manifest);
++        // E.g. an upgrade that re-locked to the same source: nothing to apply.
++        if (contents == previous)
++            return []() {};
 +        apply(store, previous, contents, operation);
 +        record(store, contents);
 +        return [file = file, previous]() { writeFileAtomic(file, previous); };
@@ -556,7 +559,7 @@ index 4f56319..abf276f 100644
  static std::map<Installable *, std::pair<BuiltPaths, ref<ExtraPathInfo>>>
  builtPathsPerInstallable(const std::vector<std::pair<ref<Installable>, BuiltPathWithResult>> & builtPaths)
  {
-@@ -361,7 +890,16 @@ struct CmdProfileAdd : InstallablesCommand, MixDefaultProfile
+@@ -361,7 +893,16 @@ struct CmdProfileAdd : InstallablesCommand, MixDefaultProfile
  
      void run(ref<Store> store, Installables && installables) override
      {
@@ -574,7 +577,7 @@ index 4f56319..abf276f 100644
  
          auto builtPaths = builtPathsPerInstallable(
              Installable::build2(getEvalStore(), store, Realise::Outputs, installables, bmNormal));
-@@ -392,8 +930,26 @@ struct CmdProfileAdd : InstallablesCommand, MixDefaultProfile
+@@ -392,8 +933,26 @@ struct CmdProfileAdd : InstallablesCommand, MixDefaultProfile
  
              element.updateStorePaths(getEvalStore(), store, res);
  
@@ -601,7 +604,7 @@ index 4f56319..abf276f 100644
              // Check if the element already exists.
              auto existingPair = manifest.elements.find(elementName);
              if (existingPair != manifest.elements.end()) {
-@@ -409,10 +965,16 @@ struct CmdProfileAdd : InstallablesCommand, MixDefaultProfile
+@@ -409,10 +968,16 @@ struct CmdProfileAdd : InstallablesCommand, MixDefaultProfile
              }
  
              manifest.addElement(elementName, std::move(element));
@@ -619,7 +622,7 @@ index 4f56319..abf276f 100644
          } catch (BuildEnvFileConflictError & conflictError) {
              // FIXME use C++20 std::ranges once macOS has it
              //       See
-@@ -479,6 +1041,12 @@ struct Matcher
+@@ -479,6 +1044,12 @@ struct Matcher
  
      virtual std::string getTitle() = 0;
      virtual bool matches(const std::string & name, const ProfileElement & element) = 0;
@@ -632,7 +635,7 @@ index 4f56319..abf276f 100644
  };
  
  struct RegexMatcher final : public Matcher
-@@ -497,6 +1065,11 @@ struct RegexMatcher final : public Matcher
+@@ -497,6 +1068,11 @@ struct RegexMatcher final : public Matcher
          return fmt("Regex '%s'", pattern);
      }
  
@@ -644,7 +647,7 @@ index 4f56319..abf276f 100644
      bool matches(const std::string & name, const ProfileElement & element) override
      {
          return std::regex_match(element.identifier(), regex);
-@@ -550,6 +1123,11 @@ struct AllMatcher final : public Matcher
+@@ -550,6 +1126,11 @@ struct AllMatcher final : public Matcher
          return "--all";
      }
  
@@ -656,7 +659,7 @@ index 4f56319..abf276f 100644
      bool matches(const std::string & name, const ProfileElement & element) override
      {
          return true;
-@@ -595,7 +1173,8 @@ public:
+@@ -595,7 +1176,8 @@ public:
               }}});
      }
  
@@ -666,7 +669,7 @@ index 4f56319..abf276f 100644
      {
          if (_matchers.empty()) {
              throw UsageError("No packages specified.");
-@@ -610,20 +1189,22 @@ public:
+@@ -610,20 +1192,22 @@ public:
              throw UsageError("--all cannot be used with package names or regular expressions.");
          }
  
@@ -697,7 +700,7 @@ index 4f56319..abf276f 100644
              if (!foundMatch) {
                  warn("%s does not match any packages in the profile.", matcher->getTitle());
              }
-@@ -648,27 +1229,35 @@ struct CmdProfileRemove : virtual EvalCommand, MixDefaultProfile, MixProfileElem
+@@ -648,27 +1232,35 @@ struct CmdProfileRemove : virtual EvalCommand, MixDefaultProfile, MixProfileElem
  
      void run(ref<Store> store) override
      {
@@ -746,7 +749,7 @@ index 4f56319..abf276f 100644
      }
  };
  
-@@ -688,22 +1277,25 @@ struct CmdProfileUpgrade : virtual SourceExprCommand, MixDefaultProfile, MixProf
+@@ -688,22 +1280,25 @@ struct CmdProfileUpgrade : virtual SourceExprCommand, MixDefaultProfile, MixProf
  
      void run(ref<Store> store) override
      {
@@ -777,7 +780,7 @@ index 4f56319..abf276f 100644
  
              if (!element.source) {
                  warn(
-@@ -759,6 +1351,7 @@ struct CmdProfileUpgrade : virtual SourceExprCommand, MixDefaultProfile, MixProf
+@@ -759,6 +1354,7 @@ struct CmdProfileUpgrade : virtual SourceExprCommand, MixDefaultProfile, MixProf
  
              installables.push_back(installable);
              elems.push_back(&element);
@@ -785,7 +788,7 @@ index 4f56319..abf276f 100644
          }
  
          if (upgradedCount == 0) {
-@@ -766,6 +1359,10 @@ struct CmdProfileUpgrade : virtual SourceExprCommand, MixDefaultProfile, MixProf
+@@ -766,6 +1362,10 @@ struct CmdProfileUpgrade : virtual SourceExprCommand, MixDefaultProfile, MixProf
              return;
          }
  
@@ -796,7 +799,7 @@ index 4f56319..abf276f 100644
          auto builtPaths = builtPathsPerInstallable(
              Installable::build2(getEvalStore(), store, Realise::Outputs, installables, bmNormal));
  
-@@ -775,7 +1372,8 @@ struct CmdProfileUpgrade : virtual SourceExprCommand, MixDefaultProfile, MixProf
+@@ -775,7 +1375,8 @@ struct CmdProfileUpgrade : virtual SourceExprCommand, MixDefaultProfile, MixProf
              element.updateStorePaths(getEvalStore(), store, builtPaths.find(&*installable)->second.first);
          }
  
@@ -806,7 +809,7 @@ index 4f56319..abf276f 100644
      }
  };
  
-@@ -795,11 +1393,44 @@ struct CmdProfileList : virtual EvalCommand, virtual StoreCommand, MixDefaultPro
+@@ -795,11 +1396,44 @@ struct CmdProfileList : virtual EvalCommand, virtual StoreCommand, MixDefaultPro
  
      void run(ref<Store> store) override
      {
@@ -853,7 +856,7 @@ index 4f56319..abf276f 100644
              for (const auto & [i, e] : enumerate(manifest.elements)) {
                  auto & [name, element] = e;
                  if (i)
-@@ -815,7 +1446,11 @@ struct CmdProfileList : virtual EvalCommand, virtual StoreCommand, MixDefaultPro
+@@ -815,7 +1449,11 @@ struct CmdProfileList : virtual EvalCommand, virtual StoreCommand, MixDefaultPro
                      logger->cout("Locked flake URL:   %s", element.source->lockedRef.to_string());
                  }
                  logger->cout(
@@ -866,7 +869,7 @@ index 4f56319..abf276f 100644
              }
          }
      }
-@@ -837,7 +1472,7 @@ struct CmdProfileDiffClosures : virtual StoreCommand, MixDefaultProfile
+@@ -837,7 +1475,7 @@ struct CmdProfileDiffClosures : virtual StoreCommand, MixDefaultProfile
  
      void run(ref<Store> store) override
      {
@@ -875,7 +878,7 @@ index 4f56319..abf276f 100644
  
          std::optional<Generation> prevGen;
          bool first = true;
-@@ -876,13 +1511,14 @@ struct CmdProfileHistory : virtual StoreCommand, EvalCommand, MixDefaultProfile
+@@ -876,13 +1514,14 @@ struct CmdProfileHistory : virtual StoreCommand, EvalCommand, MixDefaultProfile
  
      void run(ref<Store> store) override
      {
@@ -892,7 +895,7 @@ index 4f56319..abf276f 100644
  
              if (!first)
                  logger->cout("");
-@@ -930,7 +1566,7 @@ struct CmdProfileRollback : virtual StoreCommand, MixDefaultProfile, MixDryRun
+@@ -930,7 +1569,7 @@ struct CmdProfileRollback : virtual StoreCommand, MixDefaultProfile, MixDryRun
  
      void run(ref<Store> store) override
      {
@@ -901,7 +904,7 @@ index 4f56319..abf276f 100644
      }
  };
  
-@@ -964,11 +1600,12 @@ struct CmdProfileWipeHistory : virtual StoreCommand, MixDefaultProfile, MixDryRu
+@@ -964,11 +1603,12 @@ struct CmdProfileWipeHistory : virtual StoreCommand, MixDefaultProfile, MixDryRu
  
      void run(ref<Store> store) override
      {
