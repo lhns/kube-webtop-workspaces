@@ -191,8 +191,8 @@ cat > "$dir/flake.nix" <<'FLAKE'
   };
 }
 FLAKE
-docker cp "$dir/flake.nix" desktop-boot:/home/user/.config/home-manager/flake.nix
-docker exec desktop-boot chown 1000 /home/user/.config/home-manager/flake.nix
+# Not docker cp: /home is a bind mount inside the container, which docker cp does not see.
+as_user sh -c "echo $(base64 -w0 "$dir/flake.nix") | base64 -d > /home/user/.config/home-manager/flake.nix"
 as_user rm /home/user/.config/home-manager/packages.nix "$decl" /home/user/.local/state/webtop/packages-json
 as_user nix profile add --profile-backend profile nixpkgs#hello || fail "adding hello to the profile failed"
 docker exec desktop-boot systemctl start webtop-home-manager
