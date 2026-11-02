@@ -161,6 +161,21 @@ func (r *Reconciler) authorize(ctx context.Context, d *v1alpha1.Desktop, startin
 	return authResult{Status: metav1.ConditionTrue, Reason: v1alpha1.ReasonMember, AllowStart: true}
 }
 
+// refreshDisplayName sets the display name a starting pod gets. Only starts ask the directory, so
+// the template of a running desktop stays the same; a failed lookup keeps the last one.
+func (r *Reconciler) refreshDisplayName(ctx context.Context, d *v1alpha1.Desktop) {
+	if !r.Config().LDAP.Enabled() || r.Dir == nil {
+		d.Status.DisplayName = ""
+		return
+	}
+	name, err := r.Dir.DisplayName(ctx, d.Spec.User)
+	if err != nil {
+		slog.Warn("ldap display name lookup failed", "desktop", d.Name, "err", err)
+		return
+	}
+	d.Status.DisplayName = names.DisplayName(name)
+}
+
 func notMember() authResult {
 	return authResult{Status: metav1.ConditionFalse, Reason: v1alpha1.ReasonNotMember, Message: "user is not a member of the desktop group"}
 }
@@ -292,6 +307,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 	restartPending := d.Spec.RestartRequestedAt != nil &&
 		(d.Status.ObservedRestartAt == nil || d.Spec.RestartRequestedAt.After(d.Status.ObservedRestartAt.Time))
 	plan := planDeploy(depExists, cur, want, restartPending)
+	if plan.SetLastStart {
+		r.refreshDisplayName(ctx, d)
+	}
 	desired := render.Deployment(cfg, d, want)
 	desiredHash := desired.Annotations[names.AnnotationTemplateHash]
 
@@ -379,6 +397,9 @@ func (r *Reconciler) finish(ctx context.Context, d, base *v1alpha1.Desktop, pods
 		Type: v1alpha1.ConditionAuthorized, Status: a.auth.Status, Reason: a.auth.Reason,
 		Message: a.auth.Message, ObservedGeneration: d.Generation,
 	})
+	if c, ok := loginNameCondition(d); ok {
+		meta.SetStatusCondition(&st.Conditions, c)
+	}
 	ready := metav1.ConditionFalse
 	if res.Phase == v1alpha1.PhaseRunning {
 		ready = metav1.ConditionTrue
@@ -400,6 +421,27 @@ func (r *Reconciler) finish(ctx context.Context, d, base *v1alpha1.Desktop, pods
 		}
 	}
 	return nil
+}
+
+// loginNameCondition says whether the desktop user got the desktop's name; the image falls back to
+// "user" for a name that is not a valid login name or is an account of the image (ADR 0011).
+func loginNameCondition(d *v1alpha1.Desktop) (metav1.Condition, bool) {
+	got := d.Status.LoginName
+	if got == "" {
+		return metav1.Condition{}, false
+	}
+	c := metav1.Condition{Type: v1alpha1.ConditionLoginName, Status: metav1.ConditionTrue,
+		Reason: v1alpha1.ReasonDesktopName, ObservedGeneration: d.Generation}
+	switch {
+	case got == d.Name:
+	case !names.ValidLogin(d.Name):
+		c.Status, c.Reason = metav1.ConditionFalse, v1alpha1.ReasonInvalidLoginName
+		c.Message = fmt.Sprintf("%q is not a valid login name (it must start with a letter); the desktop user is %q", d.Name, got)
+	default:
+		c.Status, c.Reason = metav1.ConditionFalse, v1alpha1.ReasonReservedName
+		c.Message = fmt.Sprintf("%q is an account of the desktop image; the desktop user is %q", d.Name, got)
+	}
+	return c, true
 }
 
 // ensurePVC creates the PVC or adopts an existing one. It returns a message when the PVC

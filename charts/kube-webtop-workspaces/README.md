@@ -49,7 +49,7 @@ unknown keys. Defaults are in `values.yaml`.
 | `powerApi.addr` / `audience` | `:8082` / `kube-webtop-workspaces` | power/report API |
 | `powerApi.url` | `""` | URL the desktop agent uses; empty: the controller Service |
 | `ldap.url` | `""` | empty disables LDAP (everyone authorized) |
-| `ldap.baseDN`, `groupDN`, `adminGroupDN`, `bindDN`, `userFilter`, `userAttribute`, `membership`, `memberAttribute`, `syncInterval`, `timeout`, `errorPolicy`, `startTLS`, `insecureSkipVerify` | see values.yaml | LDAP sync |
+| `ldap.baseDN`, `groupDN`, `adminGroupDN`, `bindDN`, `userFilter`, `userAttribute`, `membership`, `memberAttribute`, `displayNameAttribute`, `syncInterval`, `timeout`, `errorPolicy`, `startTLS`, `insecureSkipVerify` | see values.yaml | LDAP sync |
 | `ldap.bindSecret.name` / `key` | `""` / `password` | existing Secret with the bind password |
 | `ldap.caSecret.name` / `key` | `""` / `ca.crt` | existing Secret with a CA bundle |
 | `desktop.image` | `""` (required) | desktop image |

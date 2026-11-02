@@ -42,6 +42,24 @@ func TestReportOmitsAbsentFields(t *testing.T) {
 	}
 }
 
+func TestReportCarriesIdentity(t *testing.T) {
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&got)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	c := New(srv.URL, token(t, "t"))
+	c.LoginName, c.HomePaths = "bob", []string{"/home/bob", "/home/user"}
+	if err := c.Report(context.Background(), Report{}); err != nil {
+		t.Fatal(err)
+	}
+	paths, _ := got["homePaths"].([]any)
+	if got["loginName"] != "bob" || len(paths) != 2 || paths[1] != "/home/user" {
+		t.Fatalf("body = %v", got)
+	}
+}
+
 func TestPowerBodyAndStatus(t *testing.T) {
 	var got PowerRequest
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -114,6 +114,11 @@ func (in *DesktopStatus) DeepCopyInto(out *DesktopStatus) {
 		in, out := &in.ObservedRestartAt, &out.ObservedRestartAt
 		*out = (*in).DeepCopy()
 	}
+	if in.HomePaths != nil {
+		in, out := &in.HomePaths, &out.HomePaths
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	if in.Conditions != nil {
 		in, out := &in.Conditions, &out.Conditions
 		*out = make([]v1.Condition, len(*in))

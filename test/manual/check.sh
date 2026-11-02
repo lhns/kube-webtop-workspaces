@@ -22,7 +22,7 @@ findmnt /persist >/dev/null && ok persist_mounted "$(findmnt -n -o SOURCE,FSTYPE
 
 # KWin 6.8 picks its own socket (wayland-2 here, not wayland-0), so it is read from its command line.
 # A Wayland (konsole) and an X11 (konsole on xcb) client must both get a window; kwin lists them.
-# The session bus only talks to its own user, so the probe runs as "user" (uid 1000).
+# The session bus only talks to its own user, so the probe runs as the desktop user (uid 1000).
 G=$(mktemp /tmp/check-gui.XXXX); chmod 755 "$G"
 cat > "$G" <<'GUI'
 PATH=/run/current-system/sw/bin:$PATH
@@ -33,7 +33,7 @@ cat > "$D/list.js" <<'JS'
 var ws = workspace.windowList();
 for (var i = 0; i < ws.length; i++) { var w = ws[i]; if (w.normalWindow || w.dialog) print("CHECKWIN class=" + w.resourceClass + " caption=" + w.caption); }
 JS
-env -u DISPLAY WAYLAND_DISPLAY=$(ps -u user -o args= | grep '[k]win_wayland --' | grep -o 'socket [^ ]*' | cut -d' ' -f2) QT_QPA_PLATFORM=wayland timeout 25 konsole --separate -p tabtitle=CHECK-WAYLAND -e sleep 20 >"$D/k.log" 2>&1 &
+env -u DISPLAY WAYLAND_DISPLAY=$(ps -u 1000 -o args= | grep '[k]win_wayland --' | grep -o 'socket [^ ]*' | cut -d' ' -f2) QT_QPA_PLATFORM=wayland timeout 25 konsole --separate -p tabtitle=CHECK-WAYLAND -e sleep 20 >"$D/k.log" 2>&1 &
 XA=$(ls /run/user/$uid/xauth_* 2>/dev/null | head -1)
 env -u WAYLAND_DISPLAY DISPLAY=:0 XAUTHORITY="$XA" QT_QPA_PLATFORM=xcb timeout 25 konsole --separate -p tabtitle=CHECK-X11 -e sleep 20 >"$D/x.log" 2>&1 &
 sleep 6
@@ -45,7 +45,7 @@ qdbus org.kde.KWin /Scripting org.kde.kwin.Scripting.unloadScript checklist >/de
 journalctl --user --since "$since" --no-pager -o cat 2>/dev/null | grep CHECKWIN
 pkill -f 'CHECK-'; rm -rf "$D"
 GUI
-wins=$(runuser -u user -- sh "$G"); rm -f "$G"
+wins=$(runuser -u "$(id -nu 1000)" -- sh "$G"); rm -f "$G"
 echo "$wins" | sed 's/^/      /'
 echo "$wins" | grep -q CHECK-WAYLAND && ok wayland_window || bad wayland_window
 echo "$wins" | grep -q CHECK-X11 && ok x11_window || bad x11_window

@@ -47,13 +47,14 @@ Built from `flake.nix` with nix2container: `nix build .#image`, then
 | `image/nixos/desktop.nix` | `services.webtop` (webtop-nix) wired to the pod contract |
 | `image/nixos/hooks.nix` | agent units: power hook, session save, suspend, image-update restore and reinstall |
 | `image/nixos/home-manager.nix` | home-manager from the image (registry, CLI), starter flake unit, prebuilt generation |
+| `image/nixos/identity.nix` | renames the desktop user (uid 1000) to the login name at activation |
 | `image/webtop-nix-restore.sh` | copies the users' paths from the old store overlay into the new one |
 | `agent/` | in-pod agent (Go, its own module; packaged by `image/agent.nix`) |
 
 **Entrypoint.** `webtop-init` makes `/` rprivate, binds the image's `/nix` read-only at
 `/.lower/nix`, mounts an overlayfs on `/nix/store` (lower: the image's store, upper:
-`/persist/nix/upper`, `userxattr`), binds `/persist/nix/var` on `/nix/var/nix` and `/persist/home` on
-`/home`, writes the `WEBTOP_*` env to `/run/webtop/env` and extra binary caches (`WEBTOP_NIX_*`) to
+`/persist/nix/upper`, `userxattr`), binds `/persist/nix/var` on `/nix/var/nix`, mounts the user's home at its paths
+(below), writes the `WEBTOP_*` env to `/run/webtop/env` and extra binary caches (`WEBTOP_NIX_*`) to
 `/run/webtop/nix.conf` (systemd does not pass the container env to units) and execs systemd. Stop signal `SIGRTMIN+3`. `WEBTOP_INIT_DEBUG=1` parks the container on a
 failed step instead of exiting; `WEBTOP_INIT_SKIP_OVERLAY=1` boots on the image's store alone.
 systemd replaces PID 1's stdout, so a unit follows the journal into a fifo that webtop-init relays to
@@ -75,11 +76,31 @@ such as the patched KWin, or no network): it reinstalls the recorded flake packa
 runs `home-manager switch --flake ~/.config/home-manager`, with desktop notifications. Packages built
 locally without a flake reference are lost only if they cannot be restored.
 
+**User identity** (ADR 0011). The desktop user (uid 1000) is named after the desktop
+(`WEBTOP_DESKTOP`), with home `/home/<name>` and the LDAP display name (`WEBTOP_DISPLAY_NAME`) as
+GECOS. A name that starts with a digit or is an account or group of the image (`root`, `nixbld1`,
+`wheel`, …) falls back to `user`, and the Desktop gets condition `LoginName=False`. The image declares
+the account as `user` and an activation snippet renames it; units, polkit and Nix refer to uid 1000
+or a group, never the name. The data always lives in `/persist/home/user`; `/home` is a tmpfs with a
+bind mount of it at every path listed in `~/.config/webtop/home-paths` plus the current
+`/home/<name>`, which webtop-init adds at every start. Delete a line once nothing refers to that path
+anymore; it disappears at the next start. Lines other than `/home/<valid login name>`, more than 16,
+or a symlinked file are ignored (logged by webtop-init). `status.loginName` and `status.homePaths`
+show the result.
+
+*Existing volumes.* The first start creates `home-paths` with the new path and `/home/user`, so profile
+links, `home.homeDirectory` and KDE configs that name `/home/user` keep working. home-manager itself
+checks the user name and home: change `user`/`/home/user` in `~/.config/home-manager/flake.nix`
+(`homeConfigurations."user"`) and `home.nix` (`home.username`, `home.homeDirectory`) to the new name
+and `/home/<name>`, then `home-manager switch`; until then switches, and the reinstall after an image
+update, fail. Remove `/home/user` from `home-paths` once nothing refers to it.
+
 **home-manager.** On first boot, only if `~/.config/home-manager` is absent (and once), a starter
 flake is created there (`image/home-manager/`). Its `nixpkgs` and `home-manager` inputs come from the
 image (no download): flake inputs resolve indirect refs through the global registry only, so the image
 sets `flake-registry` to the upstream registry with its own `nixpkgs` and `home-manager` pins in front.
-The template's generation is prebuilt into the image. Edit `home.nix` and run `home-manager switch`. Building a changed config may substitute build
+The template is written for the login name; its generation is prebuilt for the placeholder `user`, so the first switch
+builds the few derivations that carry the name. Edit `home.nix` and run `home-manager switch`. Building a changed config may substitute build
 tools from cache.nixos.org. A flake in a git repo ignores untracked files (`git add` them). After an
 image update the template's image-registry inputs are relocked automatically.
 

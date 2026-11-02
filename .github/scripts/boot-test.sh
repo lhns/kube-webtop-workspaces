@@ -17,6 +17,12 @@ reports=$dir/reports
 touch "$reports"
 echo token > "$dir/token"
 mkdir "$dir/persist"
+# A volume from before the login names, its home-paths already edited: /home/user is kept, the rest
+# must be ignored (ADR 0011). Owned by uid 1000 like a real home.
+hp=$dir/persist/home/user/.config/webtop
+mkdir -p "$hp"
+printf '/home/user\nroot\n../x\n/home/root\n/home/../x\n' > "$hp/home-paths"
+sudo chown -R 1000:100 "$dir/persist/home"
 
 python3 "$(dirname "$0")/fake-controller.py" 8081 "$reports" &
 cleanup() {
@@ -30,7 +36,7 @@ docker rm -f desktop-boot >/dev/null 2>&1 || true
 args=(--privileged --cgroupns=private --shm-size=1g --add-host=host.docker.internal:host-gateway -p 8080:8080 -p 8083:8081
   -v "$dir/persist:/persist" -v "$dir/token:/token:ro"
   -e WEBTOP_CONTROLLER_URL=http://host.docker.internal:8081 -e WEBTOP_TOKEN_PATH=/token
-  -e WEBTOP_HTTP_PORT=8080 -e WEBTOP_USER=ci -e WEBTOP_DESKTOP=ci -e WEBTOP_NAMESPACE=ci
+  -e WEBTOP_HTTP_PORT=8080 -e WEBTOP_USER=ci -e WEBTOP_DESKTOP=ci -e WEBTOP_NAMESPACE=ci -e "WEBTOP_DISPLAY_NAME=CI Tester"
   -e WEBTOP_NIX_EXTRA_SUBSTITUTERS=http://cache.invalid/ci -e "WEBTOP_NIX_EXTRA_TRUSTED_PUBLIC_KEYS=ci:AAAA")
 if [ "$mode" = gray ]; then
   mkdir -p "$dir/dropin"
@@ -44,7 +50,7 @@ fi
 start=$(date +%s)
 docker run -d --name desktop-boot "${args[@]}" "$image" >/dev/null
 
-in_session() { docker exec desktop-boot runuser -u user -- env PATH=/run/current-system/sw/bin \
+in_session() { docker exec desktop-boot runuser -u ci -- env PATH=/run/current-system/sw/bin \
   XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus "$@"; }
 
 want='"ready":true'
@@ -70,7 +76,7 @@ while :; do
 done
 
 echo "container pid 1 age: $(docker exec desktop-boot ps -o etimes= -p 1) s; systemd: $(docker exec desktop-boot systemctl is-system-running || true)"
-in_session sh -c 'ps -u user -o etimes=,args= | grep -E "[k]win_wayland|[s]elkies"' | cut -c1-200 || true
+in_session sh -c 'ps -u ci -o etimes=,args= | grep -E "[k]win_wayland|[s]elkies"' | cut -c1-200 || true
 comp=$(in_session busctl --user get-property org.kde.KWin /Compositor org.kde.kwin.Compositing active || true)
 echo "Compositing active: ${comp:-<no answer>}"
 
@@ -93,4 +99,29 @@ code=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:8083/api/
 subst=$(docker exec desktop-boot /run/current-system/sw/bin/nix config show substituters || true)
 case $subst in *cache.nixos.org*http://cache.invalid/ci*) echo "substituters: $subst" ;;
   *) echo "::error::WEBTOP_NIX_EXTRA_SUBSTITUTERS not in nix.conf (substituters: $subst)"; exit 1 ;; esac
+# The desktop user is the desktop's name with uid 1000 and the display name; its home is the
+# volume's, mounted at each valid home path and nothing else.
+pw=$(docker exec desktop-boot getent passwd ci || true)
+case $pw in "ci:x:1000:100:CI Tester:/home/ci:"?*) ;; *) echo "::error::passwd entry of ci: '$pw'"; exit 1 ;; esac
+docker exec desktop-boot loginctl list-sessions --no-legend | grep -q ' 1000 ci ' \
+  || { echo "::error::no logind session of ci"; docker exec desktop-boot loginctl list-sessions; exit 1; }
+in_session systemctl --user show-environment | grep -qx 'HOME=/home/ci' \
+  || { echo "::error::the session's HOME is not /home/ci"; exit 1; }
+groups=" $(docker exec desktop-boot id -nG ci) "
+case $groups in *" wheel "*) ;; *) echo "::error::groups of ci:$groups"; exit 1 ;; esac
+case $groups in *" webtop "*) ;; *) echo "::error::groups of ci:$groups"; exit 1 ;; esac
+homes=$(docker exec desktop-boot ls /home | tr '\n' ' ')
+[ "$homes" = "ci user " ] || { echo "::error::/home holds: $homes"; exit 1; }
+vol=$(docker exec desktop-boot stat -c %d:%i /persist/home/user)
+for h in /home/ci /home/user; do
+  docker exec desktop-boot mountpoint -q "$h" && [ "$(docker exec desktop-boot stat -c %d:%i "$h")" = "$vol" ] \
+    || { echo "::error::$h is not a mount of the volume's home"; exit 1; }
+done
+grep -qx /home/ci "$hp/home-paths" || { echo "::error::/home/ci not added to home-paths"; cat "$hp/home-paths"; exit 1; }
+for bad in root ../x /home/root /home/../x; do
+  docker logs desktop-boot 2>&1 | grep -qF "home-paths: ignoring '$bad'" || { echo "::error::'$bad' not reported as ignored"; exit 1; }
+done
+grep -qF '"loginName":"ci","homePaths":["/home/ci","/home/user"]' "$reports" \
+  || { echo "::error::the agent did not report the login name and home paths"; exit 1; }
+echo "identity: $pw; /home: $homes"
 echo "boot test passed"

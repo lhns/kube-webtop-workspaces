@@ -312,6 +312,27 @@ func TestReportStageTooLong(t *testing.T) {
 	}
 }
 
+func TestReportIdentity(t *testing.T) {
+	e := newEnv(t, desktop(nil), desktopPod("pod-1"))
+	if rec := e.do("/api/v1/report", `{"loginName":"bob","homePaths":["/home/bob","/home/user"]}`, "tok"); rec.Code != 204 {
+		t.Fatal(rec.Code, rec.Body)
+	}
+	// Absent fields keep the reported identity.
+	e.do("/api/v1/report", `{"connectedClients":1}`, "tok")
+	if st := e.get(t).Status; st.LoginName != "bob" || len(st.HomePaths) != 2 || st.HomePaths[1] != "/home/user" {
+		t.Fatalf("status: %+v", st)
+	}
+	many := strings.TrimSuffix(strings.Repeat(`"/home/a",`, maxHomePaths+1), ",")
+	for _, body := range []string{
+		`{"loginName":"1abc"}`, `{"loginName":""}`, `{"homePaths":["/home/../x"]}`, `{"homePaths":["/root"]}`,
+		`{"homePaths":[` + many + `]}`,
+	} {
+		if rec := e.do("/api/v1/report", body, "tok"); rec.Code != 400 {
+			t.Errorf("%s: %d", body, rec.Code)
+		}
+	}
+}
+
 func TestReportFromOldPodConflicts(t *testing.T) {
 	e := newEnv(t, desktop(func(d *v1alpha1.Desktop) { d.Status.PodUID = "pod-2" }), desktopPod("pod-1"))
 	if rec := e.do("/api/v1/report", `{"ready":true}`, "tok"); rec.Code != 409 {

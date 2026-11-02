@@ -13,7 +13,9 @@ type Config struct {
 	HTTPPort          int
 	StateDir          string
 	WaylandSocket     string // empty = discover from the user manager
-	User              string
+	User              string // empty = uid 1000
+	LoginName         string // reported to the controller
+	HomePaths         []string
 	PowerHookTimeout  time.Duration
 	IdleThreshold     time.Duration
 	CompositorTimeout time.Duration
@@ -44,7 +46,9 @@ func FromEnv(getenv func(string) string) Config {
 		HTTPPort:          port,
 		StateDir:          str("WEBTOP_AGENT_STATE_DIR", "/run/webtop"),
 		WaylandSocket:     str("WEBTOP_AGENT_WAYLAND_SOCKET", ""),
-		User:              str("WEBTOP_AGENT_USER", "user"),
+		User:              str("WEBTOP_AGENT_USER", ""),
+		LoginName:         str("WEBTOP_LOGIN_NAME", ""),
+		HomePaths:         strings.Fields(getenv("WEBTOP_HOME_PATHS")),
 		PowerHookTimeout:  dur("WEBTOP_POWER_HOOK_TIMEOUT", 60*time.Second),
 		IdleThreshold:     dur("WEBTOP_IDLE_REASON_THRESHOLD", 60*time.Second),
 		CompositorTimeout: dur("WEBTOP_COMPOSITOR_TIMEOUT", 3*time.Minute),

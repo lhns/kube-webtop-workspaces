@@ -39,6 +39,7 @@ const (
 	extraPodUID  = "authentication.kubernetes.io/pod-uid"
 	maxBody      = 16 << 10
 	maxStage     = 64 // characters; the agent's stage is free text shown on the boot page
+	maxHomePaths = 16 // the image mounts at most this many
 )
 
 // Authenticator validates a bearer token.
@@ -318,12 +319,28 @@ func (s *Server) reboot(ctx context.Context, c *caller, d *v1alpha1.Desktop) *ht
 // ---- report ----
 
 type reportRequest struct {
-	Stage            *string `json:"stage"`
-	BootProgress     *int32  `json:"bootProgress"`
-	Ready            *bool   `json:"ready"`
-	ConnectedClients *int32  `json:"connectedClients"`
-	IdleSeconds      *int64  `json:"idleSeconds"`
-	Asleep           *bool   `json:"asleep"`
+	Stage            *string  `json:"stage"`
+	BootProgress     *int32   `json:"bootProgress"`
+	Ready            *bool    `json:"ready"`
+	ConnectedClients *int32   `json:"connectedClients"`
+	IdleSeconds      *int64   `json:"idleSeconds"`
+	Asleep           *bool    `json:"asleep"`
+	LoginName        *string  `json:"loginName"`
+	HomePaths        []string `json:"homePaths"`
+}
+
+// validIdentity checks the reported login name and home paths against the image's rules
+// (docs/contract.md, section 8.3).
+func (req *reportRequest) validIdentity() bool {
+	if req.LoginName != nil && !names.ValidLogin(*req.LoginName) || len(req.HomePaths) > maxHomePaths {
+		return false
+	}
+	for _, p := range req.HomePaths {
+		if n, ok := strings.CutPrefix(p, "/home/"); !ok || !names.ValidLogin(n) {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) report(w http.ResponseWriter, r *http.Request) {
@@ -348,6 +365,10 @@ func (s *Server) report(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Stage != nil && utf8.RuneCountInString(*req.Stage) > maxStage {
 		writeErr(sw, fail(http.StatusBadRequest, "stage longer than %d characters", maxStage))
+		return
+	}
+	if !req.validIdentity() {
+		writeErr(sw, fail(http.StatusBadRequest, "invalid loginName or homePaths"))
 		return
 	}
 	d, herr := s.getDesktop(r.Context(), c.desktop, false)
@@ -380,6 +401,12 @@ func (s *Server) report(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Asleep != nil {
 		st.Asleep = *req.Asleep
+	}
+	if req.LoginName != nil {
+		st.LoginName = *req.LoginName
+	}
+	if req.HomePaths != nil {
+		st.HomePaths = req.HomePaths
 	}
 	now := metav1.NewTime(s.now())
 	st.LastReportTime = &now

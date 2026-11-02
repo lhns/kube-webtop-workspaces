@@ -33,9 +33,10 @@ const testNS = "default"
 
 // fakeDir is a settable ldap.Directory.
 type fakeDir struct {
-	mu      sync.Mutex
-	members map[string]struct{}
-	err     error
+	mu           sync.Mutex
+	members      map[string]struct{}
+	displayNames map[string]string
+	err          error
 }
 
 func (f *fakeDir) Members(context.Context) (map[string]struct{}, error) {
@@ -59,6 +60,15 @@ func (f *fakeDir) IsMember(_ context.Context, u string) (bool, error) {
 	}
 	_, ok := f.members[u]
 	return ok, nil
+}
+
+func (f *fakeDir) DisplayName(_ context.Context, u string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.err != nil {
+		return "", f.err
+	}
+	return f.displayNames[u], nil
 }
 
 func (f *fakeDir) setErr(err error) { f.mu.Lock(); f.err = err; f.mu.Unlock() }
@@ -101,7 +111,7 @@ ldap: {url: "ldap://fake", baseDN: "dc=x", groupDN: "cn=g,dc=x"}
 	if err != nil {
 		panic(err)
 	}
-	dir := &fakeDir{members: map[string]struct{}{}}
+	dir := &fakeDir{members: map[string]struct{}{}, displayNames: map[string]string{"alice": "Alice, Example"}}
 	for _, u := range []string{"alice", "bob", "carol", "dave", "erin", "frank", "grace", "heidi"} {
 		dir.members[u] = struct{}{}
 	}
@@ -260,6 +270,19 @@ func TestStartCreatesObjects(t *testing.T) {
 	}
 	if d.Status.URL != "http://desktop-alice.default.svc:8080" {
 		t.Fatalf("url: %s", d.Status.URL)
+	}
+	// The display name is looked up at the start, sanitized for GECOS, and passed to the pod.
+	if d.Status.DisplayName != "Alice Example" {
+		t.Fatalf("displayName: %q", d.Status.DisplayName)
+	}
+	var displayEnv string
+	for _, e := range dep.Spec.Template.Spec.Containers[0].Env {
+		if e.Name == "WEBTOP_DISPLAY_NAME" {
+			displayEnv = e.Value
+		}
+	}
+	if displayEnv != "Alice Example" {
+		t.Fatalf("WEBTOP_DISPLAY_NAME = %q", displayEnv)
 	}
 	eventually(t, "Starting/Scheduling status", func() bool {
 		d := getDesktop(t, "alice")

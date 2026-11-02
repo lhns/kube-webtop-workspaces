@@ -53,12 +53,19 @@ const (
 const (
 	ConditionAuthorized = "Authorized"
 	ConditionReady      = "Ready"
+	ConditionLoginName  = "LoginName"
 
 	ReasonMember       = "Member"
 	ReasonLDAPDisabled = "LDAPDisabled"
 	ReasonNotMember    = "NotMember"
 	ReasonLDAPError    = "LDAPError"
 	ReasonInvalidName  = "InvalidName"
+
+	// LoginName reasons: the desktop user has the desktop's name, or fell back to "user" because
+	// the name is not a valid login name or is an account of the image.
+	ReasonDesktopName      = "DesktopName"
+	ReasonInvalidLoginName = "InvalidLoginName"
+	ReasonReservedName     = "ReservedName"
 )
 
 // DesktopSpec is the desired state of a Desktop.
@@ -152,6 +159,17 @@ type DesktopStatus struct {
 	// web client wakes it. Reset with the pod.
 	// +optional
 	Asleep bool `json:"asleep,omitempty"`
+	// LoginName is the desktop user's login name, as the agent reported it: the desktop name, or
+	// "user" when that is not usable (condition LoginName). Kept while off.
+	// +optional
+	LoginName string `json:"loginName,omitempty"`
+	// HomePaths are the paths the user's home is mounted at, as the agent reported them. Kept while off.
+	// +kubebuilder:validation:MaxItems=16
+	// +optional
+	HomePaths []string `json:"homePaths,omitempty"`
+	// DisplayName is the LDAP display name the current or last pod was started with.
+	// +optional
+	DisplayName string `json:"displayName,omitempty"`
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 	// +listType=map

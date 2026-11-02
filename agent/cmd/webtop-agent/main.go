@@ -17,7 +17,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"os/user"
 	"path/filepath"
 	"syscall"
 	"time"
@@ -160,6 +159,7 @@ func run(cfg config.Config) {
 		return
 	}
 	client := api.New(cfg.ControllerURL, cfg.TokenPath)
+	client.LoginName, client.HomePaths = cfg.LoginName, cfg.HomePaths
 
 	// Idle detection is best effort and independent of readiness.
 	tracker := idle.NewTracker(cfg.StateDir)
@@ -193,11 +193,8 @@ func run(cfg config.Config) {
 // serveApps serves the gateway-facing apps API (docs/contract.md, 7.7) until ctx ends, independently
 // of the controller API.
 func serveApps(ctx context.Context, cfg config.Config) {
-	home := ""
-	if u, err := user.Lookup(cfg.User); err == nil {
-		home = u.HomeDir
-	}
-	l := &apps.Launcher{Session: usersession.LookupUser(cfg.User), StateDir: cfg.StateDir, Home: home}
+	u := usersession.LookupUser(cfg.User)
+	l := &apps.Launcher{Session: u, StateDir: cfg.StateDir, Home: u.Home}
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", apps.Port),
 		Handler:           apps.Handler(l),
