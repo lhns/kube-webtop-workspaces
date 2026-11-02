@@ -19,7 +19,7 @@ case $cmd in
   write)
     [ $# -eq 1 ] || usage
     mkdir -p "$(dirname "$target")" "$(dirname "$state")"
-    cp "$1" "$target.webtop-tmp"
+    cp -f "$1" "$target.webtop-tmp" # -f: a leftover from an interrupted write is read-only
     chmod 644 "$target.webtop-tmp" # store files are read-only
     mv "$target.webtop-tmp" "$target"
     sum=$(sha256sum < "$target" | cut -d' ' -f1)

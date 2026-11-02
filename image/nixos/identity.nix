@@ -34,12 +34,10 @@ in
     if [ -n "$name" ]; then
       usermod -d "/home/$name" -c "''${gecos:-$name}" "$name" \
         || echo "webtop-identity: setting the home and GECOS of $name failed"
-      # usermod renames neither the subordinate id ranges nor the linger flag (logind reads that
-      # directory when it starts, after activation).
+      # usermod does not rename the subordinate id ranges. Lingering goes by uid (webtop-nix).
       for f in /etc/subuid /etc/subgid; do
         [ ! -f "$f" ] || ${pkgs.gnused}/bin/sed -i "s/^${cfg.user}:/$name:/" "$f"
       done
-      mkdir -p /var/lib/systemd/linger && touch "/var/lib/systemd/linger/$name"
     fi
   '';
 }
