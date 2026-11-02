@@ -142,6 +142,10 @@ as_user nix profile list --json | jq -e '.elements.jq.backend == "profile"' >/de
 as_user nix profile remove jq || fail "removing the store path failed"
 { as_user nix profile add --profile-backend profile "$jqpath" && as_user nix profile remove --profile-backend profile jq; } \
   || fail "--profile-backend profile failed"
+! as_user nix profile add --profile-backend profile --profile-hook /run/current-system/sw/bin/false "$jqpath" 2>/dev/null \
+  || fail "a failing hook did not fail a profile change"
+! as_user nix profile list --profile-backend profile --json | jq -e '.elements.jq' >/dev/null \
+  || fail "a failing hook did not roll the profile back"
 { as_user nix profile add --profile /tmp/ci-profile nixpkgs#hello && as_user test -x /tmp/ci-profile/bin/hello; } \
   || fail "--profile <path> failed"
 [ "$(as_user sha256sum "$decl")" = "$sum" ] || fail "a profile backend changed packages.json"
