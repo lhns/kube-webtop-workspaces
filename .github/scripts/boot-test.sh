@@ -132,7 +132,7 @@ senv=$(docker exec desktop-boot sh -c 'tr "\0" "\n" < /proc/$(systemctl show -P 
 grep -qx 'HOME=/home/ci' <<<"$senv" \
   || { echo "::error::the session's HOME is not /home/ci"; echo "$senv" | grep -E '^(HOME|USER)='; exit 1; }
 docker exec desktop-boot sh -c 'grep -q "^ci:" /etc/subuid && grep -q "^ci:" /etc/subgid && ! grep -q "^user:" /etc/subuid /etc/subgid' \
-  || { echo "::error::subordinate id ranges not renamed to ci"; exit 1; }
+  || { echo "::error::subordinate id ranges not renamed to ci"; docker exec desktop-boot sh -c 'ls -l /etc/subuid /etc/subgid; cat /etc/subuid /etc/subgid'; exit 1; }
 docker exec desktop-boot test -e /var/lib/systemd/linger/ci || { echo "::error::ci does not linger"; exit 1; }
 groups=" $(docker exec desktop-boot id -nG ci) "
 case $groups in *" wheel "*) ;; *) echo "::error::groups of ci:$groups"; exit 1 ;; esac
