@@ -276,15 +276,27 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			h.serveWake(w, r, rt, d)
 		default:
+			if app, ok := appIconName(cleaned); ok {
+				if r.Method != http.MethodGet && r.Method != http.MethodHead {
+					h.methodNotAllowed(w, http.MethodGet)
+					return
+				}
+				h.serveAppIcon(w, r, d, app)
+				return
+			}
 			h.errorPage(w, http.StatusNotFound, "Not found", "There is nothing here.", outNotFound)
 		}
 		return
 	}
 
-	app, isApp := "", false
+	app, isApp, overview := "", false, false
 	nav := r.Method == http.MethodGet && IsNavigation(r)
 	if nav {
-		app, isApp = appName(path.Clean("/" + rt.rest))
+		if overview = rt.rest == appPrefix; overview {
+			app = appsOverview
+		} else {
+			app, isApp = appName(path.Clean("/" + rt.rest))
+		}
 	}
 	if isReady(d) && nav {
 		// A frozen stream is useless, so show the sleep page. Only navigations: an open stream
@@ -298,6 +310,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if isReady(d) {
+		if overview {
+			h.serveAppsOverview(w, r, rt, d)
+			return
+		}
 		if isApp {
 			h.serveApp(w, r, rt, d, app)
 			return
@@ -554,11 +570,7 @@ func (h *Handler) serveStart(w http.ResponseWriter, r *http.Request, rt *route, 
 	}
 	h.count(outStart)
 	w.Header().Set("Cache-Control", "no-store")
-	target := rt.base + "/"
-	if app := returnApp(r); app != "" {
-		target = rt.base + appPrefix + app
-	}
-	http.Redirect(w, r, target, http.StatusSeeOther)
+	http.Redirect(w, r, returnTarget(r, rt), http.StatusSeeOther)
 }
 
 func (h *Handler) asleepPage(w http.ResponseWriter, rt *route, app string) {
@@ -592,11 +604,19 @@ func (h *Handler) serveWake(w http.ResponseWriter, r *http.Request, rt *route, d
 		HttpOnly: true, Secure: h.secure, SameSite: http.SameSiteLaxMode,
 	})
 	w.Header().Set("Cache-Control", "no-store")
-	target := rt.base + "/"
-	if app := returnApp(r); app != "" {
-		target = rt.base + appPrefix + app
+	http.Redirect(w, r, returnTarget(r, rt), http.StatusSeeOther)
+}
+
+// returnTarget is where Start and Wake send the visitor back to.
+func returnTarget(r *http.Request, rt *route) string {
+	switch app := returnApp(r); app {
+	case "":
+		return rt.base + "/"
+	case appsOverview:
+		return rt.base + appPrefix
+	default:
+		return rt.base + appPrefix + app
 	}
-	http.Redirect(w, r, target, http.StatusSeeOther)
 }
 
 func hasWakeCookie(r *http.Request) bool {

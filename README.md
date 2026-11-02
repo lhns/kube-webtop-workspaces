@@ -18,7 +18,9 @@ One Go binary (`cmd/kube-webtop-workspaces`), run as two Deployments:
   screen, then redirects to the desktop page `/#display2-right`. Limits: one app at a time (opening
   another releases the first, which keeps running on the main desktop), audio plays on the main page
   only, any application installed for the user is allowed, and an unknown id gets a 404 page.
-  Reloading the URL does not start a second instance while the app is running. Contract:
+  Reloading the URL does not start a second instance while the app is running. `/apps/` (without a
+  name) is an overview page of the desktop's applications with icons and a "running" badge, each
+  linking to its `/apps/<name>`. Contract:
   [section 7.6](docs/contract.md#76-single-app-baseappsname), ADR 0010.
 - **controller** (`--mode=controller`): reconciles `Desktop` resources
   (`webtop.lhns.github.io/v1alpha1`) into a PVC, Service and Deployment, and checks LDAP group

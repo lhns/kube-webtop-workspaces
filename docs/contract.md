@@ -306,6 +306,8 @@ Enabled when `ldap.url` is set; otherwise every user is authorized (`LDAPDisable
 | `<base>/.webtop/ping` | GET/HEAD, `204` `no-store`, same authz as the desktop, never proxied. `reload.js` requests it every 60 s so the forward-auth in front of the gateway sees traffic and keeps its session active while a tab is open |
 | `<base>/.webtop/start` | POST start, never proxied |
 | `<base>/.webtop/wake` | POST wake from the sleep page (section 7.5), never proxied |
+| `<base>/.webtop/apps/<id>/icon` | GET/HEAD, same authz as the desktop, never proxied: the app's icon from the agent (section 7.6) |
+| `<base>/apps/` | top-level `GET` only: the apps overview (section 7.6). Any other request to it is proxied |
 | `<base>/apps/<name>` | top-level `GET` only: single-app streaming (section 7.6). The gateway owns this path for navigations; any other request to it is proxied like every other path |
 
 `/u/<user>` without the trailing slash redirects (308) to `/u/<user>/`. Paths under `/u/` never
@@ -390,7 +392,7 @@ reloads a tab that saw the desktop awake when it falls asleep (a tab opened whil
 does not). A navigation (section 7.4) `GET` to a `Running` desktop with `status.asleep` gets the
 **sleep page** "Your desktop is asleep" instead of being proxied; it has the off page's CSRF cookie,
 and a form `POST <base>/.webtop/wake` with fields `csrf` and optionally `app` (as for start). Any other
-request (websocket, XHR, a frame) is proxied as usual. `/apps/<name>` navigations get the same page.
+request (websocket, XHR, a frame) is proxied as usual. `/apps/<name>` and `/apps/` navigations get the same page (the form carries `app`, `*` for the overview).
 Wake checks CSRF like start, sets cookie `webtop_wake=1` (`HttpOnly`, `SameSite=Lax`, `Path=<base>/`,
 `Max-Age=60`, `Secure` as above) and answers `303` to `<base>/` or `<base>/apps/<app>`. A navigation
 with that cookie is proxied while the desktop is asleep: it opens a new Selkies session, which makes
@@ -409,6 +411,21 @@ navigation (section 7.4) `GET`, is not this route and is handled as any other pa
 | `Running` | the gateway calls the agent (section 7.7); on success `303` to `<base>/#display2-right` (`no-store`) |
 | agent: unknown application | 404 page "App not found" |
 | agent unreachable or failed | 503 page with `Retry-After: 5` |
+
+**Overview: `<base>/apps/`** (exactly this path, a navigation `GET`, like `<base>/apps/<name>`):
+
+| desktop | result |
+| --- | --- |
+| not `Running` | the table of section 7.5; the off page's start form carries `app=*` (a value that is no app name) so the `303` goes to `<base>/apps/` |
+| `Running` | the gateway lists the apps through the agent (section 7.7) and renders a page: a grid of icon and name, a "running" badge, each linking to `<base>/apps/<id>`; `no-store`, counted as outcome `apps` |
+| agent unreachable or failed | 503 page with `Retry-After: 5` |
+
+The icons are `<img>` of `<base>/.webtop/apps/<id>/icon`, which relays `GET /api/v1/apps/<id>/icon`
+of the agent: only `image/png` and `image/svg+xml` pass (else 502), `Content-Type` and `Cache-Control`
+come from the agent, and every answer has `X-Content-Type-Options: nosniff`. An SVG also gets
+`Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'`, since SVG can carry script.
+A desktop that is not `Running` answers 503, a missing icon 404. An app without an icon shows its
+initial.
 
 The target is the Selkies page with the fragment `#display2-right`: it makes KWin grow the screen
 `SELKIES-2` and streams only that screen, with the app fullscreen on it ([webtop-nix, "One app per
@@ -444,6 +461,29 @@ cluster must provide that isolation itself.
 
 Reloading `/apps/<name>` therefore does not start a second instance while the app runs; an app that
 is not recognised as running but has its own single-instance logic just raises its window.
+
+`GET /api/v1/apps` answers `200` with a JSON array `[{"id","name","icon","running"}]` sorted by name
+(`[]` if none):
+
+- Sources: `applications/*.desktop` (top level only; a file in a subdirectory has the id
+  `dir-file` and is not listed) in the same data dirs as above. The first dir with an id wins, even
+  if its entry is hidden. Skipped: `Type` other than `Application`, `NoDisplay=true`, `Hidden=true`,
+  `OnlyShowIn` without `KDE`, `NotShowIn` with `KDE`, ids that do not match the name rule.
+- `name` is the unlocalized `Name`. `running` is the active-unit check of step 5 above, from one
+  query of the user manager (if it fails, nothing is marked running). `icon` is true if the icon
+  below resolves.
+
+`GET /api/v1/apps/<name>/icon` answers with the image (`image/png` or `image/svg+xml`,
+`Cache-Control: max-age=3600`, `nosniff`), 404 if the app or its icon does not exist. `Icon=` is an
+absolute path (served only if it is inside one of the data dirs) or a name, searched as
+`<datadir>/icons/{breeze,hicolor}/{scalable,256x256,128x128,64x64,48x48}/apps/<icon>.{svg,png}`, then
+`<datadir>/pixmaps/<icon>.{svg,png}`. Files over 1 MiB, empty files and other formats (XPM, SVGZ) are
+ignored.
+
+The agent runs as root and `~/.local/share` is the user's, so both endpoints read a desktop or icon
+file only if, with symlinks resolved, it is a regular file in the Nix store (`/nix/store`) or inside
+the user's own `~/.local/share` (itself resolved inside the home). A link leading anywhere else is
+ignored.
 
 `GET /healthz` answers `ok`.
 

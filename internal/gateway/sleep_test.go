@@ -55,6 +55,10 @@ func TestAsleepNavigationShowsSleepPage(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), `name="app" value="org.kde.dolphin"`) {
 		t.Fatalf("app not carried: %s", rec.Body)
 	}
+	rec = e.do("GET", "/apps/", navHeaders)
+	if !strings.Contains(rec.Body.String(), `name="app" value="*"`) {
+		t.Fatalf("overview not carried: %s", rec.Body)
+	}
 	e = newEnv(t, func(g *config.Gateway) { g.AdminGroup = "admins" }, desktop("bob", "bob", running(b.URL), asleep()))
 	rec = e.do("GET", "/u/bob/", navHeaders, map[string]string{"Remote-Groups": "admins"})
 	if !strings.Contains(rec.Body.String(), `action="/u/bob/.webtop/wake"`) {
@@ -126,6 +130,9 @@ func TestWakePost(t *testing.T) {
 		rec := post(e, "/u/bob/.webtop/wake", tok, url.Values{"app": {"firefox"}},
 			map[string]string{"Sec-Fetch-Site": "same-origin", "Remote-Groups": "admins"})
 		c := wakeCookieOf(rec)
+		if over := post(e, "/u/bob/.webtop/wake", tok, url.Values{"app": {"*"}}, map[string]string{"Sec-Fetch-Site": "same-origin", "Remote-Groups": "admins"}); over.Header().Get("Location") != "/u/bob/apps/" {
+			t.Errorf("overview loc %q", over.Header().Get("Location"))
+		}
 		if rec.Code != 303 || rec.Header().Get("Location") != "/u/bob/apps/firefox" || c == nil || c.Path != "/u/bob/" {
 			t.Fatalf("code %d loc %q cookie %v", rec.Code, rec.Header().Get("Location"), c)
 		}

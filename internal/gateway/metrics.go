@@ -13,6 +13,7 @@ const (
 	outApp         = "app"
 	outAsleep      = "asleep"
 	outWake        = "wake"
+	outApps        = "apps"
 	outUnavailable = "unavailable"
 	outDenied      = "denied"
 	outNotFound    = "notfound"
