@@ -48,7 +48,11 @@ Built from `flake.nix` with nix2container: `nix build .#image`, then
 | `image/nixos/container.nix` | NixOS as a container, Nix store settings, journal relay |
 | `image/nixos/desktop.nix` | `services.webtop` (webtop-nix) wired to the pod contract |
 | `image/nixos/hooks.nix` | agent units: power hook, session save, suspend, image-update restore and reinstall |
-| `image/nixos/home-manager.nix` | home-manager from the image (registry, CLI), starter flake unit, prebuilt generation |
+| `image/nixos/home-manager.nix` | home-manager from the image (registry, CLI), the patched Nix, starter flake and migration unit, prebuilt generation |
+| `image/home-manager/` | the starter flake: `flake.nix`, `home.nix`, `packages.nix` (reads `packages.json`) |
+| `image/nix/` | Nix with `nix profile` backends (`profile-backends.patch`, ADR 0011) |
+| `image/webtop-home-manager.sh` | creates or migrates the starter flake, relocks after image updates, switches |
+| `image/webtop-profile-hook.sh` | `profile-hook`: applies a changed `packages.json` with `home-manager switch` |
 | `image/webtop-nix-restore.sh` | copies the users' paths from the old store overlay into the new one |
 | `agent/` | in-pod agent (Go, its own module; packaged by `image/agent.nix`) |
 
@@ -73,17 +77,48 @@ home-manager generations, GC roots) from the kept overlay into the new store; pa
 had are substituted. It skips when there is no room (free space after the copy must stay above a
 reserve). Only then `webtop-nix-trash.service` deletes the old overlay, and
 `webtop-nix-reinstall.service` runs for what did not come back (roots that depend on image-only paths
-such as the patched KWin, or no network): it reinstalls the recorded flake packages (by locked URL) and
-runs `home-manager switch --flake ~/.config/home-manager`, with desktop notifications. Packages built
-locally without a flake reference are lost only if they cannot be restored.
+such as the patched KWin, or no network): it reinstalls the recorded flake packages of the profile (by
+locked URL) and runs `webtop-home-manager` (relock, `home-manager switch`, which reinstates everything
+declared), with desktop notifications. Packages built locally without a flake reference are lost only
+if they cannot be restored.
 
 **home-manager.** On first boot, only if `~/.config/home-manager` is absent (and once), a starter
-flake is created there (`image/home-manager/`). Its `nixpkgs` and `home-manager` inputs come from the
+flake is created there (`image/home-manager/`) and switched to. Its `nixpkgs` and `home-manager` inputs come from the
 image (no download): flake inputs resolve indirect refs through the global registry only, so the image
 sets `flake-registry` to the upstream registry with its own `nixpkgs` and `home-manager` pins in front.
-The template's generation is prebuilt into the image. Edit `home.nix` and run `home-manager switch`. Building a changed config may substitute build
-tools from cache.nixos.org. A flake in a git repo ignores untracked files (`git add` them). After an
-image update the template's image-registry inputs are relocked automatically.
+The template's generation is prebuilt into the image. Building a changed config may substitute build
+tools from cache.nixos.org. A flake in a git repo ignores untracked files (`git add` them; the profile
+hook does `git add --intent-to-add packages.json`). After an image update the image-registry inputs are
+relocked automatically (`webtop-home-manager.service`, or the reinstall unit after an image update).
+
+**Software** (ADR 0011). One declaration, `~/.config/home-manager/packages.json`, which the
+starter flake's `packages.nix` installs and points `nix profile` at:
+
+| to | run |
+| --- | --- |
+| install | `nix profile add nixpkgs#hello` (any flake installable) |
+| remove | `nix profile remove hello` (names, `--regex`, `--all`) |
+| list | `nix profile list` (declared packages, then undeclared profile elements, marked `Backend:`) |
+| upgrade | `nix profile upgrade --all`: relocks packages from other flakes; nixpkgs ones follow the image |
+| undo | `nix profile history`, `nix profile rollback [--to N]`: versions of packages.json only |
+| try without installing | `nix shell nixpkgs#hello` |
+
+Nix is patched (`image/nix/`): with `profile-backend = declaration:<file>` (set in the user's
+`~/.config/nix/nix.conf` by `packages.nix`), `add` builds the installable and records it in the
+file the way `manifest.json` records an element, then runs `profile-hook`
+(`webtop-profile-hook`: `home-manager switch`); if the hook fails the file is restored. Store
+paths and elements the file does not declare stay in the profile as before (home-manager's own
+generation is one); `--profile-backend profile` or `--profile <path>` gives stock behaviour for one
+call. Packages in `home.nix` work as before. KDE add-ons from Plasma's "Get New…" dialogs live in
+`~/.local/share`, outside the declaration; there is no Discover.
+
+An earlier starter flake (unmodified apart from the user name) is migrated once at boot:
+`packages.nix` and `packages.json` are added, the `nix profile` flake packages move into
+`packages.json` (store-path entries stay in the profile) and it switches, with a notification; on
+failure everything is put back. The previous `flake.nix`/`flake.lock` are kept in
+`~/.local/state/webtop/home-manager-before-packages-json`. A customized setup, or a hand-written
+`~/.config/nix/nix.conf`, is left alone (stock `nix profile`) with a notification; to opt in, copy
+`packages.nix` and `packages.json` from `image/home-manager/` and add `./packages.nix` to the modules.
 
 **Power.** The agent reports stops to the controller before PID 1 exits (contract section 8.2):
 

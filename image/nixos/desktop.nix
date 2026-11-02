@@ -1,5 +1,5 @@
 # The desktop itself (webtop-nix's services.webtop), wired to the pod contract (docs/contract.md).
-{ ... }:
+{ pkgs, ... }:
 
 {
   services.webtop = {
@@ -18,6 +18,10 @@
       SELKIES_FRAMERATE = "30,8-240";
     };
   };
+
+  # One way to install software (ADR 0011): Discover has no Nix backend on NixOS. Plasma's "Get New…"
+  # dialogs (KNewStuff) stay.
+  environment.plasma6.excludePackages = [ pkgs.kdePackages.discover ];
 
   # webtop-init writes SELKIES_PORT=$WEBTOP_HTTP_PORT here; EnvironmentFile wins over Environment.
   systemd.user.services.selkies.serviceConfig.EnvironmentFile = "-/run/webtop/selkies.env";

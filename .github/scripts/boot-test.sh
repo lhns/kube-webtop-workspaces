@@ -96,4 +96,54 @@ curl -fsS http://localhost:8083/api/v1/apps | python3 -c 'import json,sys; a=jso
 subst=$(docker exec desktop-boot /run/current-system/sw/bin/nix config show substituters || true)
 case $subst in *cache.nixos.org*http://cache.invalid/ci*) echo "substituters: $subst" ;;
   *) echo "::error::WEBTOP_NIX_EXTRA_SUBSTITUTERS not in nix.conf (substituters: $subst)"; exit 1 ;; esac
+
+# Software installation (ADR 0011): one declaration that `nix profile` edits.
+fail() { echo "::error::$*"; exit 1; }
+as_user() { in_session env HOME=/home/user PATH=/home/user/.nix-profile/bin:/home/user/.local/state/nix/profiles/profile/bin:/run/current-system/sw/bin "$@"; }
+decl=/home/user/.config/home-manager/packages.json
+for _ in $(seq 1 150); do
+  [ "$(docker exec desktop-boot systemctl show -P ActiveState webtop-home-manager)" = active ] || break
+  sleep 2
+done
+[ "$(docker exec desktop-boot systemctl show -P Result webtop-home-manager)" = success ] \
+  || { docker exec desktop-boot journalctl -u webtop-home-manager --no-pager | tail -n 50; fail "webtop-home-manager failed"; }
+! docker exec desktop-boot sh -c 'command -v discover' || fail "Discover is installed"
+docker exec desktop-boot sh -c 'nix-store -qR /run/current-system | grep -q -- -knewstuff-' || fail "KNewStuff is not in the system"
+[ "$(as_user sh -c 'command -v nix')" = /run/current-system/sw/bin/nix ] || fail "nix on the user's PATH is not the system's"
+backend=$(as_user nix config show profile-backend)
+[ "$backend" = "declaration:$decl" ] || fail "profile-backend is '$backend'"
+as_user nix profile add nixpkgs#hello || fail "nix profile add nixpkgs#hello failed"
+as_user jq -e '.elements.hello.originalUrl == "flake:nixpkgs"' "$decl" >/dev/null || fail "hello is not in packages.json"
+as_user hello >/dev/null || fail "hello is not on PATH after the switch"
+out=$(as_user nix profile list 2>&1)
+{ grep -q 'hello' <<<"$out" && grep -q 'Backend: *declaration' <<<"$out"; } || fail "nix profile list: $out"
+! grep -qE 'ignoring (the client-specified|untrusted)' <<<"$out" || fail "the daemon got the client-side settings: $out"
+as_user nix profile list --json | as_user jq -e '.elements.hello.backend == "declaration"
+  and (.elements | to_entries | any(.value.backend == "profile" and (.value.storePaths[0] // "" | endswith("home-manager-path"))))' >/dev/null \
+  || fail "nix profile list --json is not marked or lacks home-manager-path"
+as_user home-manager switch --flake /home/user/.config/home-manager >/dev/null || fail "a direct home-manager switch failed"
+as_user nix profile remove hello || fail "nix profile remove hello failed"
+! as_user jq -e '.elements.hello' "$decl" >/dev/null || fail "hello is still in packages.json"
+! as_user sh -c 'command -v hello' >/dev/null || fail "hello is still installed"
+as_user nix profile history | grep -q 'hello' || fail "nix profile history does not show hello"
+as_user nix profile rollback || fail "nix profile rollback failed"
+as_user hello >/dev/null || fail "rollback did not bring hello back"
+sum=$(as_user sha256sum "$decl")
+! as_user nix profile remove --profile-hook /run/current-system/sw/bin/false hello 2>/dev/null || fail "a failing hook did not fail"
+[ "$(as_user sha256sum "$decl")" = "$sum" ] || fail "a failing hook did not restore packages.json"
+out=$(as_user nix profile remove --profile-hook '' hello 2>&1 || true)
+grep -q "needs 'profile-hook'" <<<"$out" || fail "an empty hook was accepted: $out"
+# Store paths and explicit profiles bypass the declaration.
+jqpath=$(as_user sh -c 'dirname "$(dirname "$(readlink -f /run/current-system/sw/bin/jq)")"')
+as_user nix profile add "$jqpath" || fail "adding a store path failed"
+as_user nix profile list --json | as_user jq -e '.elements.jq.backend == "profile"' >/dev/null || fail "the store path is not in the profile"
+as_user nix profile remove jq || fail "removing the store path failed"
+{ as_user nix profile add --profile-backend profile "$jqpath" && as_user nix profile remove --profile-backend profile jq; } \
+  || fail "--profile-backend profile failed"
+{ as_user nix profile add --profile /tmp/ci-profile nixpkgs#hello && as_user test -x /tmp/ci-profile/bin/hello; } \
+  || fail "--profile <path> failed"
+[ "$(as_user sha256sum "$decl")" = "$sum" ] || fail "a profile backend changed packages.json"
+out=$(as_user nix profile list --profile /tmp/ci-profile --profile-backend profile 2>&1 || true)
+grep -q 'cannot be used together' <<<"$out" || fail "--profile with --profile-backend was accepted: $out"
+echo "software installation: ok"
 echo "boot test passed"

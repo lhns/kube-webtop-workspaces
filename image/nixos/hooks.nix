@@ -1,6 +1,6 @@
 # The in-pod agent (agent/) and the units that tie the desktop's power actions, boot progress and
 # activity to the controller's power/report API (docs/contract.md, section 8).
-{ config, lib, pkgs, agent, home-manager, ... }:
+{ config, lib, pkgs, agent, ... }:
 
 let
   cfg = config.services.webtop;
@@ -8,8 +8,6 @@ let
   exe = "${agent}/bin/webtop-agent";
   envFile = "-/run/webtop/env";
   userBus = "unix:path=/run/user/${uid}/bus";
-
-  hmPackage = home-manager.packages.${pkgs.stdenv.hostPlatform.system}.home-manager;
 
   # Best effort and in the background: Plasma's notification server may not be up yet, and a call
   # to an unowned name can hang until the D-Bus timeout. $NOTIFY_PREFIX runs it as the user (root).
@@ -47,7 +45,7 @@ let
 
   reinstall = pkgs.writeShellApplication {
     name = "webtop-nix-reinstall";
-    runtimeInputs = with pkgs; [ coreutils gnused jq config.nix.package hmPackage libnotify git ];
+    runtimeInputs = with pkgs; [ coreutils gnused jq config.nix.package libnotify ];
     text = ''
       r=/persist/nix/reinstall
       export DBUS_SESSION_BUS_ADDRESS=${userBus}
@@ -76,41 +74,18 @@ let
           # Manifest v2 has an array of elements, v3 a map. Installed by locked URL: same versions.
           refs=$(jq -r '.elements | to_entries[] | .value | select(.url != null and .attrPath != null)
                         | "\(.url)#\(.attrPath)"' "$manifest")
+          # Into the profile, where they were: declared packages come back with the switch below.
           for ref in $refs; do
             echo "reinstalling $ref"
-            nix profile install "$ref" || { echo "failed: $ref"; failed=1; }
+            nix profile add --profile-backend profile "$ref" || { echo "failed: $ref"; failed=1; }
           done
           jq -r '.elements | to_entries[] | .value | select(.url == null) | .storePaths[]?' "$manifest" \
             | sed 's/^/not reinstallable (no flake reference): /'
         fi
       fi
 
-      hm="$HOME/.config/home-manager"
-      if [ -f "$hm/flake.nix" ]; then
-        # Root inputs resolved through the image's registry are locked to the old image's store
-        # paths; relock those that are gone.
-        stale=()
-        if [ -f "$hm/flake.lock" ]; then
-          while IFS=$'\t' read -r name path; do
-            if [ ! -e "$path" ]; then stale+=("$name"); fi
-          done < <(jq -r '. as $l | .nodes.root.inputs | to_entries[] | select(.value | type == "string")
-                          | .key as $k | $l.nodes[.value]
-                          | select(.original.type == "indirect" and .locked.type == "path")
-                          | [$k, .locked.path] | @tsv' "$hm/flake.lock")
-        fi
-        if [ "''${#stale[@]}" -gt 0 ]; then
-          echo "relocking stale inputs: ''${stale[*]}"
-          nix flake update --flake "$hm" "''${stale[@]}" || failed=1
-        fi
-        g="$profiles/home-manager"
-        if [ -L "$g" ] && [ -e "$g" ]; then
-          echo "home-manager generation restored"
-        else
-          aside "$g" "$profiles"/home-manager-*-link
-          echo "home-manager switch --flake $hm"
-          home-manager switch --flake "$hm" || failed=1
-        fi
-      fi
+      # home-manager: relock, switch (and on the first such boot, move to packages.json).
+      ${config.systemd.services.webtop-home-manager.serviceConfig.ExecStart} || failed=1
 
       if [ "$failed" = 0 ]; then
         notify "Packages restored" "Your Nix packages are back."
