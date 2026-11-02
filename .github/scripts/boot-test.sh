@@ -206,6 +206,8 @@ as_user nix profile remove handedit >/dev/null || fail "removing the hand edit f
 as_user sh -c 'mkdir -p /tmp/ci-flake && printf "%s\n" "{" "  inputs.nixpkgs.url = \"nixpkgs\";" \
   "  outputs = { nixpkgs, ... }: { packages.x86_64-linux = { ci-hello = nixpkgs.legacyPackages.x86_64-linux.hello;" \
   "    \"ci.dotted\" = nixpkgs.legacyPackages.x86_64-linux.hello; }; };" "}" > /tmp/ci-flake/flake.nix'
+# Locked first: locking writes flake.lock into the directory, which changes its hash.
+as_user nix flake lock path:/tmp/ci-flake || fail "locking the local flake failed"
 as_user nix profile add path:/tmp/ci-flake#ci-hello 'path:/tmp/ci-flake#"ci.dotted"' \
   || fail "adding packages from a local flake failed"
 as_user jq -e '[.elements[] | select(.originalUrl | startswith("path:"))] | length == 2' "$decl" >/dev/null \
