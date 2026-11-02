@@ -36,7 +36,7 @@ func TestSwapAfterCheckIsRefused(t *testing.T) {
 	secret := write(t, t.TempDir(), "secret.desktop", entry("Leaked", ""))
 	file := write(t, home, ".local", "share", "applications", "x.desktop", entry("X", ""))
 	g := l.newGuard()
-	resolved, ok := g.resolve(file)
+	resolved, _, ok := g.resolve(file)
 	if !ok {
 		t.Fatal("guard refused a regular file in the user tree")
 	}

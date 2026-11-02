@@ -58,21 +58,22 @@ func within(root, p string) bool {
 	return err == nil && filepath.IsLocal(rel)
 }
 
-// resolve returns p with symlinks resolved if that is a regular file the guard allows.
-func (g *guard) resolve(p string) (string, bool) {
+// resolve returns p with symlinks resolved, and its size, if that is a regular file the guard allows.
+func (g *guard) resolve(p string) (string, int64, bool) {
 	r, err := filepath.EvalSymlinks(p)
 	if err != nil {
-		return "", false
+		return "", 0, false
 	}
-	if st, err := os.Stat(r); err != nil || !st.Mode().IsRegular() {
-		return "", false
+	st, err := os.Stat(r)
+	if err != nil || !st.Mode().IsRegular() {
+		return "", 0, false
 	}
 	for _, root := range g.roots {
 		if within(root, r) {
-			return r, true
+			return r, st.Size(), true
 		}
 	}
-	return "", false
+	return "", 0, false
 }
 
 // dataDirList is the user's data directories (Launcher.DataDirs if set).
@@ -157,7 +158,7 @@ func (l *Launcher) Icon(ctx context.Context, name string) (string, string, error
 // parseDesktop reads the unlocalized keys of the [Desktop Entry] group; ok is false if the file
 // does not exist or the guard refuses it.
 func parseDesktop(g *guard, file string) (map[string]string, bool) {
-	file, ok := g.resolve(file)
+	file, _, ok := g.resolve(file)
 	if !ok {
 		return nil, false
 	}
@@ -198,20 +199,15 @@ func listed(f map[string]string) bool {
 	return !slices.Contains(strings.Split(f["NotShowIn"], ";"), "KDE")
 }
 
-// resolveIcon finds the image file for an Icon= value: an absolute path inside a data dir, or a
-// name in the breeze/hicolor themes, then pixmaps. Only PNG and SVG files up to maxIcon count.
+// resolveIcon finds the image file for an Icon= value: an absolute path (the guard decides where
+// it may lie), or a name in the breeze/hicolor themes, then pixmaps. Only PNG and SVG files up to
+// maxIcon count.
 func resolveIcon(g *guard, dirs []string, icon string) (file, contentType string) {
 	if icon == "" {
 		return "", ""
 	}
 	if filepath.IsAbs(icon) {
-		icon = filepath.Clean(icon)
-		for _, d := range dirs {
-			if rel, err := filepath.Rel(d, icon); err == nil && filepath.IsLocal(rel) {
-				return iconFile(g, icon)
-			}
-		}
-		return "", ""
+		return iconFile(g, filepath.Clean(icon))
 	}
 	if !iconNameRE.MatchString(icon) {
 		return "", ""
@@ -245,11 +241,8 @@ func iconFile(g *guard, p string) (string, string) {
 	default:
 		return "", ""
 	}
-	p, ok := g.resolve(p)
-	if !ok {
-		return "", ""
-	}
-	if st, err := os.Stat(p); err != nil || st.Size() == 0 || st.Size() > maxIcon {
+	p, size, ok := g.resolve(p)
+	if !ok || size == 0 || size > maxIcon {
 		return "", ""
 	}
 	return p, ct
