@@ -372,7 +372,7 @@ jobs:
       # it lacks, so they are copied with their closure to a scratch cache and only the built ones kept;
       # the substituted rest comes from cache.nixos.org again.
       - name: save built paths
-        if: (github.ref == 'refs/heads/main' || github.event_name == 'pull_request') && steps.nixrestore.outputs.cache-hit != 'true'
+        if: github.ref == 'refs/heads/main' && steps.nixrestore.outputs.cache-hit != 'true'
         run: |
           nix path-info --all --json --json-format 1 | jq -r 'to_entries[]|select(.value.ultimate)|.key' | grep -v '\.drv$' | sort > built
           nix path-info -r .#kwin | sort > kwin
@@ -391,7 +391,7 @@ jobs:
           done < new
           du -sh ~/nix-built-cache
       - uses: actions/cache/save@v6
-        if: (github.ref == 'refs/heads/main' || github.event_name == 'pull_request') && steps.nixrestore.outputs.cache-hit != 'true'
+        if: github.ref == 'refs/heads/main' && steps.nixrestore.outputs.cache-hit != 'true'
         with:
           path: ~/nix-built-cache
           key: nix-built-${{ matrix.arch }}-${{ hashFiles('flake.lock', '**/*.nix') }}
