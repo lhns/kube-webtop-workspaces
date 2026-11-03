@@ -4,12 +4,14 @@
 # nix-store only. Every upper-DB row whose closure holds a path the new image dropped or changed is
 # invalidated with Nix's own GC (the upper opened as a plain local store), and every upper entry that
 # would merge with or hide a new lower path is moved to a trash webtop-nix-restore reads.
-#   webtop-nix-partial                      invalidate
-#   webtop-nix-partial --write-lower-paths  only save the image's store path list
+#   webtop-nix-partial <old stamp> <new stamp>   invalidate
+#   webtop-nix-partial --write-lower-paths <stamp>   only save the image's store path list
+#   webtop-nix-partial --rollback                    put back what an interrupted run changed
+# lower-paths starts with "stamp <stamp>": a list is used only for the image it describes.
 # Exit 0: the upper is consistent with the new lower. Any other exit: the pre-run state has been
-# restored (or nothing was changed); the caller resets the overlay.
+# restored, or nothing was changed, or (5) the rollback failed and the trash dir is kept.
 # Test hooks: WEBTOP_TEST_CRASH_AT=<step> exits 99 without cleanup (a kill), WEBTOP_TEST_FAIL_AT=<step>
-# exits 4 through the failure path.
+# exits 4 through the failure path, WEBTOP_TEST_PAUSE_AT=<step> waits there for $W/continue.
 set -eu
 set -o pipefail
 N=${N:-/persist/nix}
@@ -33,73 +35,86 @@ log() { echo "webtop-nix-partial: [$(cut -d" " -f1 /proc/uptime)] $*" >&2; }
 hook() {
   if [ "${WEBTOP_TEST_CRASH_AT:-}" = "$1" ]; then log "test crash at $1"; exit 99; fi
   if [ "${WEBTOP_TEST_FAIL_AT:-}" = "$1" ]; then log "test failure at $1"; exit 4; fi
+  if [ "${WEBTOP_TEST_PAUSE_AT:-}" = "$1" ]; then
+    : > "$W/paused"
+    i=0; while [ ! -e "$W/continue" ] && [ $i -lt 600 ]; do sleep 0.2; i=$((i + 1)); done
+  fi
 }
 nixstore() { "$NIXSTORE_BIN" "$@"; }
 
 # Record heads of a --dump-db stream (path, hash, size, deriver, n, n refs).
 heads() { awk 'BEGIN{st=0} { if (st==0) {print; st=1} else if (st<4) st++; else if (st==4) { n=$0+0; st = n ? 5 : 0 } else if (--n == 0) st=0 }'; }
 
-write_lower_paths() {
+write_lower_paths() { # <stamp>
   mkdir -p "$W"
-  nixstore --store "$LO" --dump-db | heads | sort > "$N/lower-paths.tmp"
+  { echo "stamp $1"; nixstore --store "$LO" --dump-db | heads | sort; } > "$N/lower-paths.tmp"
   # Everything this run changed is on disk before the commit point (and the caller syncs again
   # before writing the stamp).
   sync
   mv "$N/lower-paths.tmp" "$N/lower-paths"
 }
 
-# Put back everything a run moved, and the DB it snapshotted: the exact pre-run state.
+# Put back everything a run moved, and the DB it snapshotted: the exact pre-run state. Idempotent;
+# fails (1) without deleting anything still needed: the trash dir and partial.* go last.
 rollback() {
+  T=
   if [ -f "$N/partial.trash" ]; then
-    mkdir -p "$W"
-    T=$(cat "$N/partial.trash")
+    mkdir -p "$W" || return 1
+    T=$(cat "$N/partial.trash") || return 1
     log "restoring the pre-run state from $T"
     for d in upper junk; do
       [ -d "$T/$d" ] || continue
-      ls -A "$T/$d" > "$W/rollback.ls"
+      ls -A "$T/$d" > "$W/rollback.ls" || return 1
       while IFS= read -r b; do
         # Opening the upper as a store re-creates an empty .links; the original comes back.
-        if [ "$b" = .links ] && [ -d "$U/.links" ]; then rm -rf "$U/.links"; fi
+        if [ "$b" = .links ] && [ -d "$U/.links" ]; then rm -rf "$U/.links" || return 1; fi
         if [ -e "$U/$b" ] || [ -L "$U/$b" ]; then log "rollback: $U/$b exists"; return 1; fi
-        mv "$T/$d/$b" "$U/$b"
+        mv "$T/$d/$b" "$U/$b" || return 1
       done < "$W/rollback.ls"
     done
     if [ -d "$T/var/db" ]; then
-      rm -f "$N/var/db/db.sqlite-wal" "$N/var/db/db.sqlite-shm"
-      cp -a "$T/var/db/." "$N/var/db/"
+      rm -f "$N/var/db/db.sqlite-wal" "$N/var/db/db.sqlite-shm" || return 1
+      cp -a "$T/var/db/." "$N/var/db/" || return 1
     fi
-    rm -rf "$T"
   fi
   # What the run created itself: the empty .links a store open makes, the markers.
-  if [ -f "$N/partial.nolinks" ] && [ -d "$U/.links" ]; then rm -rf "$U/.links"; fi
+  if [ -f "$N/partial.nolinks" ] && [ -d "$U/.links" ]; then rm -rf "$U/.links" || return 1; fi
   if [ -f "$N/partial.created" ]; then
-    while IFS= read -r f; do rm -rf "${N:?}/$f"; done < "$N/partial.created"
+    while IFS= read -r f; do rm -rf "${N:?}/$f" || return 1; done < "$N/partial.created"
   fi
   sync
+  if [ -n "$T" ]; then rm -rf "$T" || return 1; fi
   rm -f "$N/partial.trash" "$N/partial.attempts" "$N/partial.nolinks" "$N/partial.created"
 }
 
-if [ "${1:-}" = --write-lower-paths ]; then write_lower_paths; exit 0; fi
+case ${1:-} in
+  --write-lower-paths) write_lower_paths "$2"; exit 0 ;;
+  --rollback) rollback || { log "ROLLBACK FAILED"; exit 5; }; exit 0 ;;
+esac
+old=$1 new=$2
 
 # No upper store yet: nothing to invalidate.
 if [ ! -f "$N/var/db/db.sqlite" ]; then
   log "no upper store: nothing to do"
-  write_lower_paths
+  write_lower_paths "$new"
   exit 0
 fi
 
 a=$(cat "$N/partial.attempts" 2>/dev/null || echo 0)
 if [ "$a" -ge 2 ]; then
   log "interrupted $a times: giving up"
-  rollback
+  rollback || { log "ROLLBACK FAILED"; exit 5; }
   exit 3
 fi
 echo $((a + 1)) > "$N/partial.attempts.tmp" && mv "$N/partial.attempts.tmp" "$N/partial.attempts"
 
-# From here on, any failure restores the pre-run state; a kill leaves it to the rerun.
-trap 'rc=$?; if [ "$rc" != 0 ] && [ "$rc" != 99 ]; then rollback || log "ROLLBACK FAILED"; fi; exit $rc' EXIT
+# From here on, any failure restores the pre-run state (a failed rollback exits 5, keeping the
+# trash dir); a kill leaves it to the rerun or the caller's --rollback.
+trap 'rc=$?; trap - EXIT; if [ "$rc" != 0 ] && [ "$rc" != 99 ]; then rollback || { log "ROLLBACK FAILED"; rc=5; }; fi; exit $rc' EXIT
+trap 'exit 143' TERM INT HUP
 
 [ -f "$N/lower-paths" ] || { log "no saved lower path list"; exit 3; }
+[ "$(head -n 1 "$N/lower-paths")" = "stamp $old" ] || { log "the saved lower path list is not the old image's"; exit 3; }
 [ -d "$U" ] || { log "no upper layer"; exit 3; }
 [ "$(cat "$N/var/db/schema" 2>/dev/null)" = 10 ] || { log "unexpected DB schema"; exit 3; }
 
@@ -168,7 +183,7 @@ classify() {
       }
       for (b in UPL) {
         if (mode == "check") {
-          if (b == ".links") continue   # re-created empty by every store open
+          if (b == ".links") { if (!EMPTYLINKS) print "LINKS " b; continue }   # empty: any store open
           if (b in L1b) print "SHADOW " b
           else if (!(b in KEEP)) print "STRAY " b
         } else if (mode == "moves") {
@@ -182,7 +197,7 @@ classify() {
     }'
 }
 
-cp "$N/lower-paths" "$W/l0"
+tail -n +2 "$N/lower-paths" > "$W/l0"
 : > "$W/inv"
 classify seeds > "$W/seeds"
 if [ -s "$W/seeds" ]; then
@@ -247,7 +262,7 @@ hook after-check
 
 # The overlay's workdir holds only transient state; start it empty (offline).
 rm -rf "$N/work" && mkdir "$N/work"
-write_lower_paths
+write_lower_paths "$new"
 [ -s "$W/inv" ] && echo invalidated > "$W/result" || echo clean > "$W/result" # for tests
 rmdir "$T/junk" "$T" 2>/dev/null || true
 rm -f "$N/partial.trash" "$N/partial.attempts" "$N/partial.nolinks" "$N/partial.created"

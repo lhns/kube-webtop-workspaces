@@ -130,7 +130,7 @@ auto-optimise-store = true" nix copy --no-check-sigs --to "$O" "$u1" "$u2r" "$u3
   # As webtop-init's bind_lower: state dirs exist before the read-only bind.
   mkdir -p /t/B/nix/var/nix/profiles/per-user /t/B/nix/var/nix/gcroots/per-user /t/B/nix/var/nix/temproots
   mkdir -p "$LB" && mount --bind /t/B "$LB" && mount -o remount,bind,ro /t/B "$LB" # source given, as in webtop-init
-  nix-store --store "local?root=$PR/A&read-only=true" --dump-db | heads | sort > "$S/lower-paths"
+  { echo "stamp A"; nix-store --store "local?root=$PR/A&read-only=true" --dump-db | heads | sort; } > "$S/lower-paths"
   echo A > "$S/lower-stamp"
 }
 
@@ -151,7 +151,7 @@ prestate() { # exact pre-run state: DB contents and every upper file
 # As webtop-init runs them: no HOME and no passwd entry (before activation), busybox only.
 echo B > /t/stampB
 ENVP="env -u HOME -u XDG_CONFIG_HOME -u XDG_CACHE_HOME N=$S LOWER=$LB WEBTOP_NIX_PARTIAL_WORK=/t/work"
-run_partial() { $ENVP PATH=/bb /t/bin/webtop-nix-partial; }
+run_partial() { $ENVP PATH=/bb /t/bin/webtop-nix-partial A B; }
 run_lower() { $ENVP STAMP_FILE=/t/stampB WEBTOP_PERSIST_ROOT=$PR PATH=/t/shim:/bb /t/bin/webtop-nix-lower; }
 markers() { [ -e "$S/reinstall/pending" ] && [ -e "$S/reinstall/restore" ]; }
 invalid_up() { [ "$(nix-store --store "$(UPS)" --check-validity --print-invalid "$1" 2>/dev/null)" = "$1" ]; }
@@ -288,13 +288,56 @@ check "mirror: markers set, trash/upper empty" "markers && [ -z \"\$(ls -A $S/tr
 restore_roots || true
 check "mirror: the restore has nothing to restore" "grep -q 'nothing to restore' /t/restore.log"
 
+echo "=== the procedure killed (OOM), the caller rolls back and resets"
+setup
+$ENVP STAMP_FILE=/t/stampB WEBTOP_PERSIST_ROOT=$PR WEBTOP_TEST_PAUSE_AT=after-moves PATH=/bb /t/bin/webtop-nix-lower > /t/lower.log 2>&1 &
+lpid=$!
+i=0; while [ ! -e /t/work/paused ] && [ $i -lt 300 ]; do sleep 0.2; i=$((i + 1)); done
+kill -9 "$(pgrep -f 'webtop-nix-partial A B' | head -n 1)"
+wait "$lpid" || true
+check "kill: the caller logged the failure and rolled back" \
+  "grep -q 'PARTIAL INVALIDATION FAILED (exit 137' /t/lower.log && grep -q 'restoring the pre-run state' /t/lower.log && ! ls $S/partial.* >/dev/null 2>&1"
+if restore_roots && cmp -s /t/ref-roots /t/valid-roots; then pass "kill: reset + restore recover every root an uninterrupted run does"
+else failt "kill: roots differ"; diff /t/ref-roots /t/valid-roots || true; tail -n 20 /t/restore.log; fi
+
+echo "=== a failing rollback keeps the trash dir"
+setup
+WEBTOP_TEST_CRASH_AT=after-moves run_partial || true
+T=$(cat "$S/partial.trash")
+mkdir "$S/upper/stray" # the rollback cannot put trash/junk/stray back
+WEBTOP_TEST_FAIL_AT=after-plan run_lower > /t/lower.log 2>&1 || true
+check "failing rollback: logged, trash dir and its DB snapshot kept, partial.* cleared" \
+  "grep -q 'ROLLBACK FAILED: keeping $T' /t/lower.log && [ -f $T/var/db/db.sqlite ] && ! ls $S/partial.* >/dev/null 2>&1 && ls -d $S/trash-*-reset >/dev/null"
+if restore_roots && cmp -s /t/ref-roots /t/valid-roots; then pass "failing rollback: reset + restore recover every root an uninterrupted run does"
+else failt "failing rollback: roots differ"; diff /t/ref-roots /t/valid-roots || true; tail -n 20 /t/restore.log; fi
+
+echo "=== the post-condition catches a violation, the run rolls back"
+setup; prestate > /t/pre.state
+$ENVP WEBTOP_TEST_PAUSE_AT=after-delete PATH=/bb /t/bin/webtop-nix-partial A B > /t/partial.log 2>&1 &
+ppid=$!
+i=0; while [ ! -e /t/work/paused ] && [ $i -lt 300 ]; do sleep 0.2; i=$((i + 1)); done
+mkdir "$S/upper/$b_a1" # an upper entry shadowing a path of the new image
+: > /t/work/continue
+rc=0; wait "$ppid" || rc=$?
+check "safety net: exit 4, SHADOW reported" "[ $rc = 4 ] && grep -q 'SHADOW $b_a1' /t/partial.log"
+rmdir "$S/upper/$b_a1"; prestate > /t/post.state
+check "safety net: the rollback restored the pre-run state" "cmp -s /t/pre.state /t/post.state && ! ls $S/partial.* >/dev/null 2>&1"
+
+echo "=== a path list of another image"
+setup; sed -i '1s/.*/stamp X/' "$S/lower-paths"
+run_lower > /t/lower.log 2>&1
+check "foreign list: refused, full reset, new list saved" \
+  "grep -q 'not the old image' /t/lower.log && grep -q 'PARTIAL INVALIDATION FAILED' /t/lower.log && [ -f $S/trash-*-reset/var/db/db.sqlite ] && [ \"\$(head -n 1 $S/lower-paths)\" = 'stamp B' ]"
+sed -i '1s/.*/stamp X/' "$S/lower-paths"; run_lower
+check "same stamp, foreign list: re-saved" "[ \"\$(head -n 1 $S/lower-paths)\" = 'stamp B' ]"
+
 echo "=== first boot, and a volume from before the path list"
 rm -rf "$PR"; mkdir -p "$PR"
 run_lower
 check "first boot: stamp and lower-paths written, no trash, no markers" \
   "[ \"\$(cat $S/lower-stamp)\" = B ] && [ -s $S/lower-paths ] && ! ls -d $S/trash-* >/dev/null 2>&1 && [ ! -e $S/reinstall ]"
 rm "$S/lower-paths"; run_lower
-check "same stamp: a missing lower-paths is written" "[ -s $S/lower-paths ]"
+check "same stamp: a missing lower-paths is written" "[ \"\$(head -n 1 $S/lower-paths)\" = 'stamp B' ]"
 setup; rm "$S/lower-paths"
 run_lower > /t/lower.log 2>&1
 check "update without a path list: full reset, logged" \

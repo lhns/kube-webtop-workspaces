@@ -76,14 +76,16 @@ An image update changes the lower store, which the overlay store does not expect
 `/webtop-image-stamp` (a hash of the image's store paths and their NAR hashes) with
 `/persist/nix/lower-stamp`, and on a change records each user's profile manifest and runs
 `webtop-nix-partial`. That compares the upper DB with the old image's path list
-(`/persist/nix/lower-paths`) and the new image's DB: rows of paths the new image dropped or ships
+(`/persist/nix/lower-paths`, headed by that image's stamp; a list of another image is not used) and
+the new image's DB: rows of paths the new image dropped or ships
 with other bytes, rows whose files are not whole in the upper, and everything referring to them are
 invalidated with `nix-store --delete --ignore-liveness` on the upper opened as a plain local store;
 upper entries that would merge with or hide a path of the new image (copy-up leftovers, whiteouts,
 copies of paths the image now ships, unfinished writes) and the invalidated paths move to
 `/persist/nix/trash-*`, with a snapshot of the DB. A post-condition then checks every row again.
 Everything else stays in place. If anything fails (or two attempts were interrupted), the pre-run
-state is put back and the overlay is reset as a whole: the old upper/DB move to the trash, the
+state is put back (if even that fails, its trash dir is kept for the restore) and the overlay is
+reset as a whole: the old upper/DB move to the trash, the
 store starts fresh, the old GC roots are kept. The reason is in the container log. After boot, in
 the background (no shutdown step), `webtop-nix-restore.service` (`image/webtop-nix-restore.sh`)
 copies the users' live paths (profiles, home-manager generations, GC roots) that are not in the new

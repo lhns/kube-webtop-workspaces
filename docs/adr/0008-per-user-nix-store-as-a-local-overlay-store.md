@@ -44,4 +44,5 @@ Nothing runs at shutdown; the reinstall remains the fallback.
 An image update keeps the overlay and invalidates only the upper paths whose closure the new image
 breaks (with Nix's own GC, before the overlay is mounted); the whole-overlay reset of 2026-10-30 is
 the fallback, entered from the exact pre-run state. The overlay is mounted with `index=off,xino=off`
-and Nix runs with `fsync-store-paths = true`.
+and Nix runs with `fsync-store-paths = true`. A volume moved to an image of another architecture
+shares no store paths with it, so everything is invalidated there.

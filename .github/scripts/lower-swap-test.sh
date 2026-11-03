@@ -45,7 +45,13 @@ lower_db=$(x sh -c "nix-store --store 'local?root=/.lower&read-only=true' --dump
 missing=$(x sh -c "nix-store --store 'local?root=/.lower&read-only=true' --dump-db | busybox awk '$heads' | while read -r p; do [ -e \"/.lower\$p\" ] || echo \"\$p\"; done")
 [ -z "$missing" ] || fail "paths in the image's DB missing from its store: $missing"
 echo "all $(wc -l <<<"$lower_db") paths of the image's DB exist in its store"
-same_paths() { [ "$(sudo sort "$dir/persist/nix/lower-paths")" = "$(sort <<<"$lower_db")" ]; }
+extra=$(x sh -c 'ls -A /.lower/nix/store' | grep -vx '\.links' | sed 's|^|/nix/store/|' | grep -vxF -f <(cat <<<"$lower_db") || true)
+[ -z "$extra" ] || fail "store entries not in the image's DB: $extra"
+echo "and its store holds nothing else"
+same_paths() {
+  [ "$(sudo head -n 1 "$dir/persist/nix/lower-paths")" = "stamp $(x cat /webtop-image-stamp)" ] &&
+  [ "$(sudo tail -n +2 "$dir/persist/nix/lower-paths" | sort)" = "$(sort <<<"$lower_db")" ]
+}
 same_paths || fail "first boot did not save the image's path list"
 x unshare --user --map-root-user --mount sh -c 'mkdir -p /tmp/ovl && mount -t tmpfs tmpfs /tmp/ovl &&
   mkdir /tmp/ovl/l /tmp/ovl/u /tmp/ovl/w /tmp/ovl/m &&
@@ -72,6 +78,7 @@ sudo rm -rf "${u:?}/${g#/nix/store/}"
 # What a write into a lower path through the overlay leaves: a plain upper dir with the new file.
 sudo mkdir -p "$u/${bb#/nix/store/}" && sudo touch "$u/${bb#/nix/store/}/ci-delta"
 echo "$g" | sudo tee -a "$dir/persist/nix/lower-paths" >/dev/null
+sudo sed -i '1s/.*/stamp old-image/' "$dir/persist/nix/lower-paths"
 echo old-image | sudo tee "$dir/persist/nix/lower-stamp" >/dev/null
 
 echo "== boot 2"
@@ -79,7 +86,7 @@ boot
 clog=$(docker logs "$c" 2>&1)
 grep 'webtop-nix-partial\|webtop-init: .*store' <<<"$clog" || true
 grep -q 'store overlay kept' <<<"$clog" || fail "the partial invalidation did not run or fell back"
-grep -q '1 seeds, 3 paths to invalidate' <<<"$clog" || fail "expected 1 seed (g) and 3 invalidated paths (g, ug, ug's .drv, whose input source g is)"
+grep -q '1 seeds, 3 paths to invalidate' <<<"$clog" || fail "expected 1 seed (g) and 3 invalidated paths (g, ug, and ug's .drv, which has g as an input source)"
 x nix-store --check-validity "$us" || fail "us (no dependency on g) did not survive"
 ! x nix-store --check-validity "$ug" 2>/dev/null || fail "ug (depends on g) is still valid"
 ! x test -e "$bb/ci-delta" || fail "the copy-up leftover still shows"
