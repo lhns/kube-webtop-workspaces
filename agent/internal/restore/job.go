@@ -172,6 +172,9 @@ type dbusView struct {
 
 // Gone is true once the connection or the name owner is gone or changed; other errors count as alive.
 func (v *dbusView) Gone() bool {
+	if v.d.conn == nil || !v.d.conn.Connected() {
+		return true // the entry ended with the connection
+	}
 	owner, err := v.d.owner()
 	var de dbus.Error
 	if errors.As(err, &de) && de.Name == "org.freedesktop.DBus.Error.NameHasNoOwner" {
