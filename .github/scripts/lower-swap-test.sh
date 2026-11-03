@@ -51,7 +51,10 @@ x unshare --user --map-root-user --mount sh -c 'mkdir -p /tmp/ovl && mount -t tm
   mkdir /tmp/ovl/l /tmp/ovl/u /tmp/ovl/w /tmp/ovl/m &&
   mount -t overlay overlay -o lowerdir=/tmp/ovl/l,upperdir=/tmp/ovl/u,workdir=/tmp/ovl/w,userxattr,index=off,xino=off /tmp/ovl/m &&
   grep " /tmp/ovl/m " /proc/self/mounts' || fail "the overlay options are refused inside a user namespace"
-grep -q 'index=off' <<<"$(x grep ' /nix/store ' /proc/self/mounts)" || fail "/nix/store is not mounted with index=off"
+# The kernel lists index and xino only where they differ from its defaults.
+m=$(x grep ' /nix/store ' /proc/self/mounts)
+echo "$m"
+! grep -qE 'index=on|xino=(on|auto)|metacopy=on|redirect_dir=(on|follow)' <<<"$m" || fail "/nix/store has a feature on that offline lower changes forbid"
 
 # A lower path the user paths can depend on, and user paths built in the overlay store.
 bb=$(x sh -c 'readlink -f /bin/busybox | cut -d/ -f1-4')
