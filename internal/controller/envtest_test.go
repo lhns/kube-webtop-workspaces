@@ -577,8 +577,9 @@ func TestSoftwareRestoreResetWithoutPod(t *testing.T) {
 	createDesktop(t, "gina", true)
 	waitRunning(t, "gina")
 	d := getDesktop(t, "gina")
+	orig := d.DeepCopy()
 	d.Status.SoftwareRestore = &v1alpha1.SoftwareRestore{Active: true, Done: 1, Total: 3}
-	if err := suite.c.Status().Update(context.Background(), d); err != nil {
+	if err := suite.c.Status().Patch(context.Background(), d, client.MergeFrom(orig)); err != nil {
 		t.Fatal(err)
 	}
 	poke(t, "gina")

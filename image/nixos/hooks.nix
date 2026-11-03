@@ -238,8 +238,9 @@ in
       # As webtop-home-manager.service: the setup script it runs ignores a stop during the import.
       # Everything else here ends on SIGTERM.
       TimeoutStopSec = "5min";
-      # "+": as root, the records belong to root. Only after success; a failure retries next boot.
-      ExecStopPost = "+${pkgs.runtimeShell} -c '[ \"$$SERVICE_RESULT\" = success ] && ${pkgs.coreutils}/bin/rm -f /persist/nix/reinstall/pending || true'";
+      # "+": as root, the records belong to root. Only after the script ran to the end: a failure or a
+      # stop retries next boot (systemd counts a SIGTERM death as success, hence EXIT_CODE).
+      ExecStopPost = "+${pkgs.runtimeShell} -c '[ \"$$SERVICE_RESULT\" = success ] && [ \"$$EXIT_CODE\" = exited ] && ${pkgs.coreutils}/bin/rm -f /persist/nix/reinstall/pending || true'";
     };
   };
   systemd.services.webtop-nix-trash = {
