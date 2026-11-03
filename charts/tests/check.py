@@ -144,6 +144,37 @@ for name, args in cases.items():
     elif any(k in kinds for k in ("Ingress", "HTTPRoute", "ServiceMonitor")):
         fail(f"{name}: optional resources rendered by default")
 
+    ds = [d for d in docs if d["kind"] == "DaemonSet"]
+    if name != "all-on":
+        if ds:
+            fail(f"{name}: desktop pre-pull DaemonSet rendered by default")
+    elif len(ds) != 1:
+        fail(f"{name}: want one pre-pull DaemonSet, got {len(ds)}")
+    else:
+        pod = ds[0]["spec"]["template"]["spec"]
+        c = pod["containers"][0]
+        if c["image"] != "example.org/desktop:1" or c["command"][:2] != ["/bin/busybox", "sleep"]:
+            fail(f"{name}: pre-pull container must run busybox sleep from the desktop image")
+        if c["securityContext"] != {"runAsNonRoot": True, "runAsUser": 65534, "runAsGroup": 65534,
+                                    "allowPrivilegeEscalation": False, "readOnlyRootFilesystem": True,
+                                    "capabilities": {"drop": ["ALL"]}, "seccompProfile": {"type": "RuntimeDefault"}}:
+            fail(f"{name}: pre-pull securityContext is not Pod Security restricted: {c['securityContext']}")
+        if pod.get("automountServiceAccountToken") is not False or "serviceAccountName" in pod:
+            fail(f"{name}: pre-pull pod must not mount a ServiceAccount token")
+        if "runtimeClassName" in pod or "hostUsers" in pod or "securityContext" in pod:
+            fail(f"{name}: pre-pull pod must not carry the desktop's runtimeClassName/hostUsers")
+        if pod.get("nodeSelector") != {"kubernetes.io/os": "linux"} or pod.get("tolerations") != [{"key": "gpu", "operator": "Exists"}]:
+            fail(f"{name}: pre-pull pod does not use the desktop nodeSelector/tolerations")
+        if ds[0]["spec"]["updateStrategy"]["rollingUpdate"]["maxUnavailable"] != "100%":
+            fail(f"{name}: pre-pull DaemonSet must roll all nodes at once")
+        labels = ds[0]["spec"]["template"]["metadata"]["labels"]
+        if any(labels.get(k) != v for k, v in ds[0]["spec"]["selector"]["matchLabels"].items()):
+            fail(f"{name}: pre-pull selector does not match its pod labels")
+        if labels.get("app.kubernetes.io/name") == "webtop-desktop":
+            fail(f"{name}: pre-pull pod carries the desktop labels")
+    if "prePull" in cfg["desktop"]:
+        fail(f"{name}: chart-only desktop.prePull leaked into the config")
+
     for d in docs:
         if d["kind"] == "Deployment":
             labels = d["spec"]["template"]["metadata"]["labels"]

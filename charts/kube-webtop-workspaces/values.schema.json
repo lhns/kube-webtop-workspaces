@@ -135,6 +135,15 @@
             "extraTrustedPublicKeys": {"type": "array", "items": {"type": "string"}}
           }
         },
+        "prePull": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "priorityClassName": {"type": "string"},
+            "resources": {"type": "object"}
+          }
+        },
         "selkies": {
           "type": "object",
           "propertyNames": {"pattern": "^SELKIES_[A-Z0-9_]+$"},

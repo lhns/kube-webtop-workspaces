@@ -10,6 +10,7 @@ desktop:
     extraSubstituters: [http://cache.example.org/a, http://cache.example.org/b]
     extraTrustedPublicKeys: ["a:AAAA", "b:BBBB"]
   resources: {requests: {cpu: "1", memory: 2Gi}}
+  prePull: {enabled: true}
 storage: {storageClassName: fast, size: 10Gi}
 controller: {cleanExitCodes: [0, 143]}
 ldap:
