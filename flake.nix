@@ -15,7 +15,7 @@
       url = "github:NixOS/flake-registry";
       flake = false;
     };
-    webtop-nix.url = "github:lhns/webtop-nix/17c3d4d9e88bd4c2f0f8fedd5c7e2dcd0c339f9f";
+    webtop-nix.url = "github:lhns/webtop-nix/eb780febb1b4edb084702285fa114ffd8d2bb4cd";
   };
 
   outputs = { self, nixpkgs, home-manager, flake-registry, webtop-nix, ... }:
