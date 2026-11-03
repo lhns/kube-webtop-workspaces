@@ -25,10 +25,22 @@ type pageData struct {
 	// EventsURL and StartURL are escaped paths; html/template escapes them per context.
 	EventsURL string
 	StartURL  string
+	WakeURL   string
 	Reason    string
 	StoppedAt time.Time // zero: not shown
 	CSRF      string
-	App       string // off page: the app to return to after Start, empty for the desktop
+	App       string // off and asleep pages: the app to return to after Start (appsOverview for the overview), empty for the desktop
+	Apps      []appView
+	Wide      bool // the main card is wide (overview)
+}
+
+// appView is a card of the overview page.
+type appView struct {
+	Name    string
+	Href    string
+	IconURL string // empty: show Initial
+	Initial string
+	Running bool
 }
 
 // stopWording is the human wording of a lastStop reason.
@@ -61,7 +73,7 @@ func writePage(w http.ResponseWriter, status int, name string, data pageData) {
 	h := w.Header()
 	h.Set("Content-Type", "text/html; charset=utf-8")
 	h.Set("Cache-Control", "no-store")
-	h.Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
+	h.Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
 	h.Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(status)
 	_, _ = w.Write(buf.Bytes())

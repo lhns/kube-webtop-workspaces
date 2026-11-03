@@ -5,7 +5,7 @@ name: ci
 #   - push to main:  0.0.0-dev.<sha7> (images also sha-<sha7> and main)
 #   - tag vX.Y.Z:    images vX.Y.Z (+ latest unless a prerelease), chart X.Y.Z; a GitHub Release gets the SBOMs
 #   - manual run with publish=true: as main, from any ref (to try the publish path)
-# Both images are multi-arch indexes (amd64, arm64); a tag's digest is the index's (docs/adr/0011).
+# Both images are multi-arch indexes (amd64, arm64); a tag's digest is the index's (docs/adr/0014).
 on:
   push:
     branches: [main]

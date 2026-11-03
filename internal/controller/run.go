@@ -102,6 +102,8 @@ func Run(ctx context.Context, restCfg *rest.Config, cfg *config.Config) error {
 		Client: mgr.GetClient(), Reader: mgr.GetAPIReader(),
 		Auth:      &powerapi.TokenReviewer{Client: mgr.GetClient(), Audience: cfg.PowerAPI.Audience},
 		Namespace: cfg.Namespace, ServiceAccount: cfg.Desktop.ServiceAccountName, Audience: cfg.PowerAPI.Audience,
+		// Core v1 Events, which the controller role may create.
+		Recorder: mgr.GetEventRecorderFor("kube-webtop-workspaces"), //nolint:staticcheck
 	}
 	if err := mgr.Add(powerapi.Runnable{Addr: cfg.PowerAPI.Addr, Handler: api.Handler()}); err != nil {
 		return err

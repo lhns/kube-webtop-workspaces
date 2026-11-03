@@ -9,6 +9,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"text/template"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -30,6 +31,8 @@ type Config struct {
 	Desktop     Desktop    `json:"desktop"`
 	Storage     Storage    `json:"storage"`
 	Gateway     Gateway    `json:"gateway"`
+
+	titleTmpl *template.Template // desktop.title, parsed once by validate
 }
 
 type Names struct {
@@ -52,22 +55,24 @@ type PowerAPI struct {
 }
 
 type LDAP struct {
-	URL                string          `json:"url"`
-	StartTLS           bool            `json:"startTLS"`
-	CAFile             string          `json:"caFile"`
-	InsecureSkipVerify bool            `json:"insecureSkipVerify"`
-	BindDN             string          `json:"bindDN"`
-	BindPasswordFile   string          `json:"bindPasswordFile"`
-	BaseDN             string          `json:"baseDN"`
-	UserFilter         string          `json:"userFilter"`
-	UserAttribute      string          `json:"userAttribute"`
-	GroupDN            string          `json:"groupDN"`
-	AdminGroupDN       string          `json:"adminGroupDN"`
-	Membership         string          `json:"membership"`
-	MemberAttribute    string          `json:"memberAttribute"`
-	SyncInterval       metav1.Duration `json:"syncInterval"`
-	Timeout            metav1.Duration `json:"timeout"`
-	ErrorPolicy        string          `json:"errorPolicy"`
+	URL                string `json:"url"`
+	StartTLS           bool   `json:"startTLS"`
+	CAFile             string `json:"caFile"`
+	InsecureSkipVerify bool   `json:"insecureSkipVerify"`
+	BindDN             string `json:"bindDN"`
+	BindPasswordFile   string `json:"bindPasswordFile"`
+	BaseDN             string `json:"baseDN"`
+	UserFilter         string `json:"userFilter"`
+	UserAttribute      string `json:"userAttribute"`
+	GroupDN            string `json:"groupDN"`
+	AdminGroupDN       string `json:"adminGroupDN"`
+	Membership         string `json:"membership"`
+	MemberAttribute    string `json:"memberAttribute"`
+	// DisplayNameAttribute names the desktop user (GECOS, shown by Plasma); needs baseDN.
+	DisplayNameAttribute string          `json:"displayNameAttribute"`
+	SyncInterval         metav1.Duration `json:"syncInterval"`
+	Timeout              metav1.Duration `json:"timeout"`
+	ErrorPolicy          string          `json:"errorPolicy"`
 }
 
 const (
@@ -109,6 +114,10 @@ type Desktop struct {
 	ShmSize                       resource.Quantity             `json:"shmSize"`
 	RunSizeLimit                  resource.Quantity             `json:"runSizeLimit"`
 	TerminationGracePeriodSeconds *int64                        `json:"terminationGracePeriodSeconds"`
+	// Selkies is SELKIES_* settings for every desktop (docs/contract.md, "Selkies settings").
+	Selkies map[string]string `json:"selkies"`
+	// Title is a text/template for the browser tab title; see TitleData. Empty: Selkies' own.
+	Title string `json:"title"`
 }
 
 type Storage struct {
@@ -195,6 +204,7 @@ func (c *Config) Default() {
 	l := &c.LDAP
 	def(&l.UserFilter, "(objectClass=person)")
 	def(&l.UserAttribute, "uid")
+	def(&l.DisplayNameAttribute, "displayName")
 	def(&l.Membership, MembershipMemberOf)
 	if l.MemberAttribute == "" {
 		if l.Membership == MembershipMember {
@@ -274,6 +284,7 @@ func (c *Config) validate() error {
 			errs = append(errs, errors.New("ldap.baseDN: required for membership memberOf"))
 		}
 	}
+	errs = append(errs, c.validateSelkies())
 	return errors.Join(errs...)
 }
 

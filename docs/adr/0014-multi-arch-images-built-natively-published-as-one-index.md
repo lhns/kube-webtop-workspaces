@@ -1,4 +1,4 @@
-# 0011 — Multi-arch images, built natively, published as one index
+# 0014 — Multi-arch images, built natively, published as one index
 
 - Status: Accepted
 - Date: 2026-11-02

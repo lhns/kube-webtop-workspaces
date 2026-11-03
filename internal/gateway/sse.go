@@ -20,6 +20,8 @@ type statusEvent struct {
 	BootProgress int32  `json:"bootProgress"`
 	Message      string `json:"message"`
 	Authorized   bool   `json:"authorized"`
+	// Asleep tells a tab that watches a running desktop to reload, so the frozen stream is replaced.
+	Asleep bool `json:"asleep,omitempty"`
 	// PodUID tells a tab that watches a running desktop that the pod was replaced.
 	PodUID string `json:"podUID,omitempty"`
 	// Pull is set while the image is being downloaded.
@@ -42,6 +44,7 @@ func eventOf(d *v1alpha1.Desktop, now time.Time) statusEvent {
 	ev := statusEvent{
 		Phase: string(d.Status.Phase), Stage: stageText(d.Status.Stage), BootProgress: d.Status.BootProgress,
 		Message: d.Status.Message, Authorized: !authorizedFalse(d), PodUID: d.Status.PodUID,
+		Asleep: d.Status.Asleep,
 	}
 	if ip := d.Status.ImagePull; ip != nil && d.Status.Stage == v1alpha1.StagePullingImage && ip.StartedAt != nil {
 		ev.Pull = &pullEvent{

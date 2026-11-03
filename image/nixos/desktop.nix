@@ -1,9 +1,11 @@
 # The desktop itself (webtop-nix's services.webtop), wired to the pod contract (docs/contract.md).
-{ ... }:
+{ pkgs, ... }:
 
 {
   services.webtop = {
     enable = true;
+    # A placeholder: renamed at activation to the user's login name (identity.nix). uid 1000 never
+    # changes, so the volume's file ownership does not either.
     user = "user";
     uid = 1000;
     # The gateway proxies to the pod; the NetworkPolicy admits only the gateway.
@@ -19,6 +21,12 @@
     };
   };
 
-  # webtop-init writes SELKIES_PORT=$WEBTOP_HTTP_PORT here; EnvironmentFile wins over Environment.
-  systemd.user.services.selkies.serviceConfig.EnvironmentFile = "-/run/webtop/selkies.env";
+  # One way to install software (ADR 0013): Discover has no Nix backend on NixOS. Plasma's "Get New…"
+  # dialogs (KNewStuff) stay.
+  environment.plasma6.excludePackages = [ pkgs.kdePackages.discover ];
+
+  # webtop-init writes SELKIES_PORT and the cluster's desktop.selkies / desktop.title here
+  # (docs/contract.md, "Selkies settings"); it wins over extraEnvironment above, and the user's
+  # allowlisted ~/.config/webtop/selkies.env (services.webtop.userSettings) wins over it.
+  services.webtop.environmentFiles = [ "-/run/webtop/selkies.env" ];
 }

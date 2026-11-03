@@ -21,6 +21,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/lhns/kube-webtop-workspaces/api/v1alpha1"
@@ -39,6 +40,7 @@ const (
 	extraPodUID  = "authentication.kubernetes.io/pod-uid"
 	maxBody      = 16 << 10
 	maxStage     = 64 // characters; the agent's stage is free text shown on the boot page
+	maxHomePaths = 16 // the image mounts at most this many
 )
 
 // Authenticator validates a bearer token.
@@ -73,6 +75,8 @@ type Server struct {
 	ServiceAccount string
 	Audience       string
 	Now            func() time.Time
+	// Recorder emits an Event when the reported login name changes; nil disables it.
+	Recorder record.EventRecorder
 }
 
 func (s *Server) now() time.Time {
@@ -318,12 +322,28 @@ func (s *Server) reboot(ctx context.Context, c *caller, d *v1alpha1.Desktop) *ht
 // ---- report ----
 
 type reportRequest struct {
-	Stage            *string `json:"stage"`
-	BootProgress     *int32  `json:"bootProgress"`
-	Ready            *bool   `json:"ready"`
-	ConnectedClients *int32  `json:"connectedClients"`
-	IdleSeconds      *int64  `json:"idleSeconds"`
-	Asleep           *bool   `json:"asleep"`
+	Stage            *string  `json:"stage"`
+	BootProgress     *int32   `json:"bootProgress"`
+	Ready            *bool    `json:"ready"`
+	ConnectedClients *int32   `json:"connectedClients"`
+	IdleSeconds      *int64   `json:"idleSeconds"`
+	Asleep           *bool    `json:"asleep"`
+	LoginName        *string  `json:"loginName"`
+	HomePaths        []string `json:"homePaths"`
+}
+
+// validIdentity checks the reported login name and home paths against the image's rules
+// (docs/contract.md, section 8.3).
+func (req *reportRequest) validIdentity() bool {
+	if req.LoginName != nil && !names.ValidLogin(*req.LoginName) || len(req.HomePaths) > maxHomePaths {
+		return false
+	}
+	for _, p := range req.HomePaths {
+		if n, ok := strings.CutPrefix(p, "/home/"); !ok || !names.ValidLogin(n) {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) report(w http.ResponseWriter, r *http.Request) {
@@ -348,6 +368,10 @@ func (s *Server) report(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Stage != nil && utf8.RuneCountInString(*req.Stage) > maxStage {
 		writeErr(sw, fail(http.StatusBadRequest, "stage longer than %d characters", maxStage))
+		return
+	}
+	if !req.validIdentity() {
+		writeErr(sw, fail(http.StatusBadRequest, "invalid loginName or homePaths"))
 		return
 	}
 	d, herr := s.getDesktop(r.Context(), c.desktop, false)
@@ -381,6 +405,13 @@ func (s *Server) report(w http.ResponseWriter, r *http.Request) {
 	if req.Asleep != nil {
 		st.Asleep = *req.Asleep
 	}
+	prevLogin := st.LoginName
+	if req.LoginName != nil {
+		st.LoginName = *req.LoginName
+	}
+	if req.HomePaths != nil {
+		st.HomePaths = req.HomePaths
+	}
 	now := metav1.NewTime(s.now())
 	st.LastReportTime = &now
 	if err := s.Client.Status().Patch(r.Context(), d, client.MergeFrom(orig)); err != nil {
@@ -388,7 +419,23 @@ func (s *Server) report(w http.ResponseWriter, r *http.Request) {
 		writeErr(sw, fail(http.StatusServiceUnavailable, "could not store the report"))
 		return
 	}
+	s.loginNameEvent(d, prevLogin)
 	sw.WriteHeader(http.StatusNoContent)
+}
+
+// loginNameEvent records a change of the desktop user's login name, e.g. an image update that adds
+// an account of that name: the user then becomes "user" (condition LoginName, ADR 0011).
+func (s *Server) loginNameEvent(d *v1alpha1.Desktop, prev string) {
+	cur := d.Status.LoginName
+	if s.Recorder == nil || cur == prev || (prev == "" && cur == d.Name) {
+		return
+	}
+	if cur != d.Name {
+		s.Recorder.Eventf(d, corev1.EventTypeWarning, "LoginNameFallback",
+			"the desktop user is %q, not %q: the name is not a valid login name or is an account of the image", cur, d.Name)
+		return
+	}
+	s.Recorder.Eventf(d, corev1.EventTypeNormal, "LoginName", "the desktop user is %q again", cur)
 }
 
 // Runnable serves the API as a manager Runnable on every replica.

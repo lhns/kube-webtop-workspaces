@@ -2,7 +2,10 @@
 
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestDefaults(t *testing.T) {
 	c, err := Parse([]byte("namespace: ws\n"))
@@ -28,6 +31,33 @@ func TestRejects(t *testing.T) {
 	} {
 		if _, err := Parse([]byte(in)); err == nil {
 			t.Errorf("Parse(%q) succeeded", in)
+		}
+	}
+}
+
+func TestSelkiesValidation(t *testing.T) {
+	base := "namespace: ns\ndesktop:\n"
+	for name, tc := range map[string]struct {
+		yaml string
+		ok   bool
+	}{
+		"plain":            {"  selkies:\n    SELKIES_FRAMERATE: \"60\"\n    SELKIES_EMPTY: \"\"\n", true},
+		"quote and dollar": {"  selkies:\n    SELKIES_X: 'a\"b$c\\d=e'\n", true},
+		"lowercase key":    {"  selkies:\n    selkies_x: a\n", false},
+		"foreign key":      {"  selkies:\n    PATH: a\n", false},
+		"port":             {"  selkies:\n    SELKIES_PORT: \"1\"\n", false},
+		"newline":          {"  selkies:\n    SELKIES_X: \"a\\nSELKIES_Y=b\"\n", false},
+		"carriage return":  {"  selkies:\n    SELKIES_X: \"a\\rb\"\n", false},
+		"nul":              {"  selkies:\n    SELKIES_X: \"a\\u0000b\"\n", false},
+		"tab":              {"  selkies:\n    SELKIES_X: \"a\\tb\"\n", false},
+		"too long":         {"  selkies:\n    SELKIES_X: " + strings.Repeat("a", 257) + "\n", false},
+		"title":            {"  title: '{{ .User }} - {{ .DisplayName }} - {{ .Desktop }}'\n", true},
+		"title bad field":  {"  title: '{{ .Nope }}'\n", false},
+		"title bad syntax": {"  title: '{{ .User'\n", false},
+	} {
+		_, err := Parse([]byte(base + tc.yaml))
+		if (err == nil) != tc.ok {
+			t.Errorf("%s: err = %v, want ok=%v", name, err, tc.ok)
 		}
 	}
 }

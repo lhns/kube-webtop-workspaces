@@ -1,0 +1,977 @@
+diff --git a/profile.cc b/profile.cc
+index 4f56319..c3e2e02 100644
+--- a/profile.cc
++++ b/profile.cc
+@@ -12,10 +12,18 @@
+ #include "nix/store/names.hh"
+ #include "nix/util/url.hh"
+ #include "nix/flake/url-name.hh"
++#include "nix/store/globals.hh"
++#include "nix/store/local-fs-store.hh"
++#include "nix/store/pathlocks.hh"
++#include "nix/util/config-global.hh"
++#include "nix/util/environment-variables.hh"
++#include "nix/util/processes.hh"
++#include "nix/util/terminal.hh"
+ 
+ #include <nlohmann/json.hpp>
+ #include <regex>
+ #include <iomanip>
++#include <sstream>
+ 
+ #include "nix/util/strings.hh"
+ 
+@@ -78,6 +86,18 @@ struct ProfileElement
+ 
+     std::string versions() const
+     {
++        // A declared element has no store paths; the date of its locked source stands in.
++        if (storePaths.empty() && source) {
++            // The image's registry pins nixpkgs with lastModified=0.
++            if (auto t = source->lockedRef.input.getLastModified(); t && *t > 0) {
++                std::ostringstream date;
++                date << std::put_time(std::gmtime(&*t), "%Y-%m-%d");
++                return date.str();
++            }
++            if (auto rev = source->lockedRef.input.getRev())
++                return rev->gitShortRev();
++            return "declared";
++        }
+         StringSet versions;
+         for (auto & path : storePaths)
+             versions.insert(DrvName(path.name()).version);
+@@ -312,6 +332,523 @@ struct ProfileManifest
+     }
+ };
+ 
++struct ProfileSettings : Config
++{
++    /* Records whether the value came from `--profile-backend`, which conflicts with `--profile`;
++       a value from nix.conf yields to `--profile`. */
++    struct BackendSetting : Setting<std::string>
++    {
++        using Setting<std::string>::Setting;
++        bool fromCommandLine = false;
++
++        void convertToArg(Args & args, const std::string & category) override
++        {
++            args.addFlag({
++                .longName = name,
++                .description = fmt("Set the `%s` setting.", name),
++                .category = category,
++                .labels = {"value"},
++                .handler = {[this](std::string s) {
++                    overridden = true;
++                    fromCommandLine = true;
++                    set(s);
++                }},
++            });
++        }
++    };
++
++    BackendSetting backend{
++        this,
++        "profile",
++        "profile-backend",
++        R"(
++          Where `nix profile` records packages:
++
++          - `profile`: the default profile.
++          - `profile:`*path*: the profile at the absolute *path*. `--profile` *path* is short for this.
++          - `declaration:`*path*: the JSON file at the absolute *path*. `nix profile add` resolves
++            and builds flake installables and records them there (per element the fields
++            `manifest.json` has, without `storePaths` and `active`); [`profile-hook`](#conf-profile-hook)
++            then has to install what the file declares, so it is required. Store paths go to the
++            default profile; an element of the same name there moves into the file. Names and
++            store paths match elements in both; `--all` and `--regex` match the file only.
++            `nix profile list` shows both. If a change fails, the whole command is reverted.
++            `history`, `rollback` and `wipe-history` act on the file's own versions, kept as
++            generations of the profile `declaration` next to the default profile.
++        )"};
++
++    Setting<std::string> hook{
++        this,
++        "",
++        "profile-hook",
++        R"(
++          The absolute path of a program run after `nix profile` changed what is installed, in
++          either backend. If it fails, the change is reverted: a declaration file gets its previous
++          contents back, a profile its previous generation. It must exit 0 only once the change
++          is fully applied.
++
++          Its environment has `NIX_PROFILE_BACKEND` (`profile` or `declaration`), `NIX_PROFILE`
++          (the profile), `NIX_PROFILE_DECLARATION` (the declaration file, `declaration` only) and
++          `NIX_PROFILE_OPERATION` (`add`, `remove`, `upgrade` or `rollback`). A hook that runs
++          `nix profile` itself must avoid recursing, e.g. by acting only on one backend.
++        )"};
++};
++
++static ProfileSettings profileSettings;
++static GlobalConfig::Register rProfileSettings(&profileSettings);
++
++static std::optional<std::filesystem::path> profileHook()
++{
++    auto & hook = profileSettings.hook.get();
++    if (hook.empty())
++        return std::nullopt;
++    std::filesystem::path path = hook;
++    if (!path.is_absolute())
++        throw UsageError("'profile-hook = %s' must be an absolute path", hook);
++    return path;
++}
++
++static void runProfileHook(
++    std::string_view backend,
++    const std::filesystem::path & profile,
++    const std::optional<std::filesystem::path> & declaration,
++    std::string_view operation)
++{
++    auto hook = profileHook();
++    if (!hook)
++        return;
++    auto env = getEnvOs();
++    env.insert_or_assign(OS_STR("NIX_PROFILE_BACKEND"), string_to_os_string(backend));
++    env.insert_or_assign(OS_STR("NIX_PROFILE"), profile.native());
++    env.insert_or_assign(OS_STR("NIX_PROFILE_OPERATION"), string_to_os_string(operation));
++    if (declaration)
++        env.insert_or_assign(OS_STR("NIX_PROFILE_DECLARATION"), declaration->native());
++    else
++        env.erase(OS_STR("NIX_PROFILE_DECLARATION"));
++    auto suspension = logger->suspend();
++    runProgram2({.program = *hook, .lookupPath = false, .environment = std::move(env)});
++}
++
++/* Runs the hook; on failure calls `revert` and fails. */
++static void runProfileHookOrRevert(
++    std::string_view backend,
++    const std::filesystem::path & profile,
++    const std::optional<std::filesystem::path> & declaration,
++    std::string_view operation,
++    std::function<void()> revert)
++{
++    try {
++        runProfileHook(backend, profile, declaration, operation);
++    } catch (Error & e) {
++        revert();
++        throw Error("profile-hook '%s' failed, so the change was reverted: %s", profileSettings.hook.get(), e.msg());
++    }
++}
++
++/**
++ * Where `nix profile` records packages (setting `profile-backend`).
++ */
++struct ProfileBackend
++{
++    virtual ~ProfileBackend() = default;
++
++    /** As in `NIX_PROFILE_BACKEND`. */
++    virtual std::string_view kind() const = 0;
++
++    /** Whether this backend records `element`; the next backend in the chain gets the others. */
++    virtual bool accepts(const ProfileElement & element) const = 0;
++
++    virtual ProfileManifest load(EvalState & state) = 0;
++
++    /** Checks that a change can be committed and takes the backend's lock, before anything is built. */
++    virtual void prepare() {}
++
++    /** Records `manifest`, then runs `profile-hook`; reverts if it fails. Returns how to undo the change
++        when a later backend of the same command fails. */
++    virtual std::function<void()> commit(ref<Store> store, ProfileManifest & manifest, std::string_view operation) = 0;
++
++    /** The profile whose generations are this backend's versions. */
++    virtual std::filesystem::path generations() const = 0;
++
++    virtual ProfileManifest loadGeneration(EvalState & state, const std::filesystem::path & generation) = 0;
++
++    virtual void rollback(ref<Store> store, std::optional<GenerationNumber> version, bool dryRun) = 0;
++};
++
++static LocalFSStore & requireLocalFSStore(Store & store)
++{
++    auto * local = dynamic_cast<LocalFSStore *>(&store);
++    if (!local)
++        throw Error("'nix profile' is not supported for this Nix store");
++    return *local;
++}
++
++/* Back to generation `prev` (none: no profile), deleting the current one if it is newer than `last`,
++   the newest generation before the change (createGeneration may have reused an older one). */
++static void revertProfile(
++    const std::filesystem::path & profile, std::optional<GenerationNumber> prev, GenerationNumber last)
++{
++    auto cur = findGenerations(profile).second;
++    if (!cur || cur == prev)
++        return;
++    if (prev)
++        switchGeneration(profile, prev, false);
++    else
++        std::filesystem::remove(profile);
++    if (*cur > last)
++        deleteGeneration(profile, *cur);
++}
++
++/** Stock `nix profile`: a profile's generations. */
++struct ProfileProfileBackend : ProfileBackend
++{
++    std::filesystem::path profile;
++
++    ProfileProfileBackend(std::filesystem::path profile)
++        : profile(std::move(profile))
++    {
++    }
++
++    std::string_view kind() const override
++    {
++        return "profile";
++    }
++
++    bool accepts(const ProfileElement & element) const override
++    {
++        return true;
++    }
++
++    ProfileManifest load(EvalState & state) override
++    {
++        return ProfileManifest(state, profile);
++    }
++
++    std::function<void()> commit(ref<Store> store, ProfileManifest & manifest, std::string_view operation) override
++    {
++        auto & local = requireLocalFSStore(*store);
++        auto [gens, prev] = findGenerations(profile);
++        GenerationNumber last = gens.empty() ? 0 : gens.back().number;
++        switchLink(profile, createGeneration(local, profile, manifest.build(store)));
++        auto revert = [profile = profile, prev, last]() { revertProfile(profile, prev, last); };
++        runProfileHookOrRevert(kind(), profile, std::nullopt, operation, revert);
++        return revert;
++    }
++
++    std::filesystem::path generations() const override
++    {
++        return profile;
++    }
++
++    ProfileManifest loadGeneration(EvalState & state, const std::filesystem::path & generation) override
++    {
++        return ProfileManifest(state, generation);
++    }
++
++    void rollback(ref<Store> store, std::optional<GenerationNumber> version, bool dryRun) override
++    {
++        auto prev = findGenerations(profile).second;
++        switchGeneration(profile, version, dryRun);
++        if (dryRun)
++            return;
++        runProfileHookOrRevert(kind(), profile, std::nullopt, "rollback", [&]() {
++            if (prev)
++                switchGeneration(profile, prev, false);
++        });
++    }
++};
++
++static std::optional<std::string> readFileIfExists(const std::filesystem::path & path)
++{
++    if (!std::filesystem::exists(path))
++        return std::nullopt;
++    return readFile(path);
++}
++
++/* Replaces the file `path` resolves to (a symlink stays one), keeping its mode. */
++static void writeFileAtomic(const std::filesystem::path & path, std::string_view contents)
++{
++    auto target = std::filesystem::weakly_canonical(path);
++    auto tmp = target;
++    tmp += ".nix-profile-tmp";
++    writeFile(tmp, contents, 0666, FsSync::Yes);
++    if (std::filesystem::exists(target))
++        std::filesystem::permissions(tmp, std::filesystem::status(target).permissions());
++    std::filesystem::rename(tmp, target);
++}
++
++/**
++ * A JSON declaration of flake packages that `profile-hook` installs, e.g. by building a
++ * configuration that reads it. Format: `{"version": 1, "elements": {name: element}}`, where an
++ * element has the `manifest.json` fields `originalUrl`, `url`, `attrPath`, `outputs` and `priority`.
++ */
++struct DeclarationProfileBackend : ProfileBackend
++{
++    std::filesystem::path file;
++    /** The default profile, for `NIX_PROFILE`. */
++    std::filesystem::path profile;
++    std::filesystem::path history;
++    /** The file's contents at `load()`, to detect a concurrent change. */
++    std::optional<std::string> loaded;
++    PathLocks lock;
++    bool prepared = false;
++
++    DeclarationProfileBackend(std::filesystem::path file, std::filesystem::path profile)
++        : file(std::move(file))
++        , profile(std::move(profile))
++        , history(profilesDir(settings.getProfileDirsOptions()) / "declaration")
++    {
++    }
++
++    std::string_view kind() const override
++    {
++        return "declaration";
++    }
++
++    bool accepts(const ProfileElement & element) const override
++    {
++        return element.source.has_value();
++    }
++
++    static ProfileManifest parse(const std::string & contents, const std::filesystem::path & path)
++    {
++        try {
++            auto json = nlohmann::json::parse(contents);
++            if (!json.is_object() || json.value("version", 0) != 1)
++                throw Error("declaration %s has an unsupported version (expected 1)", PathFmt(path));
++            auto & elements = json.at("elements");
++            if (!elements.is_object())
++                throw Error("declaration %s is not valid: 'elements' is not an object", PathFmt(path));
++            ProfileManifest manifest;
++            for (auto & [name, e] : elements.items()) {
++                auto originalRef = parseFlakeRef(fetchSettings, e.at("originalUrl").get<std::string>());
++                ProfileElement element;
++                element.source = ProfileElementSource{
++                    .originalRef = originalRef,
++                    .lockedRef =
++                        e.contains("url") ? parseFlakeRef(fetchSettings, e["url"].get<std::string>()) : originalRef,
++                    .attrPath = e.at("attrPath"),
++                    .outputs = e.value("outputs", nlohmann::json()).get<ExtendedOutputsSpec>(),
++                };
++                element.priority = e.value("priority", defaultPriority);
++                manifest.elements.insert_or_assign(name, std::move(element));
++            }
++            return manifest;
++        } catch (nlohmann::json::exception & e) {
++            throw Error("declaration %s is not valid: %s", PathFmt(path), e.what());
++        }
++    }
++
++    static std::string serialize(const ProfileManifest & manifest)
++    {
++        auto es = nlohmann::json::object();
++        for (auto & [name, element] : manifest.elements) {
++            assert(element.source);
++            es[name] = {
++                {"originalUrl", element.source->originalRef.to_string()},
++                {"url", element.source->lockedRef.to_string()},
++                {"attrPath", element.source->attrPath},
++                {"outputs", element.source->outputs},
++                {"priority", element.priority},
++            };
++        }
++        return nlohmann::json{{"version", 1}, {"elements", es}}.dump(2) + "\n";
++    }
++
++    ProfileManifest load(EvalState & state) override
++    {
++        loaded = readFileIfExists(file);
++        return loaded ? parse(*loaded, file) : ProfileManifest();
++    }
++
++    StorePath storePathOf(Store & store, const std::string & contents)
++    {
++        return store.makeFixedOutputPathFromCA(
++            file.filename().string(),
++            TextInfo{.hash = hashString(HashAlgorithm::SHA256, contents), .references = {}});
++    }
++
++    /* Whether `contents` is the current version (comparing store paths: an old generation may dangle). */
++    bool isCurrent(Store & store, const std::string & contents)
++    {
++        auto [gens, cur] = findGenerations(history);
++        auto path = store.printStorePath(storePathOf(store, contents));
++        for (auto & gen : gens)
++            if (cur && gen.number == *cur)
++                return readLink(gen.path).string() == path && std::filesystem::exists(gen.path);
++        return false;
++    }
++
++    /* Keeps `contents` as the newest version unless it already is. */
++    void record(ref<Store> store, const std::string & contents)
++    {
++        if (isCurrent(*store, contents))
++            return;
++        StringSource source{contents};
++        auto path = store->addToStoreFromDump(
++            source,
++            file.filename().string(),
++            FileSerialisationMethod::Flat,
++            ContentAddressMethod::Raw::Text,
++            HashAlgorithm::SHA256);
++        switchLink(history, createGeneration(requireLocalFSStore(*store), history, path));
++    }
++
++    void prepare() override
++    {
++        if (prepared)
++            return;
++        if (!profileHook())
++            throw Error(
++                "the declaration backend needs 'profile-hook' to install what %s declares", PathFmt(file));
++        lockProfile(lock, history);
++        if (!std::filesystem::exists(file))
++            throw Error(
++                "declaration %s does not exist; create it with {\"version\": 1, \"elements\": {}}, "
++                "or use '--profile-backend profile'",
++                PathFmt(file));
++        prepared = true;
++    }
++
++    /* Returns the current contents; fails if the file changed since `load()`. */
++    std::string current()
++    {
++        prepare();
++        auto contents = readFileIfExists(file);
++        if (contents != loaded)
++            throw Error("declaration %s changed while 'nix profile' ran; try again", PathFmt(file));
++        return *contents;
++    }
++
++    /* Writes `contents` and runs the hook; puts `previous` back if the hook fails. */
++    void apply(ref<Store> store, const std::string & previous, const std::string & contents, std::string_view operation)
++    {
++        // Hand edits since the last change become a version of their own.
++        record(store, previous);
++        writeFileAtomic(file, contents);
++        runProfileHookOrRevert(kind(), profile, file, operation, [&]() { writeFileAtomic(file, previous); });
++    }
++
++    std::function<void()> commit(ref<Store> store, ProfileManifest & manifest, std::string_view operation) override
++    {
++        auto previous = current();
++        auto contents = serialize(manifest);
++        // E.g. an upgrade that re-locked to the same source: nothing to apply.
++        if (contents == previous)
++            return []() {};
++        apply(store, previous, contents, operation);
++        record(store, contents);
++        return [file = file, previous]() { writeFileAtomic(file, previous); };
++    }
++
++    std::filesystem::path generations() const override
++    {
++        return history;
++    }
++
++    ProfileManifest loadGeneration(EvalState & state, const std::filesystem::path & generation) override
++    {
++        return parse(readFile(generation), generation);
++    }
++
++    void rollback(ref<Store> store, std::optional<GenerationNumber> version, bool dryRun) override
++    {
++        loaded = readFileIfExists(file);
++        auto previous = current();
++        auto [gens, cur] = findGenerations(history);
++        // After a hand edit, the previous version is the current generation itself.
++        bool edited = !isCurrent(*store, previous);
++        std::optional<Generation> target;
++        for (auto & gen : gens)
++            if (version ? gen.number == *version : (cur && (edited ? gen.number <= *cur : gen.number < *cur)))
++                target = gen;
++        if (!target)
++            throw Error(
++                version ? fmt("declaration version %d does not exist", *version)
++                        : std::string("no earlier declaration version to roll back to"));
++        if (!std::filesystem::exists(target->path))
++            throw Error(
++                "declaration version %d is no longer in the store (%s)",
++                target->number,
++                readLink(target->path).string());
++        if (dryRun) {
++            notice("would roll back %s to version %d", PathFmt(file), target->number);
++            return;
++        }
++        notice("rolling back %s to version %d", PathFmt(file), target->number);
++        apply(store, previous, readFile(target->path), "rollback");
++        // As for a profile, a rollback moves the current version back instead of adding one.
++        // (switchLink: switchGeneration would wait for the lock held here.)
++        switchLink(history, target->path);
++    }
++};
++
++static std::vector<ref<ProfileBackend>> getProfileBackends(const MixProfile & cmd)
++{
++    auto defaultProfile = getDefaultProfile(settings.getProfileDirsOptions());
++    auto & spec = profileSettings.backend.get();
++
++    if (cmd.profile && absPath(*cmd.profile) != absPath(defaultProfile)) {
++        if (profileSettings.backend.fromCommandLine)
++            throw UsageError(
++                "'--profile' and '--profile-backend' cannot be used together ('--profile <path>' is short for "
++                "'--profile-backend profile:<path>')");
++        return {make_ref<ProfileProfileBackend>(absPath(*cmd.profile))};
++    }
++
++    auto target = [&](std::string_view prefix) -> std::optional<std::filesystem::path> {
++        if (!hasPrefix(spec, prefix))
++            return std::nullopt;
++        std::filesystem::path path = spec.substr(prefix.size());
++        if (!path.is_absolute())
++            throw UsageError("'profile-backend = %s' needs an absolute path after '%s'", spec, prefix);
++        return path;
++    };
++
++    if (spec == "profile")
++        return {make_ref<ProfileProfileBackend>(defaultProfile)};
++    if (auto path = target("profile:"))
++        return {make_ref<ProfileProfileBackend>(*path)};
++    if (auto path = target("declaration:"))
++        return {
++            make_ref<DeclarationProfileBackend>(*path, defaultProfile),
++            make_ref<ProfileProfileBackend>(defaultProfile)};
++    throw UsageError(
++        "invalid 'profile-backend' value '%s': expected 'profile', 'profile:<path>' or 'declaration:<path>'", spec);
++}
++
++static std::vector<ProfileManifest> loadManifests(EvalState & state, const std::vector<ref<ProfileBackend>> & backends)
++{
++    std::vector<ProfileManifest> manifests;
++    for (auto & backend : backends)
++        manifests.push_back(backend->load(state));
++    return manifests;
++}
++
++/* Commits the changed backends, the profile first (a declaration's hook may change the profile
++   itself); if one fails, the ones already committed are reverted too. */
++static void commitBackends(
++    const std::vector<ref<ProfileBackend>> & backends,
++    const std::vector<bool> & changed,
++    std::function<std::function<void()>(size_t)> commitOne)
++{
++    std::vector<std::function<void()>> undo;
++    try {
++        for (size_t b = backends.size(); b-- > 0;)
++            if (changed[b])
++                undo.push_back(commitOne(b));
++    } catch (...) {
++        for (auto i = undo.rbegin(); i != undo.rend(); ++i) {
++            try {
++                (*i)();
++            } catch (...) {
++                ignoreExceptionExceptInterrupt();
++            }
++        }
++        throw;
++    }
++}
++
+ static std::map<Installable *, std::pair<BuiltPaths, ref<ExtraPathInfo>>>
+ builtPathsPerInstallable(const std::vector<std::pair<ref<Installable>, BuiltPathWithResult>> & builtPaths)
+ {
+@@ -361,7 +898,16 @@ struct CmdProfileAdd : InstallablesCommand, MixDefaultProfile
+ 
+     void run(ref<Store> store, Installables && installables) override
+     {
+-        ProfileManifest manifest(*getEvalState(), *profile);
++        auto backends = getProfileBackends(*this);
++        // Flake installables go to the first backend: check it can take them before building.
++        if (backends.size() > 1)
++            for (auto & installable : installables)
++                if (dynamic_cast<InstallableFlake *>(&*installable)) {
++                    backends[0]->prepare();
++                    break;
++                }
++        auto manifests = loadManifests(*getEvalState(), backends);
++        std::vector<bool> changed(backends.size());
+ 
+         auto builtPaths = builtPathsPerInstallable(
+             Installable::build2(getEvalStore(), store, Realise::Outputs, installables, bmNormal));
+@@ -392,27 +938,75 @@ struct CmdProfileAdd : InstallablesCommand, MixDefaultProfile
+ 
+             element.updateStorePaths(getEvalStore(), store, res);
+ 
++            size_t b = 0;
++            while (!backends[b]->accepts(element))
++                ++b;
++            // Not inside a profile-hook: there the hook's own tools add store paths (home-manager does).
++            if (b > 0 && isTTY(getStandardError()) && !getEnv("NIX_PROFILE_BACKEND"))
++                warn(
++                    "'%s' is not a flake output, so it goes into the profile, not the declaration; "
++                    "'nix shell' tries a package without adding it",
++                    element.identifier());
++            auto & manifest = manifests[b];
++
+             auto elementName = getNameFromElement(element);
+ 
++            // A store path must not shadow a declared package of the same name.
++            if (b > 0 && manifests[0].elements.contains(elementName))
++                throw Error(
++                    "'%s' is declared in the %s; remove it there first ('nix profile remove %s'), or try the "
++                    "store path with 'nix shell'",
++                    elementName,
++                    backends[0]->kind(),
++                    elementName);
++
+             // Check if the element already exists.
++            bool alreadyAdded = false;
+             auto existingPair = manifest.elements.find(elementName);
+             if (existingPair != manifest.elements.end()) {
+                 auto existingElement = existingPair->second;
+                 auto existingSource = existingElement.source;
+                 auto elementSource = element.source;
+-                if (existingSource && elementSource && existingElement.priority == element.priority
+-                    && existingSource->originalRef == elementSource->originalRef
+-                    && existingSource->attrPath == elementSource->attrPath) {
+-                    warn("'%s' is already added", elementName);
+-                    continue;
++                alreadyAdded = existingSource && elementSource && existingElement.priority == element.priority
++                               && existingSource->originalRef == elementSource->originalRef
++                               && existingSource->attrPath == elementSource->attrPath;
++            }
++
++            // The same package in a later backend moves here (or goes, if already here), so it is
++            // recorded once.
++            for (size_t later = b + 1; later < backends.size(); ++later)
++                if (manifests[later].elements.erase(elementName)) {
++                    if (alreadyAdded)
++                        notice(
++                            "removing '%s' from the %s: the %s has it already",
++                            elementName,
++                            backends[later]->kind(),
++                            backends[b]->kind());
++                    else
++                        notice(
++                            "moving '%s' from the %s to the %s",
++                            elementName,
++                            backends[later]->kind(),
++                            backends[b]->kind());
++                    changed[later] = true;
+                 }
++
++            if (alreadyAdded) {
++                warn("'%s' is already added", elementName);
++                continue;
+             }
+ 
+             manifest.addElement(elementName, std::move(element));
++            changed[b] = true;
+         }
+ 
++        commitBackends(backends, changed, [&](size_t b) { return commit(store, *backends[b], manifests[b]); });
++    }
++
++    std::function<void()> commit(ref<Store> store, ProfileBackend & backend, ProfileManifest & manifest)
++    {
+         try {
+-            updateProfile(*store, manifest.build(store));
++            return backend.commit(store, manifest, "add");
+         } catch (BuildEnvFileConflictError & conflictError) {
+             // FIXME use C++20 std::ranges once macOS has it
+             //       See
+@@ -479,6 +1073,12 @@ struct Matcher
+ 
+     virtual std::string getTitle() = 0;
+     virtual bool matches(const std::string & name, const ProfileElement & element) = 0;
++
++    /** Whether it also matches in backends after the first (names and store paths do). */
++    virtual bool reachesLaterBackends()
++    {
++        return true;
++    }
+ };
+ 
+ struct RegexMatcher final : public Matcher
+@@ -497,6 +1097,11 @@ struct RegexMatcher final : public Matcher
+         return fmt("Regex '%s'", pattern);
+     }
+ 
++    bool reachesLaterBackends() override
++    {
++        return false;
++    }
++
+     bool matches(const std::string & name, const ProfileElement & element) override
+     {
+         return std::regex_match(element.identifier(), regex);
+@@ -550,6 +1155,11 @@ struct AllMatcher final : public Matcher
+         return "--all";
+     }
+ 
++    bool reachesLaterBackends() override
++    {
++        return false;
++    }
++
+     bool matches(const std::string & name, const ProfileElement & element) override
+     {
+         return true;
+@@ -595,7 +1205,8 @@ public:
+              }}});
+     }
+ 
+-    StringSet getMatchingElementNames(ProfileManifest & manifest)
++    /* The matching element names per manifest. */
++    std::vector<StringSet> getMatchingElementNames(std::vector<ProfileManifest> & manifests)
+     {
+         if (_matchers.empty()) {
+             throw UsageError("No packages specified.");
+@@ -610,20 +1221,22 @@ public:
+             throw UsageError("--all cannot be used with package names or regular expressions.");
+         }
+ 
+-        if (manifest.elements.empty()) {
++        std::vector<StringSet> result(manifests.size());
++
++        if (std::all_of(manifests.begin(), manifests.end(), [](auto & m) { return m.elements.empty(); })) {
+             warn("There are no packages in the profile.");
+-            return {};
++            return result;
+         }
+ 
+-        StringSet result;
+         for (auto & matcher : _matchers) {
+             bool foundMatch = false;
+-            for (auto & [name, element] : manifest.elements) {
+-                if (matcher->matches(name, element)) {
+-                    result.insert(name);
+-                    foundMatch = true;
++            for (size_t i = 0; i < (matcher->reachesLaterBackends() ? manifests.size() : 1); ++i)
++                for (auto & [name, element] : manifests[i].elements) {
++                    if (matcher->matches(name, element)) {
++                        result[i].insert(name);
++                        foundMatch = true;
++                    }
+                 }
+-            }
+             if (!foundMatch) {
+                 warn("%s does not match any packages in the profile.", matcher->getTitle());
+             }
+@@ -648,27 +1261,35 @@ struct CmdProfileRemove : virtual EvalCommand, MixDefaultProfile, MixProfileElem
+ 
+     void run(ref<Store> store) override
+     {
+-        ProfileManifest oldManifest(*getEvalState(), *profile);
+-
+-        ProfileManifest newManifest = oldManifest;
++        auto backends = getProfileBackends(*this);
++        auto manifests = loadManifests(*getEvalState(), backends);
+ 
+-        auto matchingElementNames = getMatchingElementNames(oldManifest);
++        auto matching = getMatchingElementNames(manifests);
+ 
+-        if (matchingElementNames.empty()) {
++        if (std::all_of(matching.begin(), matching.end(), [](auto & names) { return names.empty(); })) {
+             warn("No packages to remove. Use 'nix profile list' to see the current profile.");
+             return;
+         }
+ 
+-        for (auto & name : matchingElementNames) {
+-            auto & element = oldManifest.elements[name];
+-            notice("removing '%s'", element.identifier());
+-            newManifest.elements.erase(name);
++        std::vector<bool> changed(backends.size());
++        std::vector<ProfileManifest> newManifests = manifests;
++        for (size_t b = 0; b < backends.size(); ++b) {
++            if (matching[b].empty())
++                continue;
++            backends[b]->prepare();
++            changed[b] = true;
++            for (auto & name : matching[b]) {
++                notice("removing '%s'", manifests[b].elements[name].identifier());
++                newManifests[b].elements.erase(name);
++            }
++            printInfo(
++                "removed %d packages, kept %d packages",
++                manifests[b].elements.size() - newManifests[b].elements.size(),
++                newManifests[b].elements.size());
+         }
+ 
+-        auto removedCount = oldManifest.elements.size() - newManifest.elements.size();
+-        printInfo("removed %d packages, kept %d packages", removedCount, newManifest.elements.size());
+-
+-        updateProfile(*store, newManifest.build(store));
++        commitBackends(
++            backends, changed, [&](size_t b) { return backends[b]->commit(store, newManifests[b], "remove"); });
+     }
+ };
+ 
+@@ -688,22 +1309,25 @@ struct CmdProfileUpgrade : virtual SourceExprCommand, MixDefaultProfile, MixProf
+ 
+     void run(ref<Store> store) override
+     {
+-        ProfileManifest manifest(*getEvalState(), *profile);
++        auto backends = getProfileBackends(*this);
++        auto manifests = loadManifests(*getEvalState(), backends);
++        std::vector<bool> changed(backends.size());
+ 
+         Installables installables;
+         std::vector<ProfileElement *> elems;
+ 
+         auto upgradedCount = 0;
+ 
+-        auto matchingElementNames = getMatchingElementNames(manifest);
++        auto matching = getMatchingElementNames(manifests);
+ 
+-        if (matchingElementNames.empty()) {
++        if (std::all_of(matching.begin(), matching.end(), [](auto & names) { return names.empty(); })) {
+             warn("No packages to upgrade. Use 'nix profile list' to see the current profile.");
+             return;
+         }
+ 
+-        for (auto & name : matchingElementNames) {
+-            auto & element = manifest.elements[name];
++        for (size_t b = 0; b < backends.size(); ++b)
++        for (auto & name : matching[b]) {
++            auto & element = manifests[b].elements[name];
+ 
+             if (!element.source) {
+                 warn(
+@@ -759,6 +1383,7 @@ struct CmdProfileUpgrade : virtual SourceExprCommand, MixDefaultProfile, MixProf
+ 
+             installables.push_back(installable);
+             elems.push_back(&element);
++            changed[b] = true;
+         }
+ 
+         if (upgradedCount == 0) {
+@@ -766,6 +1391,10 @@ struct CmdProfileUpgrade : virtual SourceExprCommand, MixDefaultProfile, MixProf
+             return;
+         }
+ 
++        for (size_t b = 0; b < backends.size(); ++b)
++            if (changed[b])
++                backends[b]->prepare();
++
+         auto builtPaths = builtPathsPerInstallable(
+             Installable::build2(getEvalStore(), store, Realise::Outputs, installables, bmNormal));
+ 
+@@ -775,7 +1404,8 @@ struct CmdProfileUpgrade : virtual SourceExprCommand, MixDefaultProfile, MixProf
+             element.updateStorePaths(getEvalStore(), store, builtPaths.find(&*installable)->second.first);
+         }
+ 
+-        updateProfile(*store, manifest.build(store));
++        commitBackends(
++            backends, changed, [&](size_t b) { return backends[b]->commit(store, manifests[b], "upgrade"); });
+     }
+ };
+ 
+@@ -795,11 +1425,44 @@ struct CmdProfileList : virtual EvalCommand, virtual StoreCommand, MixDefaultPro
+ 
+     void run(ref<Store> store) override
+     {
+-        ProfileManifest manifest(*getEvalState(), *profile);
++        auto backends = getProfileBackends(*this);
++        auto manifests = loadManifests(*getEvalState(), backends);
++
++        if (backends.size() == 1) {
++            if (json)
++                printJSON(manifests[0].toJSON(*store));
++            else
++                print(*store, manifests[0], std::nullopt);
++            return;
++        }
+ 
++        // Several backends: one stock-shaped list, each element marked with its backend.
+         if (json) {
+-            printJSON(manifest.toJSON(*store));
++            auto es = nlohmann::json::object();
++            for (size_t b = 0; b < backends.size(); ++b) {
++                auto manifestJson = manifests[b].toJSON(*store);
++                for (auto & elem : manifestJson["elements"].items()) {
++                    auto name = elem.key();
++                    for (int i = 1; es.contains(name); ++i)
++                        name = elem.key() + "-" + std::to_string(i);
++                    auto e = elem.value();
++                    e["backend"] = backends[b]->kind();
++                    es[name] = e;
++                }
++            }
++            printJSON(nlohmann::json{{"version", 3}, {"elements", es}});
+         } else {
++            for (size_t b = 0; b < backends.size(); ++b) {
++                if (b && !manifests[b - 1].elements.empty() && !manifests[b].elements.empty())
++                    logger->cout("");
++                print(*store, manifests[b], backends[b]->kind());
++            }
++        }
++    }
++
++    void print(Store & store, const ProfileManifest & manifest, std::optional<std::string_view> backend)
++    {
++        {
+             for (const auto & [i, e] : enumerate(manifest.elements)) {
+                 auto & [name, element] = e;
+                 if (i)
+@@ -815,7 +1478,11 @@ struct CmdProfileList : virtual EvalCommand, virtual StoreCommand, MixDefaultPro
+                     logger->cout("Locked flake URL:   %s", element.source->lockedRef.to_string());
+                 }
+                 logger->cout(
+-                    "Store paths:        %s", concatStringsSep(" ", store->printStorePathSet(element.storePaths)));
++                    "Store paths:        %s",
++                    backend == "declaration" ? "(installed by profile-hook)"
++                                             : concatStringsSep(" ", store.printStorePathSet(element.storePaths)));
++                if (backend)
++                    logger->cout("Backend:            %s", *backend);
+             }
+         }
+     }
+@@ -837,7 +1504,7 @@ struct CmdProfileDiffClosures : virtual StoreCommand, MixDefaultProfile
+ 
+     void run(ref<Store> store) override
+     {
+-        auto [gens, curGen] = findGenerations(*profile);
++        auto [gens, curGen] = findGenerations(getProfileBackends(*this).back()->generations());
+ 
+         std::optional<Generation> prevGen;
+         bool first = true;
+@@ -876,14 +1543,13 @@ struct CmdProfileHistory : virtual StoreCommand, EvalCommand, MixDefaultProfile
+ 
+     void run(ref<Store> store) override
+     {
+-        auto [gens, curGen] = findGenerations(*profile);
++        auto backend = getProfileBackends(*this).front();
++        auto [gens, curGen] = findGenerations(backend->generations());
+ 
+         std::optional<std::pair<Generation, ProfileManifest>> prevGen;
+         bool first = true;
+ 
+         for (auto & gen : gens) {
+-            ProfileManifest manifest(*getEvalState(), gen.path);
+-
+             if (!first)
+                 logger->cout("");
+             first = false;
+@@ -895,6 +1561,13 @@ struct CmdProfileHistory : virtual StoreCommand, EvalCommand, MixDefaultProfile
+                 std::put_time(std::gmtime(&gen.creationTime), "%Y-%m-%d"),
+                 prevGen ? fmt(" <- %d", prevGen->first.number) : "");
+ 
++            // E.g. a declaration version an image update did not keep.
++            if (!std::filesystem::exists(gen.path)) {
++                logger->cout("  Not available: %s is no longer in the store.", readLink(gen.path).string());
++                continue;
++            }
++
++            auto manifest = backend->loadGeneration(*getEvalState(), gen.path);
+             ProfileManifest::printDiff(prevGen ? prevGen->second : ProfileManifest(), manifest, "  ");
+ 
+             prevGen = {gen, std::move(manifest)};
+@@ -930,7 +1603,7 @@ struct CmdProfileRollback : virtual StoreCommand, MixDefaultProfile, MixDryRun
+ 
+     void run(ref<Store> store) override
+     {
+-        switchGeneration(*profile, version, dryRun);
++        getProfileBackends(*this).front()->rollback(store, version, dryRun);
+     }
+ };
+ 
+@@ -964,11 +1637,12 @@ struct CmdProfileWipeHistory : virtual StoreCommand, MixDefaultProfile, MixDryRu
+ 
+     void run(ref<Store> store) override
+     {
++        auto generations = getProfileBackends(*this).front()->generations();
+         if (minAge) {
+             auto t = parseOlderThanTimeSpec(*minAge);
+-            deleteGenerationsOlderThan(*profile, t, dryRun);
++            deleteGenerationsOlderThan(generations, t, dryRun);
+         } else
+-            deleteOldGenerations(*profile, dryRun);
++            deleteOldGenerations(generations, dryRun);
+     }
+ };
+ 

@@ -10,7 +10,7 @@ One Go binary (`cmd/kube-webtop-workspaces`), run as two Deployments:
 
 - **gateway** (`--mode=gateway`): sits behind a forward-auth proxy that sets the user and groups
   headers. It reverse-proxies each user to their own desktop (HTTP and websockets), starts it on a
-  top-level navigation, and serves the boot screen and the "desktop is off" page. Admins can open any
+  top-level navigation, and serves the boot screen, the "desktop is off" page and, after Sleep, a "desktop is asleep" page with a Wake button. Admins can open any
   desktop at `/u/<user>/`.
 - **single apps**: `/apps/<name>` (or `/u/<user>/apps/<name>` for admins) streams one application
   of the desktop instead of the whole desktop, where `<name>` is a desktop file id such as
@@ -18,7 +18,9 @@ One Go binary (`cmd/kube-webtop-workspaces`), run as two Deployments:
   screen, then redirects to the desktop page `/#display2-right`. Limits: one app at a time (opening
   another releases the first, which keeps running on the main desktop), audio plays on the main page
   only, any application installed for the user is allowed, and an unknown id gets a 404 page.
-  Reloading the URL does not start a second instance while the app is running. Contract:
+  Reloading the URL does not start a second instance while the app is running. `/apps/` (without a
+  name) is an overview page of the desktop's applications with icons and a "running" badge, each
+  linking to its `/apps/<name>`. Contract:
   [section 7.6](docs/contract.md#76-single-app-baseappsname), ADR 0010.
 - **controller** (`--mode=controller`): reconciles `Desktop` resources
   (`webtop.lhns.github.io/v1alpha1`) into a PVC, Service and Deployment, and checks LDAP group
@@ -39,7 +41,7 @@ pod environment, gateway behaviour, configuration, RBAC and metrics.
 
 Built from `flake.nix` with nix2container: `nix build .#image`, then
 `nix run .#image.copyTo -- docker://<ref>`. Published for amd64 and arm64 as one multi-arch index
-([ADR 0011](docs/adr/0011-multi-arch-images-built-natively-published-as-one-index.md)); `packages.<system>`
+([ADR 0014](docs/adr/0014-multi-arch-images-built-natively-published-as-one-index.md)); `packages.<system>`
 for `x86_64-linux` and `aarch64-linux`, each built on its own architecture.
 
 | path | what |
@@ -48,14 +50,19 @@ for `x86_64-linux` and `aarch64-linux`, each built on its own architecture.
 | `image/nixos/container.nix` | NixOS as a container, Nix store settings, journal relay |
 | `image/nixos/desktop.nix` | `services.webtop` (webtop-nix) wired to the pod contract |
 | `image/nixos/hooks.nix` | agent units: power hook, session save, suspend, image-update restore and reinstall |
-| `image/nixos/home-manager.nix` | home-manager from the image (registry, CLI), starter flake unit, prebuilt generation |
+| `image/nixos/home-manager.nix` | home-manager from the image (registry, CLI), the patched Nix, starter flake unit (`webtop-template`), setup unit, prebuilt generation |
+| `image/home-manager/` | the starter flake: `flake.nix`, `home.nix`, `packages.nix` (reads `packages.json`) |
+| `image/nix/` | Nix with `nix profile` backends (`profile-backends.patch`, ADR 0013) |
+| `image/webtop-home-manager.sh` | moves `nix profile` packages into packages.json once, relocks after image updates, switches |
+| `image/webtop-profile-hook.sh` | `profile-hook`: applies a changed `packages.json` with `home-manager switch` |
+| `image/nixos/identity.nix` | renames the desktop user (uid 1000) to the login name at activation |
 | `image/webtop-nix-restore.sh` | copies the users' paths from the old store overlay into the new one |
 | `agent/` | in-pod agent (Go, its own module; packaged by `image/agent.nix`) |
 
 **Entrypoint.** `webtop-init` makes `/` rprivate, binds the image's `/nix` read-only at
 `/.lower/nix`, mounts an overlayfs on `/nix/store` (lower: the image's store, upper:
-`/persist/nix/upper`, `userxattr`), binds `/persist/nix/var` on `/nix/var/nix` and `/persist/home` on
-`/home`, writes the `WEBTOP_*` env to `/run/webtop/env` and extra binary caches (`WEBTOP_NIX_*`) to
+`/persist/nix/upper`, `userxattr`), binds `/persist/nix/var` on `/nix/var/nix`, mounts the user's home at its paths
+(below), writes the `WEBTOP_*` env to `/run/webtop/env` and extra binary caches (`WEBTOP_NIX_*`) to
 `/run/webtop/nix.conf` (systemd does not pass the container env to units) and execs systemd. Stop signal `SIGRTMIN+3`. `WEBTOP_INIT_DEBUG=1` parks the container on a
 failed step instead of exiting; `WEBTOP_INIT_SKIP_OVERLAY=1` boots on the image's store alone.
 systemd replaces PID 1's stdout, so a unit follows the journal into a fifo that webtop-init relays to
@@ -73,17 +80,89 @@ home-manager generations, GC roots) from the kept overlay into the new store; pa
 had are substituted. It skips when there is no room (free space after the copy must stay above a
 reserve). Only then `webtop-nix-trash.service` deletes the old overlay, and
 `webtop-nix-reinstall.service` runs for what did not come back (roots that depend on image-only paths
-such as the patched KWin, or no network): it reinstalls the recorded flake packages (by locked URL) and
-runs `home-manager switch --flake ~/.config/home-manager`, with desktop notifications. Packages built
-locally without a flake reference are lost only if they cannot be restored.
+such as the patched KWin, or no network): it reinstalls the recorded flake packages of the profile (by
+locked URL) and runs `webtop-home-manager` (relock, `home-manager switch`, which reinstates everything
+declared), with desktop notifications. Packages built locally without a flake reference are lost only
+if they cannot be restored.
+
+**User identity** (ADR 0011). The desktop user (uid 1000) is named after the desktop
+(`WEBTOP_DESKTOP`), with home `/home/<name>` and the LDAP display name (`WEBTOP_DISPLAY_NAME`) as
+GECOS. A name that starts with a digit or is an account or group of the image (`root`, `nixbld1`,
+`wheel`, …) falls back to `user`, and the Desktop gets condition `LoginName=False`. The image declares
+the account as `user` and an activation snippet renames it; units, polkit and Nix refer to uid 1000
+or a group, never the name. The data always lives in `/persist/home/user`; `/home` is a tmpfs with a
+bind mount of it at every path listed in `~/.config/webtop/home-paths` plus the current
+`/home/<name>`, which webtop-init adds at every start. Delete a line once nothing refers to that path
+anymore; it disappears at the next start. Lines other than `/home/<valid login name>`, more than 16,
+or a symlinked file are ignored (logged by webtop-init). `status.loginName` and `status.homePaths`
+show the result.
+
+*Existing volumes.* The first start creates `home-paths` with the new path and `/home/user`, so profile
+links, `home.homeDirectory` and KDE configs that name `/home/user` keep working. home-manager itself
+checks the user name and home, so at every start `webtop-home-manager-template.service` rewrites
+`~/.config/home-manager/{flake.nix,home.nix}` for the current name while they are unmodified: what it
+last wrote (hashes in `~/.local/state/webtop/templates.sha256`) or byte-identical to the starter
+template rendered for a name in `home-paths`. An edited flake is left alone; if it still names
+another user, the journal of that unit and a desktop notification list the lines to change
+(`homeConfigurations."…"`, `home.username`, `home.homeDirectory`). Until then a plain
+`home-manager switch` fails, and the reinstall after an image update switches the old `user` config
+(as `USER=user HOME=/home/user`, through the `/home/user` mount) instead. A failed rename at
+activation leaves the account `user` with `/home/user` mounted. The unmodified check is the
+`webtop-template write|unmodified` helper, for other units that update files the image put into the
+home too.
+
+Remove `/home/user` from `home-paths` only once nothing refers to it. Known referrers: `~/.nix-profile`
+and other profile links (`~/.local/state/nix/profiles`), home-manager's `home.homeDirectory` and the
+generated `hm-session-vars.sh`, older generations kept as GC roots (a rollback to them expects
+`/home/user`), and KDE, Firefox and other app configs. To check:
+`grep -rl /home/user ~/.config ~/.local/state ~/.mozilla 2>/dev/null` and
+`ls -l ~/.nix-profile ~/.local/state/nix/profiles`; switch home-manager after updating its config so
+the current generation refers to the new path.
 
 **home-manager.** On first boot, only if `~/.config/home-manager` is absent (and once), a starter
-flake is created there (`image/home-manager/`). Its `nixpkgs` and `home-manager` inputs come from the
+flake is created there (`image/home-manager/`) and switched to. Its `nixpkgs` and `home-manager` inputs come from the
 image (no download): flake inputs resolve indirect refs through the global registry only, so the image
 sets `flake-registry` to the upstream registry with its own `nixpkgs` and `home-manager` pins in front.
-The template's generation is prebuilt into the image. Edit `home.nix` and run `home-manager switch`. Building a changed config may substitute build
-tools from cache.nixos.org. A flake in a git repo ignores untracked files (`git add` them). After an
-image update the template's image-registry inputs are relocked automatically.
+The template is written for the login name; its generation is prebuilt for the placeholder `user`, so the
+first switch builds the few derivations that carry the name. Building a changed config may substitute build
+tools from cache.nixos.org. A flake in a git repo ignores untracked files (`git add` them; the profile
+hook does `git add --intent-to-add packages.json`). After an image update the image-registry inputs are
+relocked automatically (`webtop-home-manager`, which the reinstall unit runs).
+
+**Software** (ADR 0013). One declaration, `~/.config/home-manager/packages.json`, which the
+starter flake's `packages.nix` installs and points `nix profile` at:
+
+| to | run |
+| --- | --- |
+| install | `nix profile add nixpkgs#hello` (any flake installable) |
+| remove | `nix profile remove hello` (names and store paths; `--regex` and `--all` match packages.json only) |
+| list | `nix profile list` (declared packages, then undeclared profile elements, marked `Backend:`) |
+| upgrade | `nix profile upgrade --all`: relocks packages from other flakes; nixpkgs ones follow the image |
+| undo | `nix profile history`, `nix profile rollback [--to N]`: versions of packages.json only |
+| try without installing | `nix shell nixpkgs#hello` |
+
+Nix is patched (`image/nix/`): with `profile-backend = declaration:<file>` (set in the user's
+`~/.config/nix/nix.conf` by `packages.nix`), `add` builds the installable and records it in the
+file the way `manifest.json` records an element, then runs `profile-hook`
+(`webtop-profile-hook`: `home-manager switch`); if the hook fails the file is restored. Store
+paths and elements the file does not declare stay in the profile as before (home-manager's own
+generation is one); a profile element of the same name moves into the file when added, and a store path named like a
+declared package is refused. If any part
+of a command fails, all of it is reverted. `--profile-backend profile` or `--profile <path>` gives
+stock behaviour for one call. Entries are locked: a package from a local `path:` flake picks up edits only with
+`nix profile upgrade`, and such a flake needs its `flake.lock` before the first `add` (`nix flake
+lock`), since writing it changes the directory's hash. Packages in `home.nix` work as before. KDE add-ons from Plasma's "Get New…" dialogs live in
+`~/.local/share`, outside the declaration; there is no Discover.
+
+`webtop-home-manager-template.service` keeps the starter files current with `webtop-template`: an
+unmodified `flake.nix`/`home.nix` (also one of the earlier templates without `packages.nix`, for any of
+the home's names) is rewritten for the login name, and an unmodified `packages.nix` follows the image.
+When that adds `packages.nix` and `packages.json`, `webtop-home-manager.service` then moves the
+`nix profile` flake packages into `packages.json` once (store-path entries stay in the profile) and
+switches, with a notification; if the switch fails, packages.json and the profile are put back and it
+retries next boot. A setup with a `~/.config/nix/nix.conf` of its own gets the rename only (stock
+`nix profile`); an edited one is left alone, with a notice. To opt in, copy `packages.nix` and
+`packages.json` from `image/home-manager/` and add `./packages.nix` to the modules.
 
 **Power.** The agent reports stops to the controller before PID 1 exits (contract section 8.2):
 
@@ -135,8 +214,13 @@ prefix setting. Selkies' `SELKIES_SUBFOLDER` must stay empty: it would make the 
 prefix the gateway has already stripped.
 
 **Selkies settings** (`image/nixos/desktop.nix`): plain HTTP; audio sink, cursor path and library
-wrapper come from webtop-nix. Clipboard, file transfer (to `~/Desktop`) and browser cursors are
-Selkies' defaults.
+wrapper come from webtop-nix. Clipboard, file transfer and browser cursors are webtop-nix's defaults.
+Precedence, low to high: the image's defaults < the cluster (`desktop.selkies` and the tab title
+`desktop.title`, delivered through `/run/webtop/selkies.env`; contract, "Selkies settings") < the user's
+allowlisted `~/.config/webtop/selkies.env` (`services.webtop.userSettings`: stream quality and input
+feel). The per-user file is a convenience, not a security boundary, since the user can edit their own
+systemd user units; settings that must hold (file transfers off) cannot rely on it. A changed setting or
+title applies on the desktop's next start (ADR 0006).
 
 **KWin patch.** KWin 6.8 dropped QPainter compositing, so without a GPU it needs a patch to render
 nested under Selkies: [webtop-nix](https://github.com/lhns/webtop-nix) grafts a patched KWin (LinuxServer's

@@ -98,6 +98,7 @@
         "adminGroupDN": {"type": "string"},
         "membership": {"enum": ["memberOf", "member"]},
         "memberAttribute": {"type": "string"},
+        "displayNameAttribute": {"type": "string"},
         "syncInterval": {"type": "string"},
         "timeout": {"type": "string"},
         "errorPolicy": {"enum": ["deny", "allow"]},
@@ -134,6 +135,12 @@
             "extraTrustedPublicKeys": {"type": "array", "items": {"type": "string"}}
           }
         },
+        "selkies": {
+          "type": "object",
+          "propertyNames": {"pattern": "^SELKIES_[A-Z0-9_]+$"},
+          "additionalProperties": {"type": "string", "maxLength": 256}
+        },
+        "title": {"type": "string"},
         "securityContext": {"type": ["object", "null"]},
         "shmSize": {"type": ["string", "integer"]},
         "runSizeLimit": {"type": ["string", "integer"]},

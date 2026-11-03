@@ -131,6 +131,11 @@ func PodTemplate(cfg *config.Config, d *v1alpha1.Desktop) corev1.PodTemplateSpec
 		{Name: "WEBTOP_HTTP_PORT", Value: strconv.Itoa(int(dc.Port))},
 		{Name: "WEBTOP_PERSIST_PATH", Value: cfg.Storage.MountPath},
 	}
+	// Only once set, so desktops without one keep their template hash.
+	if d.Status.DisplayName != "" {
+		env = append(env, corev1.EnvVar{Name: "WEBTOP_DISPLAY_NAME", Value: d.Status.DisplayName})
+	}
+	env = append(env, SelkiesEnv(cfg, d)...)
 	env = append(env, dc.ExtraEnv...)
 
 	mounts := []corev1.VolumeMount{
