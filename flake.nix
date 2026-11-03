@@ -19,76 +19,82 @@
       flake = false;
     };
     webtop-nix = {
-      url = "github:lhns/webtop-nix/3190ce04e3b975080ba48551d74607fe58f2b51e";
+      url = "github:lhns/webtop-nix/4b29379eb4649f6a2d881779c480da506e3f1940";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
 
   outputs = { self, nixpkgs, nix2container, home-manager, flake-registry, webtop-nix, ... }:
     let
-      system = "x86_64-linux";
-      pkgs = nixpkgs.legacyPackages.${system};
-      n2c = nix2container.packages.${system}.nix2container;
+      # Supported systems (ADR 0014); CI builds and boot-tests each one natively, in a matrix.
+      systems = [ "x86_64-linux" "aarch64-linux" ];
+      forAllSystems = nixpkgs.lib.genAttrs systems;
 
-      agent = pkgs.callPackage ./image/agent.nix { };
+      perSystem = system: rec {
+        pkgs = nixpkgs.legacyPackages.${system};
+        n2c = nix2container.packages.${system}.nix2container;
 
-      nixos = nixpkgs.lib.nixosSystem {
-        inherit system;
-        specialArgs = { inherit agent nixpkgs home-manager flake-registry; };
-        modules = [
-          webtop-nix.nixosModules.webtop
-          ./image/nixos/container.nix
-          ./image/nixos/desktop.nix
-          ./image/nixos/hooks.nix
-          ./image/nixos/home-manager.nix
-          ./image/nixos/identity.nix
-        ];
+        agent = pkgs.callPackage ./image/agent.nix { };
+
+        nixos = nixpkgs.lib.nixosSystem {
+          inherit system;
+          specialArgs = { inherit agent nixpkgs home-manager flake-registry; };
+          modules = [
+            webtop-nix.nixosModules.webtop
+            ./image/nixos/container.nix
+            ./image/nixos/desktop.nix
+            ./image/nixos/hooks.nix
+            ./image/nixos/home-manager.nix
+            ./image/nixos/identity.nix
+          ];
+        };
+        toplevel = nixos.config.system.build.toplevel;
+
+        # Login names webtop-init refuses (ADR 0011): every users.users and users.groups name, i.e. what
+        # activation writes to the image's /etc/passwd and /etc/group (not there yet when webtop-init
+        # runs), except the desktop user's placeholder, which is renamed.
+        reservedNames = let c = nixos.config; in pkgs.writeText "webtop-reserved-names" (pkgs.lib.concatLines
+          (pkgs.lib.remove c.services.webtop.user (pkgs.lib.unique
+            (pkgs.lib.mapAttrsToList (_: u: u.name) c.users.users ++ pkgs.lib.mapAttrsToList (_: g: g.name) c.users.groups))));
+
+        # The shebangs are a static busybox: they run before /nix/store is overlaid. nix-store runs from
+        # the image's store, which is what /nix/store is until then.
+        webtopInit = pkgs.runCommand "webtop-init" { } ''
+          mkdir -p $out
+          substitute ${./image/webtop-init} $out/webtop-init \
+            --subst-var-by busybox ${pkgs.pkgsStatic.busybox} \
+            --subst-var-by reservedNames ${reservedNames}
+          substitute ${./image/webtop-nix-lower} $out/webtop-nix-lower \
+            --subst-var-by busybox ${pkgs.pkgsStatic.busybox}
+          substitute ${./image/webtop-nix-partial} $out/webtop-nix-partial \
+            --subst-var-by busybox ${pkgs.pkgsStatic.busybox} \
+            --subst-var-by nixStore ${nixos.config.nix.package}/bin/nix-store
+          chmod +x $out/webtop-init $out/webtop-nix-lower $out/webtop-nix-partial
+        '';
+
+        rootfs = pkgs.runCommand "rootfs" { } ''
+          mkdir -p $out/sbin $out/bin $out/etc $out/run $out/tmp $out/var $out/persist $out/home $out/proc $out/sys $out/dev
+          chmod 1777 $out/tmp
+          ln -s ${toplevel}/init $out/sbin/init
+          ln -s ${pkgs.pkgsStatic.busybox}/bin/busybox $out/bin/busybox
+          ln -s ${pkgs.pkgsStatic.busybox}/bin/sh $out/bin/sh
+        '';
+
+        # Identifies the image's store (the overlay's lower). webtop-nix-lower compares it with the stamp
+        # on the volume; it lives outside /nix so busybox can read it before the overlay is mounted.
+        # Over paths and NAR hashes: a path rebuilt with other bytes is a change too.
+        lowerClosure = pkgs.closureInfo { rootPaths = [ toplevel webtopInit rootfs ]; };
+        stamp = pkgs.runCommand "webtop-image-stamp" { } ''
+          mkdir -p $out
+          sha256sum ${lowerClosure}/registration | cut -d' ' -f1 > $out/webtop-image-stamp
+        '';
       };
-      toplevel = nixos.config.system.build.toplevel;
-
-      # Login names webtop-init refuses (ADR 0011): every users.users and users.groups name, i.e. what
-      # activation writes to the image's /etc/passwd and /etc/group (not there yet when webtop-init
-      # runs), except the desktop user's placeholder, which is renamed.
-      reservedNames = let c = nixos.config; in pkgs.writeText "webtop-reserved-names" (pkgs.lib.concatLines
-        (pkgs.lib.remove c.services.webtop.user (pkgs.lib.unique
-          (pkgs.lib.mapAttrsToList (_: u: u.name) c.users.users ++ pkgs.lib.mapAttrsToList (_: g: g.name) c.users.groups))));
-
-      # The shebangs are a static busybox: they run before /nix/store is overlaid. nix-store runs from
-      # the image's store, which is what /nix/store is until then.
-      webtopInit = pkgs.runCommand "webtop-init" { } ''
-        mkdir -p $out
-        substitute ${./image/webtop-init} $out/webtop-init \
-          --subst-var-by busybox ${pkgs.pkgsStatic.busybox} \
-          --subst-var-by reservedNames ${reservedNames}
-        substitute ${./image/webtop-nix-lower} $out/webtop-nix-lower \
-          --subst-var-by busybox ${pkgs.pkgsStatic.busybox}
-        substitute ${./image/webtop-nix-partial} $out/webtop-nix-partial \
-          --subst-var-by busybox ${pkgs.pkgsStatic.busybox} \
-          --subst-var-by nixStore ${nixos.config.nix.package}/bin/nix-store
-        chmod +x $out/webtop-init $out/webtop-nix-lower $out/webtop-nix-partial
-      '';
-
-      rootfs = pkgs.runCommand "rootfs" { } ''
-        mkdir -p $out/sbin $out/bin $out/etc $out/run $out/tmp $out/var $out/persist $out/home $out/proc $out/sys $out/dev
-        chmod 1777 $out/tmp
-        ln -s ${toplevel}/init $out/sbin/init
-        ln -s ${pkgs.pkgsStatic.busybox}/bin/busybox $out/bin/busybox
-        ln -s ${pkgs.pkgsStatic.busybox}/bin/sh $out/bin/sh
-      '';
-
-      # Identifies the image's store (the overlay's lower). webtop-nix-lower compares it with the stamp
-      # on the volume; it lives outside /nix so busybox can read it before the overlay is mounted.
-      # Over paths and NAR hashes: a path rebuilt with other bytes is a change too.
-      lowerClosure = pkgs.closureInfo { rootPaths = [ toplevel webtopInit rootfs ]; };
-      stamp = pkgs.runCommand "webtop-image-stamp" { } ''
-        mkdir -p $out
-        sha256sum ${lowerClosure}/registration | cut -d' ' -f1 > $out/webtop-image-stamp
-      '';
+      sys = forAllSystems perSystem;
     in
     {
-      nixosConfigurations.desktop = nixos;
+      nixosConfigurations = nixpkgs.lib.mapAttrs' (system: s: nixpkgs.lib.nameValuePair "desktop-${system}" s.nixos) sys;
 
-      packages.${system} = {
+      packages = forAllSystems (system: with sys.${system}; {
         inherit toplevel agent;
         # The patched KWin the system grafts in; CI builds and caches it ahead of the image.
         kwin = nixos.pkgs.kwinSoftwarePresentation;
@@ -106,12 +112,12 @@
           };
         };
         default = self.packages.${system}.image;
-      };
+      });
 
-      checks.${system} = {
+      checks = forAllSystems (system: with sys.${system}; {
         inherit agent;
         # Evaluates the whole system without building it.
         toplevel-eval = pkgs.writeText "toplevel-eval" (builtins.unsafeDiscardStringContext toplevel.drvPath);
-      };
+      });
     };
 }

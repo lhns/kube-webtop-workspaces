@@ -12,6 +12,8 @@ set -euo pipefail
 image=$1
 timeout=$2
 mode=${3:-ready}
+# The runner is native, so this is the image's system too.
+nixsys=$(uname -m)-linux
 dir=$(mktemp -d)
 # Cluster-level Selkies settings (docs/contract.md): quote, backslash, $, =, backtick, non-ASCII.
 title='Ci "q" $HOME `x` \ a=b ä – Desktop'
@@ -34,7 +36,7 @@ hm=$dir/persist/home/user/.config/home-manager
 mkdir -p "$hm"
 sv=$(sed -n 's/.*system.stateVersion = "\(.*\)";.*/\1/p' "$(dirname "$0")/../../image/nixos/container.nix")
 for f in flake.nix home.nix; do
-  sed -e 's|@user@|user|g' -e 's|@home@|/home/user|g' -e "s|@stateVersion@|$sv|g" \
+  sed -e 's|@user@|user|g' -e 's|@home@|/home/user|g' -e "s|@stateVersion@|$sv|g" -e "s|@system@|$nixsys|g" \
     "$(dirname "$0")/../../image/home-manager/$f" > "$hm/$f"
 done
 if [ "$mode" = gray ]; then echo "# edited" >> "$hm/home.nix"; fi
@@ -265,7 +267,7 @@ plink=$(as_user readlink /home/ci/.local/state/nix/profiles/profile)
 [ "$(as_user readlink /home/ci/.local/state/nix/profiles/profile)" = "$plink" ] || fail "the profile is not back at its generation"
 as_user hello >/dev/null || fail "hello went missing in a failed command"
 # Rollback right after a hand edit goes back to the last recorded version; the edit becomes a version.
-as_user sh -c "jq '.elements.handedit = {originalUrl: \"flake:nixpkgs\", attrPath: \"legacyPackages.x86_64-linux.tree\"}' $decl > /tmp/ci-decl && cat /tmp/ci-decl > $decl"
+as_user sh -c "jq '.elements.handedit = {originalUrl: \"flake:nixpkgs\", attrPath: \"legacyPackages.$nixsys.tree\"}' $decl > /tmp/ci-decl && cat /tmp/ci-decl > $decl"
 as_user nix profile rollback || fail "rollback after a hand edit failed"
 [ "$(as_user sha256sum "$decl")" = "$sum" ] || fail "rollback after a hand edit did not restore the recorded version"
 hist=$(as_user nix profile history | sed 's/\x1b\[[0-9;]*m//g')
@@ -276,8 +278,8 @@ as_user jq -e '.elements.handedit' "$decl" >/dev/null || fail "rollback --to did
 as_user nix profile remove handedit >/dev/null || fail "removing the hand edit failed"
 # Packages from another flake (builtins.getFlake), including a quoted attribute name with a dot.
 as_user sh -c 'mkdir -p /tmp/ci-flake && printf "%s\n" "{" "  inputs.nixpkgs.url = \"nixpkgs\";" \
-  "  outputs = { nixpkgs, ... }: { packages.x86_64-linux = { ci-hello = nixpkgs.legacyPackages.x86_64-linux.hello;" \
-  "    \"ci.dotted\" = nixpkgs.legacyPackages.x86_64-linux.hello; }; };" "}" > /tmp/ci-flake/flake.nix'
+  "  outputs = { nixpkgs, ... }: { packages.'"$nixsys"' = { ci-hello = nixpkgs.legacyPackages.'"$nixsys"'.hello;" \
+  "    \"ci.dotted\" = nixpkgs.legacyPackages.'"$nixsys"'.hello; }; };" "}" > /tmp/ci-flake/flake.nix'
 # Locked first: locking writes flake.lock into the directory, which changes its hash.
 as_user nix flake lock path:/tmp/ci-flake || fail "locking the local flake failed"
 as_user nix profile add path:/tmp/ci-flake#ci-hello 'path:/tmp/ci-flake#"ci.dotted"' \
@@ -300,25 +302,8 @@ as_user nix profile remove tree >/dev/null || fail "removing tree failed"
 # An earlier starter flake (before packages.nix, for the old name `user`): the template unit rewrites it
 # for ci with packages.nix, and the setup unit moves the `nix profile` flake packages into packages.json.
 as_user nix profile remove hello >/dev/null || fail "nix profile remove hello failed"
-cat > "$dir/legacy-flake.nix" <<'FLAKE'
-{
-  inputs = {
-    # nixpkgs and home-manager are the image's (its flake registry): no download; relocked after image updates.
-    nixpkgs.url = "nixpkgs";
-    home-manager = {
-      url = "home-manager";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
-  };
-
-  outputs = { nixpkgs, home-manager, ... }: {
-    homeConfigurations."user" = home-manager.lib.homeManagerConfiguration {
-      pkgs = nixpkgs.legacyPackages.x86_64-linux;
-      modules = [ ./home.nix ];
-    };
-  };
-}
-FLAKE
+# The shipped legacy template, so x86_64-linux on every runner: earlier images were amd64 only.
+sed 's|@user@|user|g' "$(dirname "$0")/../../image/home-manager/legacy/flake-2.nix" > "$dir/legacy-flake.nix"
 # Not docker cp: /home is a bind mount inside the container, which docker cp does not see.
 as_user sh -c "echo $(base64 -w0 "$dir/legacy-flake.nix") | base64 -d > /home/ci/.config/home-manager/flake.nix"
 as_user rm /home/ci/.config/home-manager/packages.nix "$decl"
@@ -359,7 +344,7 @@ as_user sh -c "! test -e $wst/import-phase && ! test -e $wst/packages-json-impor
 [ "$(as_user sha256sum "$decl")" = "$sum" ] || fail "the resumed import changed packages.json"
 as_user hello >/dev/null || fail "hello is gone after the resumed import"
 # A failing switch fails the unit and says so.
-as_user sh -c "cp $decl /tmp/decl.bak && jq '.elements.broken = {originalUrl: \"flake:nixpkgs\", attrPath: \"legacyPackages.x86_64-linux.noSuchPackageCi\"}' /tmp/decl.bak > $decl"
+as_user sh -c "cp $decl /tmp/decl.bak && jq '.elements.broken = {originalUrl: \"flake:nixpkgs\", attrPath: \"legacyPackages.$nixsys.noSuchPackageCi\"}' /tmp/decl.bak > $decl"
 gen=/home/ci/.local/state/nix/profiles/home-manager
 link=$(as_user readlink "$gen")
 as_user ln -sfn /nix/store/00000000000000000000000000000000-gone "$gen"

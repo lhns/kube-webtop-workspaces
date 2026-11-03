@@ -2,7 +2,8 @@
 # Prints (DRY_RUN=true, the default) or deletes old dev versions of this repo's ghcr packages.
 # Keeps the newest KEEP versions tagged 0.0.0-dev.*, and every version that also carries a release tag
 # (vX.Y.Z, X.Y.Z, latest). A deleted version's cosign signature/attestation tags (sha256-<digest>.*) go
-# with it. Untagged versions are left alone: they may be platform manifests of a kept image index.
+# with it. Untagged versions are left alone: they may be platform manifests of a kept image index. So
+# are the platform manifests of a deleted index and their signature tags (cosign sign --recursive).
 # Also removes the retired package PHASE0_PACKAGE. Needs GH_TOKEN with packages:write.
 set -euo pipefail
 
