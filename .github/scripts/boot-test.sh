@@ -310,6 +310,8 @@ smoke=$(dirname "$(dirname "$nsc")")/libexec/nix-software-center/nsc-backend-smo
 as_user "$smoke" nixpkgs#cowsay --require-progress || fail "software center backend smoke failed"
 as_user nix profile list --json | jq -e '.elements.tree.backend == "declaration" and (.elements.cowsay == null)' >/dev/null || fail "the smoke disturbed the declaration: $(as_user nix profile list --json)"
 as_user nix profile remove tree >/dev/null || fail "removing tree after the smoke failed"
+out=$(as_user nix eval --impure --raw --expr 'toString <nixpkgs>' 2>&1) || fail "<nixpkgs> does not resolve: $out"
+grep -q 'search path entry' <<<"$out" && fail "nix warns about the search path: $out"
 # An earlier starter flake (before packages.nix, for the old name `user`): the template unit rewrites it
 # for ci with packages.nix, and the setup unit moves the `nix profile` flake packages into packages.json.
 as_user nix profile remove hello >/dev/null || fail "nix profile remove hello failed"

@@ -23,6 +23,10 @@
 
   services.webtop.softwareCenter.enable = true;
 
+  # Nix's default search path names a channels directory the image does not have, and warns on every impure
+  # evaluation. The registry's nixpkgs also keeps `<nixpkgs>` and `nix-shell -p` working.
+  nix.settings.nix-path = "nixpkgs=flake:nixpkgs";
+
   # One way to install software (ADR 0013): Discover has no Nix backend on NixOS. Plasma's "Get New…"
   # dialogs (KNewStuff) stay.
   environment.plasma6.excludePackages = [ pkgs.kdePackages.discover ];
