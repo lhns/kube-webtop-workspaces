@@ -89,7 +89,8 @@ reset as a whole: the old upper/DB move to the trash, the
 store starts fresh, the old GC roots are kept. The reason is in the container log. After boot, in
 the background (no shutdown step), `webtop-nix-restore.service` (`image/webtop-nix-restore.sh`)
 copies the users' live paths (profiles, home-manager generations, GC roots) that are not in the new
-store from the trash; paths only the old image had are substituted. It skips when there is no room (free space after the copy must stay above a
+store from the trash; paths only the old image had are substituted, and a root whose closure ended
+up split over several trash dirs is copied path by path. It skips when there is no room (free space after the copy must stay above a
 reserve). Only then `webtop-nix-trash.service` deletes the old overlay, and
 `webtop-nix-reinstall.service` runs for what did not come back (roots that depend on image-only paths
 such as the patched KWin, or no network): it reinstalls the recorded flake packages of the profile (by

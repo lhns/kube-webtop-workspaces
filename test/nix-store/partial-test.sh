@@ -176,8 +176,8 @@ substituters = file:///t/subst" WEBTOP_NIX_PERSIST=$S WEBTOP_HOMES=$PR/home PATH
 mkdir -p /t/shim
 cat > /t/shim/sync <<EOF
 #!/bb/sh
-echo "sync lp=\$(md5sum < $S/lower-paths | cut -c1-8) st=\$(cat $S/lower-stamp 2>/dev/null)" >> /t/events
-exec /bb/sync
+echo "sync \$* lp=\$(md5sum < $S/lower-paths | cut -c1-8) st=\$(cat $S/lower-stamp 2>/dev/null)" >> /t/events
+exec /bb/sync "\$@"
 EOF
 chmod +x /t/shim/sync
 : > /t/passwd; mount --bind /t/passwd /etc/passwd
@@ -192,8 +192,9 @@ run_lower
 new_lp=$(md5sum < "$S/lower-paths" | cut -c1-8)
 check "markers set" markers
 check "stamp written" "[ \"\$(cat $S/lower-stamp)\" = B ]"
-check "sync before writing lower-paths" "grep -q 'lp=$old_lp st=A' /t/events"
-check "sync after lower-paths, before the stamp" "grep -q 'lp=$new_lp st=A' /t/events"
+check "volume sync before writing lower-paths" "grep -q 'sync -f $S lp=$old_lp st=A' /t/events"
+check "volume sync after lower-paths, before the stamp" "grep -q 'sync -f $S lp=$new_lp st=A' /t/events"
+check "no node-wide sync" "! grep -q '^sync  *lp=' /t/events"
 check "attempt counter and partial.trash removed" "[ ! -e $S/partial.attempts ] && [ ! -e $S/partial.trash ]"
 state > /t/ref.state
 echo "trash/upper: $(ls -A "$S"/trash-*/upper | sort | tr '\n' ' ')"
@@ -310,6 +311,19 @@ check "failing rollback: logged, trash dir and its DB snapshot kept, partial.* c
   "grep -q 'ROLLBACK FAILED: keeping $T' /t/lower.log && [ -f $T/var/db/db.sqlite ] && ! ls $S/partial.* >/dev/null 2>&1 && ls -d $S/trash-*-reset >/dev/null"
 if restore_roots && cmp -s /t/ref-roots /t/valid-roots; then pass "failing rollback: reset + restore recover every root an uninterrupted run does"
 else failt "failing rollback: roots differ"; diff /t/ref-roots /t/valid-roots || true; tail -n 20 /t/restore.log; fi
+
+echo "=== double fault: killed after the invalidation, then a failing rollback"
+# Rows of invalidated paths survive only in the run's snapshot; some of their files went back into
+# the upper (and so into the reset's trash) before the rollback stopped at u7.
+setup
+WEBTOP_TEST_CRASH_AT=after-delete run_partial || true
+T=$(cat "$S/partial.trash")
+mkdir "$S/upper/$b_u7"
+WEBTOP_TEST_FAIL_AT=after-plan run_lower > /t/lower.log 2>&1 || true
+check "double fault: rollback failed, both trash dirs kept" \
+  "grep -q 'ROLLBACK FAILED: keeping $T' /t/lower.log && [ -d $T/var/db ] && ls -d $S/trash-*-reset >/dev/null"
+if restore_roots && cmp -s /t/ref-roots /t/valid-roots; then pass "double fault: restore assembles split closures, same roots as uninterrupted"
+else failt "double fault: roots differ"; diff /t/ref-roots /t/valid-roots || true; tail -n 30 /t/restore.log; fi
 
 echo "=== the post-condition catches a violation, the run rolls back"
 setup; prestate > /t/pre.state

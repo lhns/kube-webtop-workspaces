@@ -6,6 +6,7 @@
 # Either way each user's Nix profile manifest is recorded first (the reinstall's fallback).
 # Env (tests): STAMP_FILE, WEBTOP_PERSIST_ROOT, PARTIAL.
 set -u
+set -o pipefail
 STAMP_FILE=${STAMP_FILE:-/webtop-image-stamp}
 P=${WEBTOP_PERSIST_ROOT:-/persist}
 N=$P/nix
@@ -82,7 +83,7 @@ save_lower_paths() {
 }
 
 write_stamp() {
-  sync # everything before (renames, DB commits, lower-paths) is on disk before the stamp says so
+  sync -f "$N" # the volume's renames, DB commits and lower-paths are on disk before the stamp
   echo "$new" > "$N/lower-stamp.tmp" && mv "$N/lower-stamp.tmp" "$N/lower-stamp"
 }
 

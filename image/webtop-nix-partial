@@ -50,7 +50,7 @@ write_lower_paths() { # <stamp>
   { echo "stamp $1"; nixstore --store "$LO" --dump-db | heads | sort; } > "$N/lower-paths.tmp"
   # Everything this run changed is on disk before the commit point (and the caller syncs again
   # before writing the stamp).
-  sync
+  sync -f "$N"
   mv "$N/lower-paths.tmp" "$N/lower-paths"
 }
 
@@ -82,7 +82,7 @@ rollback() {
   if [ -f "$N/partial.created" ]; then
     while IFS= read -r f; do rm -rf "${N:?}/$f" || return 1; done < "$N/partial.created"
   fi
-  sync
+  sync -f "$N"
   if [ -n "$T" ]; then rm -rf "$T" || return 1; fi
   rm -f "$N/partial.trash" "$N/partial.attempts" "$N/partial.nolinks" "$N/partial.created"
 }
@@ -262,9 +262,11 @@ hook after-check
 
 # The overlay's workdir holds only transient state; start it empty (offline).
 rm -rf "$N/work" && mkdir "$N/work"
-write_lower_paths "$new"
-[ -s "$W/inv" ] && echo invalidated > "$W/result" || echo clean > "$W/result" # for tests
+# Done: nothing is left to roll back. Interrupted before the list is written, the rerun finds
+# nothing to do and writes it.
 rmdir "$T/junk" "$T" 2>/dev/null || true
 rm -f "$N/partial.trash" "$N/partial.attempts" "$N/partial.nolinks" "$N/partial.created"
+write_lower_paths "$new"
+[ -s "$W/inv" ] && echo invalidated > "$W/result" || echo clean > "$W/result" # for tests
 trap - EXIT
 log "done"
