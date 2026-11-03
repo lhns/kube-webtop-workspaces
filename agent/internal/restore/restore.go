@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 )
 
-// File is the progress file in the state directory.
-const File = "restore-progress.json"
+// File is the progress file in the state directory, in a subdirectory the user's scripts may write.
+const File = "restore/progress.json"
 
 // Progress is the file's content. Steps are the reinstalled profile entries plus the
 // home-manager switch.

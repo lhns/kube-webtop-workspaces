@@ -355,10 +355,10 @@ func (r *Reconciler) finish(ctx context.Context, d, base *v1alpha1.Desktop, pods
 	// Pod identity; a new pod starts with nothing reported.
 	if pod == nil {
 		st.PodName, st.PodUID = "", ""
-		st.AgentReady, st.LastReportTime, st.BootProgress, st.Asleep = false, nil, 0, false
+		st.AgentReady, st.LastReportTime, st.BootProgress, st.Asleep, st.SoftwareRestore = false, nil, 0, false, nil
 	} else if string(pod.UID) != st.PodUID {
 		st.PodName, st.PodUID = pod.Name, string(pod.UID)
-		st.AgentReady, st.LastReportTime, st.BootProgress, st.Asleep = false, nil, 0, false
+		st.AgentReady, st.LastReportTime, st.BootProgress, st.Asleep, st.SoftwareRestore = false, nil, 0, false, nil
 	}
 
 	in := statusInput{

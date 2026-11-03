@@ -571,3 +571,17 @@ func TestPodEventsRefineStage(t *testing.T) {
 			ip.LastDurationSeconds == 553 && ip.LastSizeBytes == 3745009478
 	})
 }
+
+func TestSoftwareRestoreResetWithoutPod(t *testing.T) {
+	needEnv(t)
+	createDesktop(t, "gina", true)
+	waitRunning(t, "gina")
+	d := getDesktop(t, "gina")
+	d.Status.SoftwareRestore = &v1alpha1.SoftwareRestore{Active: true, Done: 1, Total: 3}
+	if err := suite.c.Status().Update(context.Background(), d); err != nil {
+		t.Fatal(err)
+	}
+	poke(t, "gina")
+	// No pod here: an earlier pod's restore must not show on the next boot page.
+	eventually(t, "softwareRestore reset", func() bool { return getDesktop(t, "gina").Status.SoftwareRestore == nil })
+}

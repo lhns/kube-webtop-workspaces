@@ -176,6 +176,7 @@ type DesktopStatus struct {
 	// +optional
 	LoginName string `json:"loginName,omitempty"`
 	// SoftwareRestore is set while, or after, the software is restored after an image update.
+	// Reset with the pod.
 	// +optional
 	SoftwareRestore *SoftwareRestore `json:"softwareRestore,omitempty"`
 	// LoginNameError is why the image could not rename the user to the desktop name, as the agent

@@ -61,7 +61,7 @@ Desktop whose name is not `sanitize(spec.user)`.
 | `loginName` | string | the desktop user's login name, from the agent (section 8.3); kept while off |
 | `homePaths` | []string, ≤ 16 | paths the user's home is mounted at, from the agent; kept while off |
 | `loginNameError` | string, ≤ 512 | why the rename to the desktop name failed, from the agent (section 8.3) |
-| `softwareRestore` | object | `active`, `done`, `total` (steps), `failed`: the software restore after an image update, from the agent (section 8.3); never blocks `Ready`. The boot page says so while `active` |
+| `softwareRestore` | object | `active`, `done`, `total` (steps), `failed`: the software restore after an image update, from the agent (section 8.3); never blocks `Ready`. The boot page says so while `active`. Reset with the pod |
 | `displayName` | string | the LDAP display name the current or last pod started with (section 6) |
 | `imagePull` | `{image, startedAt?, lastSizeBytes?, lastDurationSeconds?}` | the desktop image's pulls, for the boot page's download estimate (section 3.4); kept while off |
 | `observedGeneration` | int | |
@@ -586,7 +586,7 @@ All fields optional; absent fields are left unchanged:
 (`LoginNameFallback` warning / `LoginName`). `loginError` (at most 512 characters, sent with
 `loginName`; empty clears) is why `usermod` failed at activation; it sets `status.loginNameError`.
 `softwareRestore` (`active`, `done`, `total`, `failed`; counts at most 100000) is the restore's progress
-(`image/webtop-restore-progress.sh`, which the agent reads from `/run/webtop/restore-progress.json`, or active
+(`image/webtop-restore-progress.sh`, which the agent reads from `/run/webtop/restore/progress.json`, or active
 while `/persist/nix/reinstall/pending` exists); it sets `status.softwareRestore`. The agent also shows it as a
 KDE job (`webtop-restore-job`).
 

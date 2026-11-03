@@ -3,6 +3,6 @@
 # /home/user mount, until the user updates the flake. Prints nothing otherwise, also when the flake
 # does not evaluate (the switch then says why).
 login=${USER:-$(id -un)}
-names=$(nix eval --json "$1#homeConfigurations" --apply builtins.attrNames 2>/dev/null) || exit 0
 [ -d /home/user ] || exit 0
+names=$(nix eval --json "$1#homeConfigurations" --apply builtins.attrNames 2>/dev/null) || exit 0
 jq -r --arg u "$login" 'if (any(.[]; . == $u) | not) and any(.[]; . == "user") then "user" else empty end' <<<"$names"

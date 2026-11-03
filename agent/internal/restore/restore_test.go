@@ -17,6 +17,7 @@ func TestRead(t *testing.T) {
 	if p := Read(dir, marker); !p.Active || p.Total != 0 {
 		t.Fatalf("marker only: %+v", p)
 	}
+	os.MkdirAll(filepath.Dir(filepath.Join(dir, File)), 0o755)
 	write := func(s string) { os.WriteFile(filepath.Join(dir, File), []byte(s), 0o644) }
 	write(`{"active":true,"done":2,"total":5,"current":"Reinstalling x"}`)
 	p := Read(dir, marker)
@@ -41,9 +42,18 @@ func TestRead(t *testing.T) {
 type fakeView struct {
 	updates []map[string]any
 	ended   []string
+	fail    bool // Update fails (the shell restarted)
+	closed  bool
 }
 
-func (f *fakeView) Update(p map[string]any) error { f.updates = append(f.updates, p); return nil }
+func (f *fakeView) Update(p map[string]any) error {
+	if f.fail {
+		return errors.New("no such object")
+	}
+	f.updates = append(f.updates, p)
+	return nil
+}
+func (f *fakeView) Close() { f.closed = true }
 func (f *fakeView) Terminate(code uint32, msg string) error {
 	f.ended = append(f.ended, string(rune('0'+code))+":"+msg)
 	return nil
@@ -96,5 +106,21 @@ func TestTrackerLifecycle(t *testing.T) {
 	tr.Step(Progress{})
 	if fv.view.ended[0] != "0:" {
 		t.Fatalf("clean end: %v", fv.view.ended)
+	}
+}
+
+func TestTrackerReopensAfterFailedUpdate(t *testing.T) {
+	fv := &fakeViewer{}
+	tr := &Tracker{Viewer: fv}
+	tr.Step(Progress{Active: true, Current: "a"})
+	first := fv.view
+	first.fail = true
+	tr.Step(Progress{Active: true, Current: "b"})
+	if !first.closed {
+		t.Fatal("the dead view was not closed")
+	}
+	tr.Step(Progress{Active: true, Current: "b"})
+	if fv.n != 2 || fv.view == first || len(fv.view.updates) != 1 {
+		t.Fatalf("not reopened: requests %d, updates %v", fv.n, fv.view.updates)
 	}
 }

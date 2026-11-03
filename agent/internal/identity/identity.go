@@ -10,8 +10,8 @@ import (
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/state"
 )
 
-// MaxError bounds the failure reason in a report (the controller refuses longer ones).
-const MaxError = 400
+// MaxError bounds the failure reason in a report: the controller refuses longer ones (maxLoginError).
+const MaxError = 512
 
 // Error is why the rename at activation failed (image/nixos/identity.nix); "" if it did not.
 func Error(stateDir string) string {

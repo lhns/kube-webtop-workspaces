@@ -105,12 +105,9 @@ in
   # already pulls it in, listed so that stays true. webtop-app-screen comes with the webtop module.
   environment.systemPackages = [ agent pkgs.kdePackages.kde-cli-tools progress notify ];
 
-  # The restore scripts (running as the user) write their progress here; the file the agent reads
-  # is a link into it, since /run/webtop is root's and the writers replace the file atomically.
-  systemd.tmpfiles.rules = [
-    "d /run/webtop/restore 0755 ${uid} - -"
-    "L+ /run/webtop/restore-progress.json - - - - restore/progress.json"
-  ];
+  # The restore scripts run as the user and replace their progress file atomically, so it gets a
+  # directory of its own: /run/webtop is root's.
+  systemd.tmpfiles.rules = [ "d /run/webtop/restore 0755 ${uid} - -" ];
 
   # The restore's progress as a job in the tray, from the user's session bus.
   systemd.services.webtop-restore-job = {
@@ -229,7 +226,7 @@ in
     description = "Reinstall the user's Nix packages after an image update";
     wantedBy = [ "multi-user.target" ];
     wants = [ "network-online.target" ];
-    after = [ "network-online.target" "nix-daemon.socket" "webtop-session.service" ];
+    after = [ "network-online.target" "nix-daemon.socket" "nix-daemon.service" "webtop-session.service" ];
     unitConfig.ConditionPathExists = [
       "/persist/nix/reinstall/pending"
       "!/persist/nix/reinstall/restore"
@@ -238,7 +235,9 @@ in
       Type = "exec"; # see webtop-nix-restore
       User = uid;
       ExecStart = lib.getExe reinstall;
-      TimeoutStopSec = 10;
+      # As webtop-home-manager.service: the setup script it runs ignores a stop during the import.
+      # Everything else here ends on SIGTERM.
+      TimeoutStopSec = "5min";
       # "+": as root, the records belong to root. Only after success; a failure retries next boot.
       ExecStopPost = "+${pkgs.runtimeShell} -c '[ \"$$SERVICE_RESULT\" = success ] && ${pkgs.coreutils}/bin/rm -f /persist/nix/reinstall/pending || true'";
     };

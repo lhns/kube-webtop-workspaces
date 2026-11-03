@@ -227,7 +227,8 @@ in
     description = "Bring the user's home-manager setup to the image's";
     wantedBy = [ "multi-user.target" ];
     wants = [ "network-online.target" ];
-    after = [ "network-online.target" "nix-daemon.socket" "webtop-session.service" "webtop-home-manager-template.service" ];
+    # nix-daemon.service too: at shutdown the daemon must outlive a switch the stop waits for.
+    after = [ "network-online.target" "nix-daemon.socket" "nix-daemon.service" "webtop-session.service" "webtop-home-manager-template.service" ];
     unitConfig.ConditionPathExists = "!/persist/nix/reinstall/pending";
     environment = {
       DBUS_SESSION_BUS_ADDRESS = "unix:path=/run/user/${toString cfg.uid}/bus";
