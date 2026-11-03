@@ -350,12 +350,10 @@ jobs:
       # Local binary cache of what this job builds (not on cache.nixos.org). Only main saves, so PR runs
       # restore main's entries and cannot evict them. Unsigned, like kwin-cache: only this repo's
       # workflows write it, and a PR's entry is scoped to its own merge ref.
-      - name: nix build cache key
-        id: nixcache
+      # The key cannot come from evaluating (the KWin graft's import from derivation builds). The agent's
+      # Go sources are left out on purpose: they rebuild in seconds, the rest in 20 minutes.
+      - name: empty built-paths cache directory
         run: |
-          sys=${{ matrix.system }}
-          h=$( { nix eval --raw ".#checks.$sys.agent.drvPath"; nix eval --raw ".#checks.$sys.toplevel-eval.drvPath"; } | sha256sum | cut -c1-32)
-          echo "key=nix-built-${{ matrix.arch }}-$h" >> "$GITHUB_OUTPUT"
           sudo rm -rf ~/nix-built-cache
           mkdir ~/nix-built-cache
       - name: restore built paths
@@ -363,31 +361,40 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ~/nix-built-cache
-          key: ${{ steps.nixcache.outputs.key }}
+          key: nix-built-${{ matrix.arch }}-${{ hashFiles('flake.lock', '**/*.nix') }}
           restore-keys: nix-built-${{ matrix.arch }}-
 
       # Not `nix flake check`: it evaluates every system's checks, and the KWin graft (import from
       # derivation) makes evaluating the other system's toplevel a build of it.
       - name: checks
         run: nix build .#checks.${{ matrix.system }}.agent .#checks.${{ matrix.system }}.toplevel-eval -L
-      # Paths built here (ultimate), minus KWin (own cache), derivations and the flake source. Not the
-      # closure: the substituted rest comes from cache.nixos.org again.
+      # Paths built here (ultimate), minus KWin (own cache). A binary cache refuses a path whose references
+      # it lacks, so they are copied with their closure to a scratch cache and only the built ones kept;
+      # the substituted rest comes from cache.nixos.org again.
       - name: save built paths
         if: (github.ref == 'refs/heads/main' || github.event_name == 'pull_request') && steps.nixrestore.outputs.cache-hit != 'true'
         run: |
-          nix path-info --all --json | jq -r 'if type=="object" then to_entries[]|select(.value.ultimate)|.key else .[]|select(.ultimate)|.path end' \
-            | grep -vE '\.drv$|-source$' | sort > built
+          nix path-info --all --json --json-format 1 | jq -r 'to_entries[]|select(.value.ultimate)|.key' | grep -v '\.drv$' | sort > built
           nix path-info -r .#kwin | sort > kwin
           comm -23 built kwin > new
           wc -l < new
           sudo chown -R "$USER" ~/nix-built-cache
-          xargs -a new -r nix copy --no-recursive --to "file://$HOME/nix-built-cache?compression=zstd"
+          full=$RUNNER_TEMP/full
+          xargs -a new -r nix copy --to "file://$full?compression=zstd"
+          cp "$full/nix-cache-info" ~/nix-built-cache/
+          while read -r p; do
+            h=$(basename "$p" | cut -c1-32)
+            cp "$full/$h.narinfo" ~/nix-built-cache/
+            nar=$(sed -n 's/^URL: //p' "$full/$h.narinfo")
+            mkdir -p ~/nix-built-cache/"$(dirname "$nar")"
+            cp "$full/$nar" ~/nix-built-cache/"$nar"
+          done < new
           du -sh ~/nix-built-cache
       - uses: actions/cache/save@v6
         if: (github.ref == 'refs/heads/main' || github.event_name == 'pull_request') && steps.nixrestore.outputs.cache-hit != 'true'
         with:
           path: ~/nix-built-cache
-          key: ${{ steps.nixcache.outputs.key }}
+          key: nix-built-${{ matrix.arch }}-${{ hashFiles('flake.lock', '**/*.nix') }}
       # -L prints the layer split table (webtop-nix image/split-layers.py) as well.
       - name: build image
         run: nix build .#image .#image.layerSplit -L -o img
