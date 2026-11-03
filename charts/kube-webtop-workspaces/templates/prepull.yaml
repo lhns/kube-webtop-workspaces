@@ -1,0 +1,68 @@
+{{- if .Values.desktop.prePull.enabled }}
+{{- $d := .Values.desktop }}
+{{- $_ := required "desktop.image is required" $d.image }}
+{{- /* Not labelled as a desktop pod, so the desktop NetworkPolicy does not select it. */}}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "kwt.fullname" . }}-desktop-prepull
+  labels:
+    {{- include "kwt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: desktop-prepull
+spec:
+  selector:
+    matchLabels:
+      {{- include "kwt.selector" (dict "ctx" . "component" "desktop-prepull") | nindent 6 }}
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 100%
+  template:
+    metadata:
+      labels:
+        {{- include "kwt.labels" . | nindent 8 }}
+        app.kubernetes.io/component: desktop-prepull
+    spec:
+      automountServiceAccountToken: false
+      # busybox sleep as PID 1 ignores SIGTERM.
+      terminationGracePeriodSeconds: 1
+      {{- with $d.prePull.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- with $d.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $d.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $d.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $d.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: prepull
+          image: {{ $d.image | quote }}
+          imagePullPolicy: {{ $d.imagePullPolicy }}
+          # The image's entrypoint is /webtop-init; it only needs to stay in use.
+          command: ["/bin/busybox", "sleep", "2147483647"]
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+            seccompProfile:
+              type: RuntimeDefault
+          {{- with $d.prePull.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}

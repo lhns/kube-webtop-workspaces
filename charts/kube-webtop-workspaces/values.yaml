@@ -93,6 +93,16 @@ desktop:
   nix:
     extraSubstituters: []       # ["http://cache.example.org/desktops"]
     extraTrustedPublicKeys: []  # ["desktops:<base64>"]
+  # Chart-only DaemonSet that keeps the desktop image pulled on every node desktops can run on, so a
+  # start after an image update does not wait for the pull. Costs the image's disk (compressed
+  # plus unpacked, several GB) per node, twice during a rollover. Uses the desktop pull settings,
+  # nodeSelector, tolerations and affinity, none of its privileges.
+  prePull:
+    enabled: false
+    priorityClassName: ""
+    resources:
+      requests: {cpu: 1m, memory: 8Mi}
+      limits: {memory: 16Mi}
   # SELKIES_* settings for every desktop, as strings (docs/contract.md, "Selkies settings"). They
   # override the image's defaults; a user's allowlisted ~/.config/webtop/selkies.env overrides them.
   # Single line, at most 256 characters. Not a security boundary against the desktop user.

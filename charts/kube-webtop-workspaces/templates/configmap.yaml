@@ -3,7 +3,7 @@
 {{- if .Values.ldap.bindSecret.name }}{{ $_ := set $ldap "bindPasswordFile" (include "kwt.ldapPasswordPath" .) }}{{ end }}
 {{- if .Values.ldap.caSecret.name }}{{ $_ := set $ldap "caFile" (include "kwt.ldapCAPath" .) }}{{ end }}
 {{- $_ := required "desktop.image is required" .Values.desktop.image }}
-{{- $desktop := set (omit (deepCopy .Values.desktop) "nix") "serviceAccountName" (include "kwt.desktopServiceAccount" .) }}
+{{- $desktop := set (omit (deepCopy .Values.desktop) "nix" "prePull") "serviceAccountName" (include "kwt.desktopServiceAccount" .) }}
 {{- $nixEnv := list }}
 {{- with .Values.desktop.nix.extraSubstituters }}{{ $nixEnv = append $nixEnv (dict "name" "WEBTOP_NIX_EXTRA_SUBSTITUTERS" "value" (join " " .)) }}{{ end }}
 {{- with .Values.desktop.nix.extraTrustedPublicKeys }}{{ $nixEnv = append $nixEnv (dict "name" "WEBTOP_NIX_EXTRA_TRUSTED_PUBLIC_KEYS" "value" (join " " .)) }}{{ end }}
