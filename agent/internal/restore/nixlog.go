@@ -44,7 +44,7 @@ func pid(id uint64) uint64 { return id >> 32 }
 type NixLog struct {
 	Path string
 
-	file     os.FileInfo
+	head     []byte // the first bytes read: a new run's file starts differently
 	off      int64
 	partial  []byte
 	acts     map[uint64]*activity
@@ -54,7 +54,7 @@ type NixLog struct {
 
 // Reset forgets everything read so far.
 func (n *NixLog) Reset() {
-	n.file, n.off, n.partial, n.acts, n.finished, n.seq = nil, 0, nil, nil, nil, 0
+	n.head, n.off, n.partial, n.acts, n.finished, n.seq = nil, 0, nil, nil, nil, 0
 }
 
 type nixEvent struct {
@@ -79,18 +79,20 @@ func (n *NixLog) read() {
 		return
 	}
 	defer f.Close()
-	st, err := f.Stat()
-	if err != nil {
-		return
+	// Replaced or truncated for a new run. Not by inode: a recreated file can get the same one.
+	if n.off > 0 {
+		b := make([]byte, len(n.head))
+		if _, err := f.ReadAt(b, 0); err != nil || !bytes.Equal(b, n.head) {
+			n.Reset()
+		}
 	}
-	if n.file == nil || !os.SameFile(n.file, st) || st.Size() < n.off {
-		n.Reset() // replaced or truncated: a new run
-	}
-	n.file = st
 	if _, err := f.Seek(n.off, io.SeekStart); err != nil {
 		return
 	}
 	b, _ := io.ReadAll(f)
+	if n.off == 0 {
+		n.head = b[:min(len(b), 256)]
+	}
 	n.off += int64(len(b))
 	b = append(n.partial, b...)
 	for {

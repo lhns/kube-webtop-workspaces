@@ -203,9 +203,9 @@ func TestNixLogProgress(t *testing.T) {
 	if !ok || f != 0 || info != "Downloading 0/2 (50/200 MiB)" {
 		t.Fatalf("%v %q %v", f, info, ok)
 	}
-	// Replaced by a new run's file, longer than what was read: read from the start.
+	// Replaced by a new run's file (pid 9), longer than what was read: read from the start.
 	os.Remove(path)
-	os.WriteFile(path, []byte(nixSample+strings.Repeat("padding\n", 200)), 0o644)
+	os.WriteFile(path, []byte(strings.ReplaceAll(nixSample, "300647710", "386547056")+strings.Repeat("padding\n", 200)), 0o644)
 	f, info, ok = n.Poll()
 	if !ok || f != 1.0/7 || info != "Downloading 1/7 (100/400 MiB)" {
 		t.Fatalf("after replacement: %v %q %v", f, info, ok)
