@@ -4,7 +4,8 @@
 #   partial-test.sh  webtop-nix-lower / webtop-nix-partial (the overlay kept across an image update)
 set -e
 cd "$(dirname "$0")/../.."
-rev=$(jq -r '.nodes[.nodes.root.inputs.nixpkgs].locked.rev' flake.lock)
+# nixpkgs follows webtop-nix's: root -> webtop-nix -> its nixpkgs node.
+rev=$(jq -r '.nodes[.nodes[.nodes.root.inputs.nixpkgs[0]].inputs.nixpkgs].locked.rev' flake.lock)
 for t in ${*:-restore-test.sh partial-test.sh}; do
   echo "::group::$t"
   docker run --rm --privileged -e NIXPKGS_REV="$rev" -v "$PWD:/src:ro" nixos/nix:2.34.9 "/src/test/nix-store/$t"
