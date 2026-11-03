@@ -19,7 +19,7 @@
       flake = false;
     };
     webtop-nix = {
-      url = "github:lhns/webtop-nix/18d69db042afa280a43bc25c9887cd026114a475";
+      url = "github:lhns/webtop-nix/4928b65f6c74f962b97e07023ef6fe87d761d5e0";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };

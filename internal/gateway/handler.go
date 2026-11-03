@@ -524,7 +524,7 @@ func (h *Handler) notRunning(w http.ResponseWriter, r *http.Request, rt *route, 
 func (h *Handler) bootPage(w http.ResponseWriter, rt *route, d *v1alpha1.Desktop) {
 	h.count(outBoot)
 	writePage(w, http.StatusOK, "boot", pageData{
-		Title: "Starting your desktop", Stage: stageText(d.Status.Stage), Progress: d.Status.BootProgress,
+		Title: "Starting your desktop", Stage: stageText(d.Status.Stage), Progress: d.Status.BootProgress, Restore: restoring(d),
 		Message: d.Status.Message, EventsURL: rt.base + reservedPrefix + "/events",
 	})
 }

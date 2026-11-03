@@ -126,3 +126,26 @@ func TestMissingToken(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestReportCarriesRestore(t *testing.T) {
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = nil
+		json.NewDecoder(r.Body).Decode(&got)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	c := New(srv.URL, token(t, "t"))
+	c.Report(context.Background(), Report{})
+	if _, ok := got["softwareRestore"]; ok {
+		t.Fatalf("restore before it was set: %v", got)
+	}
+	if !c.SetRestore(SoftwareRestore{Active: true, Done: 1, Total: 3}) || c.SetRestore(SoftwareRestore{Active: true, Done: 1, Total: 3}) {
+		t.Fatal("SetRestore must report changes only")
+	}
+	c.Report(context.Background(), Report{})
+	r, _ := got["softwareRestore"].(map[string]any)
+	if r["active"] != true || r["done"] != float64(1) || r["total"] != float64(3) || r["failed"] != false {
+		t.Fatalf("body = %v", got)
+	}
+}

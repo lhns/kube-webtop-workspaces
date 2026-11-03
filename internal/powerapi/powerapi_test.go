@@ -355,6 +355,26 @@ func TestReportLoginError(t *testing.T) {
 	}
 }
 
+func TestReportSoftwareRestore(t *testing.T) {
+	e := newEnv(t, desktop(nil), desktopPod("pod-1"))
+	if rec := e.do("/api/v1/report", `{"softwareRestore":{"active":true,"done":2,"total":5}}`, "tok"); rec.Code != 204 {
+		t.Fatal(rec.Code, rec.Body)
+	}
+	e.do("/api/v1/report", `{"connectedClients":1}`, "tok") // absent keeps it
+	if got := e.get(t).Status.SoftwareRestore; got == nil || !got.Active || got.Done != 2 || got.Total != 5 || got.Failed {
+		t.Fatalf("softwareRestore %+v", got)
+	}
+	e.do("/api/v1/report", `{"softwareRestore":{"active":false,"done":5,"total":5,"failed":true}}`, "tok")
+	if got := e.get(t).Status.SoftwareRestore; got == nil || got.Active || !got.Failed {
+		t.Fatalf("softwareRestore %+v", got)
+	}
+	for _, body := range []string{`{"softwareRestore":{"done":-1}}`, `{"softwareRestore":{"total":1000000}}`} {
+		if rec := e.do("/api/v1/report", body, "tok"); rec.Code != 400 {
+			t.Errorf("%s: %d", body, rec.Code)
+		}
+	}
+}
+
 func TestReportFromOldPodConflicts(t *testing.T) {
 	e := newEnv(t, desktop(func(d *v1alpha1.Desktop) { d.Status.PodUID = "pod-2" }), desktopPod("pod-1"))
 	if rec := e.do("/api/v1/report", `{"ready":true}`, "tok"); rec.Code != 409 {

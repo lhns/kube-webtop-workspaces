@@ -53,6 +53,7 @@ Built from `flake.nix` with nix2container: `nix build .#image`, then
 | `image/nix/` | Nix with `nix profile` backends (`profile-backends.patch`, ADR 0013) |
 | `image/webtop-home-manager.sh` | moves `nix profile` packages into packages.json once, relocks after image updates, switches |
 | `image/webtop-notify.sh`, `image/notify.nix` | `webtop-notify`: the one desktop-notification helper (root or the user) |
+| `image/webtop-restore-progress.sh`, `image/restore-progress.nix` | progress of the software restore after an image update, for the tray job and the boot page |
 | `image/webtop-hm-attr.sh` | which `homeConfigurations` to switch (the one for `user` while the flake still names it) |
 | `image/webtop-profile-hook.sh` | `profile-hook`: applies a changed `packages.json` with `home-manager switch` |
 | `image/nixos/identity.nix` | renames the desktop user (uid 1000) to the login name at activation |

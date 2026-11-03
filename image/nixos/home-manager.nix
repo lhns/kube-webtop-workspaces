@@ -37,6 +37,7 @@ let
   };
   hmPackage = home-manager.packages.${system}.home-manager;
   notify = import ../notify.nix { inherit pkgs; uid = toString cfg.uid; };
+  progress = import ../restore-progress.nix { inherit pkgs; };
   # Which homeConfigurations to switch: setup script and profile hook.
   hmAttr = pkgs.writeShellApplication {
     name = "webtop-hm-attr";
@@ -53,7 +54,7 @@ let
 
   setup = pkgs.writeShellApplication {
     name = "webtop-home-manager";
-    runtimeInputs = with pkgs; [ coreutils gnused gnugrep jq git config.nix.package hmPackage hmAttr notify ];
+    runtimeInputs = with pkgs; [ coreutils gnused gnugrep jq git config.nix.package hmPackage hmAttr notify progress ];
     text = builtins.readFile ../webtop-home-manager.sh;
   };
   upstream = lib.importJSON "${flake-registry}/flake-registry.json";

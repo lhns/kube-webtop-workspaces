@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -22,6 +23,9 @@ type Client struct {
 	HomePaths []string
 	// LoginError is why the account could not be renamed ("" if it could).
 	LoginError string
+
+	mu      sync.Mutex
+	restore *SoftwareRestore
 }
 
 func New(url, tokenPath string) *Client {
@@ -57,6 +61,25 @@ type Report struct {
 	HomePaths []string `json:"homePaths,omitempty"`
 	// Sent with LoginName, empty included, so it clears an earlier pod's.
 	LoginError *string `json:"loginError,omitempty"`
+	// Set by Client.Report once SetRestore was called.
+	SoftwareRestore *SoftwareRestore `json:"softwareRestore,omitempty"`
+}
+
+// SoftwareRestore is the progress of the restore after an image update.
+type SoftwareRestore struct {
+	Active bool `json:"active"`
+	Done   int  `json:"done"`
+	Total  int  `json:"total"`
+	Failed bool `json:"failed"`
+}
+
+// SetRestore sets what the following reports carry; it reports whether that changed.
+func (c *Client) SetRestore(r SoftwareRestore) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	changed := c.restore == nil || *c.restore != r
+	c.restore = &r
+	return changed
 }
 
 func (c *Client) Power(ctx context.Context, r PowerRequest) error {
@@ -68,6 +91,9 @@ func (c *Client) Report(ctx context.Context, r Report) error {
 	if c.LoginName != "" {
 		r.LoginError = &c.LoginError
 	}
+	c.mu.Lock()
+	r.SoftwareRestore = c.restore
+	c.mu.Unlock()
 	return c.post(ctx, "/api/v1/report", r, http.StatusNoContent)
 }
 

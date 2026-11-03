@@ -22,6 +22,7 @@ type pageData struct {
 	Message  string
 	Stage    string
 	Progress int32
+	Restore  bool // the boot page says the software is restored in the background
 	// EventsURL and StartURL are escaped paths; html/template escapes them per context.
 	EventsURL string
 	StartURL  string

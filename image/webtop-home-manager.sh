@@ -18,6 +18,8 @@ importing=
 
 # The notifications run in the background; the unit's cgroup ends with this script.
 trap wait EXIT
+# While the reinstall unit restores the software after an image update, its job entry shows these.
+progress() { webtop-restore-progress "$@" || true; }
 notify() { webtop-notify "$1" "$2" "${3:-system-software-install}" & }
 
 if [ -e "$switch_marker" ]; then switch=1; fi
@@ -30,6 +32,7 @@ if [ -e "$import_marker" ] && [ -f "$hm/packages.json" ]; then
     trap '' TERM # as below
   else
     echo "importing the nix profile's flake packages into packages.json"
+    progress current "Moving your packages to packages.json"
     cp -f "$hm/packages.json" "$before"
     profile_json=$(nix profile list --json --profile-backend profile)
     imported=$(jq '.elements | with_entries(select((.value.url // "") != "")
@@ -88,6 +91,7 @@ fi
 
 if [ -z "$switch" ] || [ ! -f "$hm/flake.nix" ]; then exit 0; fi
 rc=0
+progress current "home-manager switch (downloading/building)"
 # A flake still written for the account's old name `user` (ADR 0011) is switched as it expects.
 if [ "$(webtop-hm-attr "$hm")" = user ]; then
   echo "no homeConfigurations.\"$USER\" in $hm: switching the one for user (HOME=/home/user)"

@@ -385,5 +385,23 @@ for run in 1 2; do
   sleep 1 # --since has second resolution
 done
 as_user grep -qF 'homeConfigurations."ci"' /home/ci/.config/home-manager/flake.nix || fail "the rename-only rewrite did not rename"
+# The restore scripts' progress file reaches the controller in the agent's report, and the
+# tray job tracker runs.
+docker exec desktop-boot systemctl is-active webtop-restore-job >/dev/null || fail "webtop-restore-job is not running"
+as_user webtop-restore-progress start 2 || fail "webtop-restore-progress start failed"
+as_user webtop-restore-progress current "Reinstalling ci" && as_user webtop-restore-progress done
+for _ in $(seq 1 15); do
+  grep -qF '"softwareRestore":{"active":true,"done":1,"total":2,"failed":false}' "$reports" && break
+  sleep 1
+done
+grep -qF '"softwareRestore":{"active":true,"done":1,"total":2,"failed":false}' "$reports" \
+  || fail "the agent did not report the restore progress: $(tail -n 3 "$reports")"
+as_user webtop-restore-progress finish
+for _ in $(seq 1 15); do
+  grep -qF '"softwareRestore":{"active":false,"done":2,"total":2,"failed":false}' "$reports" && break
+  sleep 1
+done
+grep -qF '"softwareRestore":{"active":false,"done":2,"total":2,"failed":false}' "$reports" \
+  || fail "the agent did not report the finished restore"
 echo "software installation: ok"
 echo "boot test passed"

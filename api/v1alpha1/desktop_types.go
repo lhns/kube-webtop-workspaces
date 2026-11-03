@@ -110,6 +110,16 @@ type ImagePull struct {
 	LastDurationSeconds int64 `json:"lastDurationSeconds,omitempty"`
 }
 
+// SoftwareRestore is the progress of restoring the user's software after an image update, as the
+// agent reported it. It never blocks Ready.
+type SoftwareRestore struct {
+	Active bool `json:"active"`
+	// Done and Total count steps: each reinstalled profile entry plus the home-manager switch.
+	Done   int32 `json:"done"`
+	Total  int32 `json:"total"`
+	Failed bool  `json:"failed,omitempty"`
+}
+
 // DesktopStatus is the observed state of a Desktop.
 type DesktopStatus struct {
 	// +optional
@@ -165,6 +175,9 @@ type DesktopStatus struct {
 	// "user" when that is not usable (condition LoginName). Kept while off.
 	// +optional
 	LoginName string `json:"loginName,omitempty"`
+	// SoftwareRestore is set while, or after, the software is restored after an image update.
+	// +optional
+	SoftwareRestore *SoftwareRestore `json:"softwareRestore,omitempty"`
 	// LoginNameError is why the image could not rename the user to the desktop name, as the agent
 	// reported it. Empty when it could.
 	// +kubebuilder:validation:MaxLength=512

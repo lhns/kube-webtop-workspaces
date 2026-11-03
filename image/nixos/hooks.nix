@@ -10,6 +10,7 @@ let
   userBus = "unix:path=/run/user/${uid}/bus";
 
   notify = import ../notify.nix { inherit pkgs; inherit uid; };
+  progress = import ../restore-progress.nix { inherit pkgs; };
 
   restore = pkgs.writeShellApplication {
     name = "webtop-nix-restore";
@@ -20,9 +21,8 @@ let
   # Root. Any restore exit code is fine: what did not come back is left to the reinstall.
   restoreUnit = pkgs.writeShellApplication {
     name = "webtop-nix-restore-unit";
-    runtimeInputs = with pkgs; [ coreutils systemd restore notify ];
+    runtimeInputs = with pkgs; [ coreutils systemd restore ];
     text = ''
-      webtop-notify "Desktop image updated" "Restoring your Nix packages in the background." system-software-update &
       webtop-nix-restore || echo "webtop-nix-restore exit $?"
       # Not reached when the unit is stopped: the marker stays and the restore resumes next boot.
       rm -f /persist/nix/reinstall/restore
@@ -33,12 +33,15 @@ let
 
   reinstall = pkgs.writeShellApplication {
     name = "webtop-nix-reinstall";
-    runtimeInputs = with pkgs; [ coreutils gnused jq config.nix.package notify ];
+    runtimeInputs = with pkgs; [ coreutils gnused jq config.nix.package notify progress ];
     text = ''
       r=/persist/nix/reinstall
       # As webtop-home-manager.service has them, for the setup script it runs.
       export DBUS_SESSION_BUS_ADDRESS=${userBus} XDG_RUNTIME_DIR=/run/user/${uid}
+      # The agent shows these as a job in the tray; never fatal.
+      progress() { webtop-restore-progress "$@" || true; }
       failed=0
+      progress start 1
       profiles="$HOME/.local/state/nix/profiles"
       old="$profiles.old-$(date +%s)"
       # Dangling links (their generations were not restored) are moved aside: nix cannot extend them.
@@ -69,9 +72,13 @@ let
           refs=$(jq -r '.elements | to_entries[] | .value | select(.url != null and .attrPath != null)
                         | "\(.url)#\(.attrPath)"' "$manifest")
           # Into the profile, where they were: declared packages come back with the switch below.
+          # shellcheck disable=SC2086
+          progress total $(( $(echo $refs | wc -w) + 1 ))
           for ref in $refs; do
             echo "reinstalling $ref"
+            progress current "Reinstalling $ref"
             nix profile add --profile-backend profile "$ref" || { echo "failed: $ref"; failed=1; }
+            progress done
           done
           jq -r '.elements | to_entries[] | .value | select(.url == null) | .storePaths[]?' "$manifest" \
             | sed 's/^/not reinstallable (no flake reference): /'
@@ -80,10 +87,12 @@ let
 
       # home-manager: relock, switch (and on the first such boot, move to packages.json).
       ${config.systemd.services.webtop-home-manager.serviceConfig.ExecStart} || failed=1
+      progress done
 
       if [ "$failed" = 0 ]; then
-        webtop-notify "Packages restored" "Your Nix packages are back." system-software-update &
+        progress finish
       else
+        progress finish "Some of your software could not be restored; see: journalctl -u webtop-nix-reinstall"
         webtop-notify "Package reinstall incomplete" "See: journalctl -u webtop-nix-reinstall" system-software-update &
       fi
       wait
@@ -94,7 +103,33 @@ in
 {
   # kioclient starts the app of /apps/<name> from its desktop file (agent/internal/apps); Plasma
   # already pulls it in, listed so that stays true. webtop-app-screen comes with the webtop module.
-  environment.systemPackages = [ agent pkgs.kdePackages.kde-cli-tools ];
+  environment.systemPackages = [ agent pkgs.kdePackages.kde-cli-tools progress notify ];
+
+  # The restore scripts (running as the user) write their progress here; the file the agent reads
+  # is a link into it, since /run/webtop is root's and the writers replace the file atomically.
+  systemd.tmpfiles.rules = [
+    "d /run/webtop/restore 0755 ${uid} - -"
+    "L+ /run/webtop/restore-progress.json - - - - restore/progress.json"
+  ];
+
+  # The restore's progress as a job in the tray, from the user's session bus.
+  systemd.services.webtop-restore-job = {
+    description = "Show the software restore as a job in the tray";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "webtop-session.service" ];
+    environment = {
+      DBUS_SESSION_BUS_ADDRESS = userBus;
+      XDG_RUNTIME_DIR = "/run/user/${uid}";
+    };
+    serviceConfig = {
+      Type = "exec"; # not oneshot: multi-user.target must not wait for the session
+      User = uid;
+      ExecStart = "${exe} restore-job";
+      EnvironmentFile = envFile;
+      Restart = "always";
+      RestartSec = 5;
+    };
+  };
 
   # Boot progress until Plasma and Selkies are up, then client/idle reports, plus the gateway's apps
   # API on :8081. The controller waits for its ready report (requireAgentReady), so it always restarts.

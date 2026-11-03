@@ -30,7 +30,7 @@ in
       # Stay `user` with home /home/user, consistently; webtop-init mounted only /home/<name>.
       # The agent reports the reason (condition LoginName, RenameFailed).
       echo "webtop-identity: renaming ${cfg.user} to $name failed; staying ${cfg.user}: $reason"
-      printf '%s' "${reason:-usermod failed}" > /run/webtop/identity-error
+      printf '%s' "''${reason:-usermod failed}" > /run/webtop/identity-error
       name=${cfg.user}
       mountpoint -q /home/${cfg.user} || { mkdir -p /home/${cfg.user} && mount --bind /persist/home/user /home/${cfg.user}; }
     fi

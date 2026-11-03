@@ -29,6 +29,7 @@ import (
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/identity"
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/idle"
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/powerhook"
+	"github.com/lhns/kube-webtop-workspaces/agent/internal/restore"
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/session"
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/state"
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/sysd"
@@ -51,6 +52,8 @@ func main() {
 		os.Exit(suspend(cfg))
 	case "thaw":
 		thaw(cfg)
+	case "restore-job":
+		restoreJob(cfg)
 	case "save-session":
 		session.Run(cfg.StateDir)
 	default:
@@ -59,7 +62,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: webtop-agent run | power-hook | suspend | thaw | save-session")
+	fmt.Fprintln(os.Stderr, "usage: webtop-agent run | power-hook | suspend | thaw | restore-job | save-session")
 	os.Exit(2)
 }
 
@@ -149,6 +152,34 @@ func suspendPoweroff(cfg config.Config) int {
 	return 0
 }
 
+// restoreJob shows the software restore as a job in the desktop's tray. It runs as the desktop
+// user, on whose session bus the shell is.
+func restoreJob(cfg config.Config) {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
+	defer stop()
+	t := &restore.Tracker{Viewer: &restore.DBusViewer{Desktop: "org.kde.discover"}}
+	t.Run(ctx, func() restore.Progress { return restore.Read(cfg.StateDir, cfg.RestoreMarker) }, 2*time.Second)
+}
+
+// watchRestore puts the restore progress into the reports, and sends one when it changes.
+func watchRestore(ctx context.Context, cfg config.Config, client *api.Client) {
+	tick := time.NewTicker(2 * time.Second)
+	defer tick.Stop()
+	for {
+		p := restore.Read(cfg.StateDir, cfg.RestoreMarker)
+		if client.SetRestore(api.SoftwareRestore{Active: p.Active, Done: p.Done, Total: p.Total, Failed: p.Failed}) {
+			if err := client.Report(ctx, api.Report{}); err != nil {
+				log.Printf("restore: report: %v", err) // the next report carries it
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+	}
+}
+
 func run(cfg config.Config) {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer stop()
@@ -171,6 +202,7 @@ func run(cfg config.Config) {
 		socket = func(context.Context) (string, error) { return cfg.WaylandSocket, nil }
 	}
 	go tracker.Watch(ctx, socket, 5*time.Second)
+	go watchRestore(ctx, cfg, client)
 
 	(&boot.Booter{
 		Probe:             &sysd.Probe{User: du, Port: cfg.HTTPPort},

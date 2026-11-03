@@ -278,6 +278,27 @@ spec:
                 type: string
               podUID:
                 type: string
+              softwareRestore:
+                description: SoftwareRestore is set while, or after, the software
+                  is restored after an image update.
+                properties:
+                  active:
+                    type: boolean
+                  done:
+                    description: 'Done and Total count steps: each reinstalled profile
+                      entry plus the home-manager switch.'
+                    format: int32
+                    type: integer
+                  failed:
+                    type: boolean
+                  total:
+                    format: int32
+                    type: integer
+                required:
+                - active
+                - done
+                - total
+                type: object
               stage:
                 description: Stage is a human-readable current step.
                 type: string

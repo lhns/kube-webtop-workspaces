@@ -52,6 +52,7 @@ main.wide{max-width:56rem}
 <p id="stage" class="lead">{{.Stage}}</p>
 <div class="bar"><div id="bar" style="width:{{.Progress}}%"></div></div>
 <p id="pull" class="muted"></p>
+<p id="restore" class="muted"{{if not .Restore}} hidden{{end}}>Your software is being restored in the background after an update.</p>
 <p id="msg" class="muted">{{.Message}}</p>
 <noscript><p class="muted">Enable JavaScript or reload this page to follow the progress.</p></noscript>
 <script>
@@ -77,6 +78,7 @@ main.wide{max-width:56rem}
     showPull();
     if(!pullTimer){pullTimer=setInterval(showPull,1000)}
   }
+  var restoreEl=document.getElementById("restore");
   var idleTimer=null;
   var es=new EventSource({{.EventsURL}});
   es.addEventListener("status",function(e){
@@ -85,6 +87,7 @@ main.wide{max-width:56rem}
     bar.style.width=(s.bootProgress||0)+"%";
     msg.textContent=s.message||"";
     setPull(s.pull||null);
+    restoreEl.hidden=!s.softwareRestore;
     // Stopped or stopping while this page is open: reload to get the right page.
     if(s.phase==="Off"||s.phase==="Stopping"){
       if(!idleTimer){idleTimer=setTimeout(function(){location.reload()},30000)}

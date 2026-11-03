@@ -36,12 +36,13 @@ import (
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 
 const (
-	extraPodName  = "authentication.kubernetes.io/pod-name"
-	extraPodUID   = "authentication.kubernetes.io/pod-uid"
-	maxBody       = 16 << 10
-	maxStage      = 64 // characters; the agent's stage is free text shown on the boot page
-	maxHomePaths  = 16 // the image mounts at most this many
-	maxLoginError = 512
+	extraPodName    = "authentication.kubernetes.io/pod-name"
+	extraPodUID     = "authentication.kubernetes.io/pod-uid"
+	maxBody         = 16 << 10
+	maxStage        = 64 // characters; the agent's stage is free text shown on the boot page
+	maxHomePaths    = 16 // the image mounts at most this many
+	maxLoginError   = 512
+	maxRestoreSteps = 100000
 )
 
 // Authenticator validates a bearer token.
@@ -332,13 +333,21 @@ type reportRequest struct {
 	LoginName        *string  `json:"loginName"`
 	HomePaths        []string `json:"homePaths"`
 	LoginError       *string  `json:"loginError"`
+	SoftwareRestore  *struct {
+		Active bool  `json:"active"`
+		Done   int32 `json:"done"`
+		Total  int32 `json:"total"`
+		Failed bool  `json:"failed"`
+	} `json:"softwareRestore"`
 }
 
 // validIdentity checks the reported login name and home paths against the image's rules
 // (docs/contract.md, section 8.3).
 func (req *reportRequest) validIdentity() bool {
 	if req.LoginName != nil && !names.ValidLogin(*req.LoginName) || len(req.HomePaths) > maxHomePaths ||
-		req.LoginError != nil && utf8.RuneCountInString(*req.LoginError) > maxLoginError {
+		req.LoginError != nil && utf8.RuneCountInString(*req.LoginError) > maxLoginError ||
+		req.SoftwareRestore != nil && (req.SoftwareRestore.Done < 0 || req.SoftwareRestore.Total < 0 ||
+			req.SoftwareRestore.Done > maxRestoreSteps || req.SoftwareRestore.Total > maxRestoreSteps) {
 		return false
 	}
 	for _, p := range req.HomePaths {
@@ -374,7 +383,7 @@ func (s *Server) report(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !req.validIdentity() {
-		writeErr(sw, fail(http.StatusBadRequest, "invalid loginName, homePaths or loginError"))
+		writeErr(sw, fail(http.StatusBadRequest, "invalid loginName, homePaths, loginError or softwareRestore"))
 		return
 	}
 	d, herr := s.getDesktop(r.Context(), c.desktop, false)
@@ -417,6 +426,9 @@ func (s *Server) report(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.LoginError != nil {
 		st.LoginNameError = *req.LoginError
+	}
+	if sr := req.SoftwareRestore; sr != nil {
+		st.SoftwareRestore = &v1alpha1.SoftwareRestore{Active: sr.Active, Done: sr.Done, Total: sr.Total, Failed: sr.Failed}
 	}
 	now := metav1.NewTime(s.now())
 	st.LastReportTime = &now
