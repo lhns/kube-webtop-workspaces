@@ -375,7 +375,8 @@ jobs:
       - name: save built paths
         if: (github.ref == 'refs/heads/main' || github.event_name == 'pull_request') && steps.nixrestore.outputs.cache-hit != 'true'
         run: |
-          nix path-info --all --json | jq -r 'if type=="object" then to_entries[]|select(.value.ultimate)|.key else .[]|select(.ultimate)|.path end' \n            | grep -vE '\.drv$|-source$' | sort > built
+          nix path-info --all --json | jq -r 'if type=="object" then to_entries[]|select(.value.ultimate)|.key else .[]|select(.ultimate)|.path end' \
+            | grep -vE '\.drv$|-source$' | sort > built
           nix path-info -r .#kwin | sort > kwin
           comm -23 built kwin > new
           wc -l < new
