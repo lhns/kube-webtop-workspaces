@@ -15,6 +15,7 @@ type Config struct {
 	WaylandSocket     string   // empty = discover from the user manager
 	User              string   // empty = uid 1000
 	HomePaths         []string // mounted by webtop-init; reported to the controller
+	RestoreMarker     string   // exists while an image update's software restore is pending
 	PowerHookTimeout  time.Duration
 	IdleThreshold     time.Duration
 	CompositorTimeout time.Duration
@@ -47,6 +48,7 @@ func FromEnv(getenv func(string) string) Config {
 		WaylandSocket:     str("WEBTOP_AGENT_WAYLAND_SOCKET", ""),
 		User:              str("WEBTOP_AGENT_USER", ""),
 		HomePaths:         strings.Fields(getenv("WEBTOP_HOME_PATHS")),
+		RestoreMarker:     str("WEBTOP_RESTORE_MARKER", "/persist/nix/reinstall/pending"),
 		PowerHookTimeout:  dur("WEBTOP_POWER_HOOK_TIMEOUT", 60*time.Second),
 		IdleThreshold:     dur("WEBTOP_IDLE_REASON_THRESHOLD", 60*time.Second),
 		CompositorTimeout: dur("WEBTOP_COMPOSITOR_TIMEOUT", 3*time.Minute),

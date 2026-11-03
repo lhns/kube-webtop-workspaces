@@ -52,6 +52,9 @@ Built from `flake.nix` with nix2container: `nix build .#image`, then
 | `image/home-manager/` | the starter flake: `flake.nix`, `home.nix`, `packages.nix` (reads `packages.json`) |
 | `image/nix/` | Nix with `nix profile` backends (`profile-backends.patch`, ADR 0013) |
 | `image/webtop-home-manager.sh` | moves `nix profile` packages into packages.json once, relocks after image updates, switches |
+| `image/webtop-notify.sh`, `image/notify.nix` | `webtop-notify`: the one desktop-notification helper (root or the user) |
+| `image/webtop-restore-progress.sh`, `image/restore-progress.nix` | progress of the software restore after an image update, for the tray job and the boot page |
+| `image/webtop-hm-attr.sh` | which `homeConfigurations` to switch (the one for `user` while the flake still names it) |
 | `image/webtop-profile-hook.sh` | `profile-hook`: applies a changed `packages.json` with `home-manager switch` |
 | `image/nixos/identity.nix` | renames the desktop user (uid 1000) to the login name at activation |
 | `image/webtop-nix-restore.sh` | copies the users' paths from the old store overlay into the new one |
@@ -105,7 +108,8 @@ another user, the journal of that unit and a desktop notification list the lines
 (`homeConfigurations."…"`, `home.username`, `home.homeDirectory`). Until then a plain
 `home-manager switch` fails, and the reinstall after an image update switches the old `user` config
 (as `USER=user HOME=/home/user`, through the `/home/user` mount) instead. A failed rename at
-activation leaves the account `user` with `/home/user` mounted. The unmodified check is the
+activation leaves the account `user` with `/home/user` mounted; the reason is reported (condition
+`LoginName`, `RenameFailed`). The unmodified check is the
 `webtop-template write|unmodified` helper, for other units that update files the image put into the
 home too.
 
@@ -158,7 +162,8 @@ the home's names) is rewritten for the login name, and an unmodified `packages.n
 When that adds `packages.nix` and `packages.json`, `webtop-home-manager.service` then moves the
 `nix profile` flake packages into `packages.json` once (store-path entries stay in the profile) and
 switches, with a notification; if the switch fails, packages.json and the profile are put back and it
-retries next boot. A setup with a `~/.config/nix/nix.conf` of its own gets the rename only (stock
+retries next boot. A stop in between (after the packages left the profile) is resumed: the next run only
+switches. The same flake-attribute choice (`webtop-hm-attr`) serves the profile hook. A setup with a `~/.config/nix/nix.conf` of its own gets the rename only (stock
 `nix profile`); an edited one is left alone, with a notice. To opt in, copy `packages.nix` and
 `packages.json` from `image/home-manager/` and add `./packages.nix` to the modules.
 
