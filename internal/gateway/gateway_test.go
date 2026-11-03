@@ -864,3 +864,24 @@ func TestStageText(t *testing.T) {
 		}
 	}
 }
+
+func TestBootPageSoftwareRestoreLine(t *testing.T) {
+	const line = `<p id="restore" class="muted">Your software is being restored in the background after an update.</p>`
+	for _, active := range []bool{true, false} {
+		e := newEnv(t, nil, desktop("alice", "alice", powered(v1alpha1.PowerOn), phase(v1alpha1.PhaseStarting),
+			func(d *v1alpha1.Desktop) {
+				d.Status.SoftwareRestore = &v1alpha1.SoftwareRestore{Active: active, Done: 1, Total: 3}
+			}))
+		rec := e.do("GET", "/some/path", navHeaders)
+		if got := strings.Contains(rec.Body.String(), line); got != active {
+			t.Errorf("active=%v: line shown = %v", active, got)
+		}
+		d := e.desktop(t, "alice")
+		if ev := eventOf(d, time.Now()); ev.SoftwareRestore != active {
+			t.Errorf("active=%v: event %+v", active, ev)
+		}
+	}
+	if ev := eventOf(desktop("alice", "alice"), time.Now()); ev.SoftwareRestore {
+		t.Error("restore event without status")
+	}
+}

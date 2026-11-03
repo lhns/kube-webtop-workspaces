@@ -11,7 +11,7 @@ func env(m map[string]string) func(string) string { return func(k string) string
 func TestDefaults(t *testing.T) {
 	c := FromEnv(env(nil))
 	want := Config{
-		TokenPath: "/run/webtop/sa/token", HTTPPort: 8080, StateDir: "/run/webtop", HomePaths: []string{},
+		TokenPath: "/run/webtop/sa/token", HTTPPort: 8080, StateDir: "/run/webtop", HomePaths: []string{}, RestoreMarker: "/persist/nix/reinstall/pending",
 		PowerHookTimeout: 60 * time.Second, IdleThreshold: 60 * time.Second, CompositorTimeout: 3 * time.Minute,
 		SuspendMode: "freeze",
 	}

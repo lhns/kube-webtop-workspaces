@@ -54,14 +54,19 @@ for `x86_64-linux` and `aarch64-linux`, each built on its own architecture.
 | `image/home-manager/` | the starter flake: `flake.nix`, `home.nix`, `packages.nix` (reads `packages.json`) |
 | `image/nix/` | Nix with `nix profile` backends (`profile-backends.patch`, ADR 0013) |
 | `image/webtop-home-manager.sh` | moves `nix profile` packages into packages.json once, relocks after image updates, switches |
+| `image/webtop-notify.sh`, `image/notify.nix` | `webtop-notify`: the one desktop-notification helper (root or the user) |
+| `image/webtop-restore-progress.sh`, `image/restore-progress.nix` | progress of the software restore after an image update, for the tray job and the boot page |
+| `image/webtop-hm-attr.sh` | which `homeConfigurations` to switch (the one for `user` while the flake still names it) |
 | `image/webtop-profile-hook.sh` | `profile-hook`: applies a changed `packages.json` with `home-manager switch` |
 | `image/nixos/identity.nix` | renames the desktop user (uid 1000) to the login name at activation |
+| `image/webtop-nix-lower` | run by webtop-init: the store overlay after an image update (partial invalidation, else reset) |
+| `image/webtop-nix-partial` | invalidates what a new image store breaks in the overlay, rolls back on failure |
 | `image/webtop-nix-restore.sh` | copies the users' paths from the old store overlay into the new one |
 | `agent/` | in-pod agent (Go, its own module; packaged by `image/agent.nix`) |
 
 **Entrypoint.** `webtop-init` makes `/` rprivate, binds the image's `/nix` read-only at
 `/.lower/nix`, mounts an overlayfs on `/nix/store` (lower: the image's store, upper:
-`/persist/nix/upper`, `userxattr`), binds `/persist/nix/var` on `/nix/var/nix`, mounts the user's home at its paths
+`/persist/nix/upper`, `userxattr,index=off,xino=off`), binds `/persist/nix/var` on `/nix/var/nix`, mounts the user's home at its paths
 (below), writes the `WEBTOP_*` env to `/run/webtop/env` and extra binary caches (`WEBTOP_NIX_*`) to
 `/run/webtop/nix.conf` (systemd does not pass the container env to units) and execs systemd. Stop signal `SIGRTMIN+3`. `WEBTOP_INIT_DEBUG=1` parks the container on a
 failed step instead of exiting; `WEBTOP_INIT_SKIP_OVERLAY=1` boots on the image's store alone.
@@ -71,13 +76,26 @@ the container log (`kubectl logs`).
 **Nix store** (ADR 0008). The daemon opens `/nix/store` as a `local-overlay` store whose lower is
 the image's store (with its own DB) and whose upper and DB are on the volume; clients, root included,
 use the daemon. The user's packages (`nix profile`, home-manager) cost only what they add.
-An image update changes the lower store, which the overlay store forbids: webtop-init compares
-`/webtop-image-stamp` (a hash of the image's store paths) with `/persist/nix/lower-stamp`, and on a
-change records each user's profile manifest, moves the old upper/DB to `/persist/nix/trash-*`, starts
-fresh and keeps the old GC roots. After boot, in the background (no shutdown step),
-`webtop-nix-restore.service` (`image/webtop-nix-restore.sh`) copies the users' live paths (profiles,
-home-manager generations, GC roots) from the kept overlay into the new store; paths only the old image
-had are substituted. It skips when there is no room (free space after the copy must stay above a
+An image update changes the lower store, which the overlay store does not expect:
+`webtop-nix-lower` (run by webtop-init before the overlay is mounted) compares
+`/webtop-image-stamp` (a hash of the image's store paths and their NAR hashes) with
+`/persist/nix/lower-stamp`, and on a change records each user's profile manifest and runs
+`webtop-nix-partial`. That compares the upper DB with the old image's path list
+(`/persist/nix/lower-paths`, headed by that image's stamp; a list of another image is not used) and
+the new image's DB: rows of paths the new image dropped or ships
+with other bytes, rows whose files are not whole in the upper, and everything referring to them are
+invalidated with `nix-store --delete --ignore-liveness` on the upper opened as a plain local store;
+upper entries that would merge with or hide a path of the new image (copy-up leftovers, whiteouts,
+copies of paths the image now ships, unfinished writes) and the invalidated paths move to
+`/persist/nix/trash-*`, with a snapshot of the DB. A post-condition then checks every row again.
+Everything else stays in place. If anything fails (or two attempts were interrupted), the pre-run
+state is put back (if even that fails, its trash dir is kept for the restore) and the overlay is
+reset as a whole: the old upper/DB move to the trash, the
+store starts fresh, the old GC roots are kept. The reason is in the container log. After boot, in
+the background (no shutdown step), `webtop-nix-restore.service` (`image/webtop-nix-restore.sh`)
+copies the users' live paths (profiles, home-manager generations, GC roots) that are not in the new
+store from the trash; paths only the old image had are substituted, and a root whose closure ended
+up split over several trash dirs is copied path by path. It skips when there is no room (free space after the copy must stay above a
 reserve). Only then `webtop-nix-trash.service` deletes the old overlay, and
 `webtop-nix-reinstall.service` runs for what did not come back (roots that depend on image-only paths
 such as the patched KWin, or no network): it reinstalls the recorded flake packages of the profile (by
@@ -107,7 +125,8 @@ another user, the journal of that unit and a desktop notification list the lines
 (`homeConfigurations."…"`, `home.username`, `home.homeDirectory`). Until then a plain
 `home-manager switch` fails, and the reinstall after an image update switches the old `user` config
 (as `USER=user HOME=/home/user`, through the `/home/user` mount) instead. A failed rename at
-activation leaves the account `user` with `/home/user` mounted. The unmodified check is the
+activation leaves the account `user` with `/home/user` mounted; the reason is reported (condition
+`LoginName`, `RenameFailed`). The unmodified check is the
 `webtop-template write|unmodified` helper, for other units that update files the image put into the
 home too.
 
@@ -160,7 +179,8 @@ the home's names) is rewritten for the login name, and an unmodified `packages.n
 When that adds `packages.nix` and `packages.json`, `webtop-home-manager.service` then moves the
 `nix profile` flake packages into `packages.json` once (store-path entries stay in the profile) and
 switches, with a notification; if the switch fails, packages.json and the profile are put back and it
-retries next boot. A setup with a `~/.config/nix/nix.conf` of its own gets the rename only (stock
+retries next boot. A stop in between (after the packages left the profile) is resumed: the next run only
+switches. The same flake-attribute choice (`webtop-hm-attr`) serves the profile hook. A setup with a `~/.config/nix/nix.conf` of its own gets the rename only (stock
 `nix profile`); an edited one is left alone, with a notice. To opt in, copy `packages.nix` and
 `packages.json` from `image/home-manager/` and add `./packages.nix` to the modules.
 

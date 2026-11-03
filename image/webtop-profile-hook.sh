@@ -17,8 +17,14 @@ fi
 
 gen="${XDG_STATE_HOME:-$HOME/.local/state}/nix/profiles/home-manager"
 prev=$(readlink -f "$gen" || true)
-home-manager switch --flake "$dir" && exit 0
-rc=$?
+rc=0
+if [ "$(webtop-hm-attr "$dir")" = user ]; then
+  echo "webtop-profile-hook: the flake still names user; switching that one" >&2
+  USER=user HOME=/home/user home-manager switch --flake "$dir#user" || rc=$?
+else
+  home-manager switch --flake "$dir" || rc=$?
+fi
+[ "$rc" = 0 ] && exit 0
 cur=$(readlink -f "$gen" || true)
 if [ -n "$prev" ] && [ "$cur" != "$prev" ]; then
   echo "webtop-profile-hook: re-activating the previous home-manager generation" >&2

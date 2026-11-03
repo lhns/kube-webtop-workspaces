@@ -1,5 +1,12 @@
 #!/bin/sh
-# Runs restore-test.sh in a privileged container (overlay mounts). Needs docker.
+# Runs the store tests in privileged containers (overlay mounts). Needs docker and jq.
+#   restore-test.sh  webtop-nix-restore.sh after an image update
+#   partial-test.sh  webtop-nix-lower / webtop-nix-partial (the overlay kept across an image update)
 set -e
 cd "$(dirname "$0")/../.."
-exec docker run --rm --privileged -v "$PWD:/src:ro" nixos/nix:2.34.9 bash /src/test/nix-store/restore-test.sh
+rev=$(jq -r '.nodes[.nodes.root.inputs.nixpkgs].locked.rev' flake.lock)
+for t in ${*:-restore-test.sh partial-test.sh}; do
+  echo "::group::$t"
+  docker run --rm --privileged -e NIXPKGS_REV="$rev" -v "$PWD:/src:ro" nixos/nix:2.34.9 "/src/test/nix-store/$t"
+  echo "::endgroup::"
+done

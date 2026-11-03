@@ -155,14 +155,17 @@ jobs:
             exit 1
           fi
 
-  # image/webtop-nix-restore.sh against real local-overlay stores in a privileged nixos/nix container.
+  # The store overlay across image updates (webtop-nix-lower, webtop-nix-partial,
+  # webtop-nix-restore.sh) against real local-overlay stores in privileged nixos/nix containers.
   nix-store:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - name: store restore test
-        run: test/nix-store/run.sh
+        run: test/nix-store/run.sh restore-test.sh
+      - name: partial invalidation test
+        run: test/nix-store/run.sh partial-test.sh
 
   integration:
     runs-on: ubuntu-latest
@@ -374,10 +377,14 @@ jobs:
       - name: boot test (compositing off must be caught)
         timeout-minutes: 15
         run: .github/scripts/boot-test.sh ${{ env.DESKTOP_IMAGE }}:dev 600 gray
+      - name: store overlay across an image update
+        timeout-minutes: 15
+        run: .github/scripts/lower-swap-test.sh ${{ env.DESKTOP_IMAGE }}:dev 300
       - name: boot diagnostics
         if: failure()
         run: |
           docker ps -a
+          docker logs desktop-swap 2>&1 | tail -n 100 || true
           docker logs desktop-boot 2>&1 | tail -n 200 || true
           echo "::group::journal (system)"
           docker exec desktop-boot journalctl -b --no-pager 2>&1 | tail -n 500 || true
@@ -388,7 +395,7 @@ jobs:
           docker exec desktop-boot ps -eo user,pid,args 2>&1 | grep -E 'kwin|plasma|selkies|webtop' || true
       - name: stop test container
         if: always()
-        run: docker rm -f desktop-boot || true
+        run: docker rm -f desktop-boot desktop-swap || true
 
       # ------ publish (main, tags) ------
       # By digest only: desktop-index puts the tags on the index. copyTo is skopeo copy from the Nix

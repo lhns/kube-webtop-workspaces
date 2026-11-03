@@ -247,6 +247,12 @@ spec:
                   LoginName is the desktop user's login name, as the agent reported it: the desktop name, or
                   "user" when that is not usable (condition LoginName). Kept while off.
                 type: string
+              loginNameError:
+                description: |-
+                  LoginNameError is why the image could not rename the user to the desktop name, as the agent
+                  reported it. Empty when it could.
+                maxLength: 512
+                type: string
               message:
                 description: Message gives detail for Error or an unauthorized desktop.
                 type: string
@@ -272,6 +278,28 @@ spec:
                 type: string
               podUID:
                 type: string
+              softwareRestore:
+                description: |-
+                  SoftwareRestore is set while, or after, the software is restored after an image update.
+                  Reset with the pod.
+                properties:
+                  active:
+                    type: boolean
+                  done:
+                    description: 'Done and Total count steps: each reinstalled profile
+                      entry plus the home-manager switch.'
+                    format: int32
+                    type: integer
+                  failed:
+                    type: boolean
+                  total:
+                    format: int32
+                    type: integer
+                required:
+                - active
+                - done
+                - total
+                type: object
               stage:
                 description: Stage is a human-readable current step.
                 type: string
