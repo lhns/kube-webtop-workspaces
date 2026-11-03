@@ -522,3 +522,15 @@ func TestHostWithPort(t *testing.T) {
 		}
 	}
 }
+
+func TestAppsWithoutSlashRedirects(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("backend " + r.URL.Path))
+	}))
+	defer backend.Close()
+	e := newEnv(t, nil, desktop("alice", "alice", running(backend.URL)))
+	rec := e.do("GET", "/apps", navHeaders)
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/apps/" {
+		t.Fatalf("code %d location %q", rec.Code, rec.Header().Get("Location"))
+	}
+}

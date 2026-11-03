@@ -4,9 +4,11 @@ package usersession
 import (
 	"context"
 	"errors"
+	"os"
 	"os/exec"
 	"os/user"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -86,15 +88,33 @@ func (u User) Command(ctx context.Context, name string, args ...string) ([]byte,
 	return u.exec(ctx, commandTimeout, name, args...)
 }
 
+// sessionPath is the PATH of commands run as the desktop user.
+const sessionPath = "/run/current-system/sw/bin:/usr/local/bin:/usr/bin:/bin"
+
+// lookIn finds name in path. exec.Command searches the agent's own PATH, not cmd.Env's, and the
+// agent's unit does not have the system profile on it. Not found: name, so exec reports the error.
+func lookIn(path, name string) string {
+	if strings.Contains(name, "/") {
+		return name
+	}
+	for _, dir := range filepath.SplitList(path) {
+		p := filepath.Join(dir, name)
+		if st, err := os.Stat(p); err == nil && !st.IsDir() && st.Mode()&0o111 != 0 {
+			return p
+		}
+	}
+	return name
+}
+
 func (u User) exec(ctx context.Context, timeout time.Duration, name string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := exec.CommandContext(ctx, lookIn(sessionPath, name), args...)
 	runtimeDir := "/run/user/" + strconv.FormatUint(uint64(u.UID), 10)
 	cmd.Env = []string{
 		"XDG_RUNTIME_DIR=" + runtimeDir,
 		"DBUS_SESSION_BUS_ADDRESS=unix:path=" + runtimeDir + "/bus",
-		"PATH=/run/current-system/sw/bin:/usr/local/bin:/usr/bin:/bin",
+		"PATH=" + sessionPath,
 	}
 	setCredential(cmd, u.UID, u.GID)
 	return cmd.Output()

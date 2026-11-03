@@ -292,6 +292,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	app, isApp, overview := "", false, false
 	nav := r.Method == http.MethodGet && IsNavigation(r)
 	if nav {
+		// Without the slash the path would be proxied to the desktop, which answers 404.
+		if rt.rest+"/" == appPrefix {
+			http.Redirect(w, r, rt.base+appPrefix, http.StatusFound)
+			return
+		}
 		if overview = rt.rest == appPrefix; overview {
 			app = appsOverview
 		} else {
