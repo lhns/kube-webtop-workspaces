@@ -15,7 +15,7 @@
       url = "github:NixOS/flake-registry";
       flake = false;
     };
-    webtop-nix.url = "github:lhns/webtop-nix/f77d5edf45ffe60207a290712b477b092edb2e1c";
+    webtop-nix.url = "github:lhns/webtop-nix/27b5297d65337e2d3db3122fdb5f7a5ff152f8a1";
   };
 
   outputs = { self, nixpkgs, home-manager, flake-registry, webtop-nix, ... }:
@@ -101,7 +101,7 @@
           # Change with input bumps only: the sources baked into the registry (home-manager.nix), and
           # the all-locales glibc the prebuilt home-manager generation references.
           extraGroups = [
-            { name = "sources"; anchors = [ nixpkgs home-manager flake-registry ]; }
+            { name = "sources"; anchors = [ nixpkgs home-manager ]; }
             { name = "locales"; anchors = [ pkgs.glibcLocales ]; }
           ];
           copyToRoot = [ rootfs webtopInit stamp ];
