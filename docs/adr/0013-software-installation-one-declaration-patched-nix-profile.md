@@ -53,3 +53,8 @@ separately from home-manager, and nothing showed one list of what the user insta
   customized setups keep stock-shaped behaviour until they add the module.
 - No GUI for now: nix-software-center reads the profile manifest in a pre-2.20 format and depends
   on an external package database that is empty for current nixpkgs revisions.
+
+## Amendment 2026-11-03
+
+The software center (a fork of nix-software-center) ships in the image as the GUI over `nix profile`: it
+runs the same commands, so it installs into the declaration. Discover stays excluded.

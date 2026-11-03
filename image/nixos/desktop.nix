@@ -21,6 +21,8 @@
     };
   };
 
+  services.webtop.softwareCenter.enable = true;
+
   # One way to install software (ADR 0013): Discover has no Nix backend on NixOS. Plasma's "Get New…"
   # dialogs (KNewStuff) stay.
   environment.plasma6.excludePackages = [ pkgs.kdePackages.discover ];
