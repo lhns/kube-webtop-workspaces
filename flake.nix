@@ -2,12 +2,9 @@
   description = "kube-webtop-workspaces desktop image: NixOS (systemd PID 1) with a browser-streamed Plasma desktop";
 
   inputs = {
-    # One nixpkgs (one Qt tree). KWin 6.8 needs webtop-nix's software-presentation patch to render without a GPU (README, "KWin patch").
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    nix2container = {
-      url = "github:nlewo/nix2container";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
+    # webtop-nix's nixpkgs: one Qt tree with its grafted KWin (README, "KWin patch"), and its image
+    # builder's skopeo, so a layer compresses to the same blob as in the last build.
+    nixpkgs.follows = "webtop-nix/nixpkgs";
     # The users' home-manager flakes resolve it from the system registry (image/nixos/home-manager.nix).
     home-manager = {
       url = "github:nix-community/home-manager";
@@ -18,13 +15,10 @@
       url = "github:NixOS/flake-registry";
       flake = false;
     };
-    webtop-nix = {
-      url = "github:lhns/webtop-nix/4b29379eb4649f6a2d881779c480da506e3f1940";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
+    webtop-nix.url = "github:lhns/webtop-nix/27b5297d65337e2d3db3122fdb5f7a5ff152f8a1";
   };
 
-  outputs = { self, nixpkgs, nix2container, home-manager, flake-registry, webtop-nix, ... }:
+  outputs = { self, nixpkgs, home-manager, flake-registry, webtop-nix, ... }:
     let
       # Supported systems (ADR 0014); CI builds and boot-tests each one natively, in a matrix.
       systems = [ "x86_64-linux" "aarch64-linux" ];
@@ -32,7 +26,6 @@
 
       perSystem = system: rec {
         pkgs = nixpkgs.legacyPackages.${system};
-        n2c = nix2container.packages.${system}.nix2container;
 
         agent = pkgs.callPackage ./image/agent.nix { };
 
@@ -82,7 +75,8 @@
 
         # Identifies the image's store (the overlay's lower). webtop-nix-lower compares it with the stamp
         # on the volume; it lives outside /nix so busybox can read it before the overlay is mounted.
-        # Over paths and NAR hashes: a path rebuilt with other bytes is a change too.
+        # Over paths and NAR hashes: a path rebuilt with other bytes is a change too. The image's
+        # store is exactly this closure: its layers may hold only the toplevel's.
         lowerClosure = pkgs.closureInfo { rootPaths = [ toplevel webtopInit rootfs ]; };
         stamp = pkgs.runCommand "webtop-image-stamp" { } ''
           mkdir -p $out
@@ -98,11 +92,18 @@
         inherit toplevel agent;
         # The patched KWin the system grafts in; CI builds and caches it ahead of the image.
         kwin = nixos.pkgs.kwinSoftwarePresentation;
-        image = n2c.buildImage {
+        # webtop-nix's builder (its ADR 0005): layers split from this system's closure, stable to
+        # volatile, the Nix DB and copyToRoot on top.
+        image = webtop-nix.lib.buildImage {
           name = "ghcr.io/lhns/kube-webtop-workspaces-desktop";
           tag = "dev";
-          initializeNixDatabase = true;
-          maxLayers = 100;
+          inherit nixos;
+          # Change with input bumps only: the sources baked into the registry (home-manager.nix), and
+          # the all-locales glibc the prebuilt home-manager generation references.
+          extraGroups = [
+            { name = "sources"; anchors = [ nixpkgs home-manager ]; }
+            { name = "locales"; anchors = [ pkgs.glibcLocales ]; }
+          ];
           copyToRoot = [ rootfs webtopInit stamp ];
           config = {
             Entrypoint = [ "/webtop-init" ];
@@ -112,6 +113,7 @@
           };
         };
         default = self.packages.${system}.image;
+        inherit (webtop-nix.packages.${system}) layer-report;
       });
 
       checks = forAllSystems (system: with sys.${system}; {

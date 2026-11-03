@@ -39,6 +39,7 @@
     "nix2container": {
       "inputs": {
         "nixpkgs": [
+          "webtop-nix",
           "nixpkgs"
         ]
       },
@@ -53,6 +54,7 @@
       "original": {
         "owner": "nlewo",
         "repo": "nix2container",
+        "rev": "535166ecac3fcdff43787aa958dd7e954770581d",
         "type": "github"
       }
     },
@@ -76,29 +78,30 @@
       "inputs": {
         "flake-registry": "flake-registry",
         "home-manager": "home-manager",
-        "nix2container": "nix2container",
-        "nixpkgs": "nixpkgs",
+        "nixpkgs": [
+          "webtop-nix",
+          "nixpkgs"
+        ],
         "webtop-nix": "webtop-nix"
       }
     },
     "webtop-nix": {
       "inputs": {
-        "nixpkgs": [
-          "nixpkgs"
-        ]
+        "nix2container": "nix2container",
+        "nixpkgs": "nixpkgs"
       },
       "locked": {
-        "lastModified": 1793696650,
-        "narHash": "sha256-nkdxJtiExySuoob5YGGYR27cSZv/TK6hxevXAtUJ4io=",
+        "lastModified": 1793714148,
+        "narHash": "sha256-gb0ZEJwlUNkraSqlGTnDUDJ/dPUzVq7vVsusiHnL36Q=",
         "owner": "lhns",
         "repo": "webtop-nix",
-        "rev": "4b29379eb4649f6a2d881779c480da506e3f1940",
+        "rev": "27b5297d65337e2d3db3122fdb5f7a5ff152f8a1",
         "type": "github"
       },
       "original": {
         "owner": "lhns",
         "repo": "webtop-nix",
-        "rev": "4b29379eb4649f6a2d881779c480da506e3f1940",
+        "rev": "27b5297d65337e2d3db3122fdb5f7a5ff152f8a1",
         "type": "github"
       }
     }
