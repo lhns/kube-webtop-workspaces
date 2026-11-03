@@ -79,7 +79,7 @@ boot
 clog=$(docker logs "$c" 2>&1)
 grep 'webtop-nix-partial\|webtop-init: .*store' <<<"$clog" || true
 grep -q 'store overlay kept' <<<"$clog" || fail "the partial invalidation did not run or fell back"
-grep -q '1 seeds, 2 paths to invalidate' <<<"$clog" || fail "expected 1 seed (g) and 2 invalidated paths (g, ug)"
+grep -q '1 seeds, 3 paths to invalidate' <<<"$clog" || fail "expected 1 seed (g) and 3 invalidated paths (g, ug, ug's .drv, whose input source g is)"
 x nix-store --check-validity "$us" || fail "us (no dependency on g) did not survive"
 ! x nix-store --check-validity "$ug" 2>/dev/null || fail "ug (depends on g) is still valid"
 ! x test -e "$bb/ci-delta" || fail "the copy-up leftover still shows"
