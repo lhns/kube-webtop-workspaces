@@ -230,7 +230,7 @@ check "restore brought back the invalidated resident roots" "in_roots $u2r $u5 $
 
 echo "=== idempotence"
 setup; run_partial
-before=$(state); run_partial; after=$(state)
+before=$(state); $ENVP PATH=/bb /t/bin/webtop-nix-partial B B; after=$(state)
 check "second run is a no-op" "[ \"\$before\" = \"\$after\" ] && [ \"\$(cat /t/work/result)\" = clean ]"
 
 for c in after-plan after-snapshot mid-moves after-moves after-delete after-check; do
