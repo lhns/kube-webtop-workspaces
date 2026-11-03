@@ -125,6 +125,10 @@ in_session sh -c 'command -v webtop-app-screen && command -v kioclient' >/dev/nu
   || { echo "::error::webtop-app-screen or kioclient is not on the user's PATH"; exit 1; }
 code=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:8083/api/v1/apps/no-such-app.invalid || true)
 [ "$code" = 404 ] || { echo "::error::the agent's apps API answers HTTP $code, want 404"; exit 1; }
+# The agent itself must find the helper: the user's PATH above is not the one it looks in.
+if curl -s -X POST http://localhost:8083/api/v1/apps/org.kde.dolphin | grep -q 'not found in'; then
+  echo "::error::the agent cannot find a command to place an app"; exit 1
+fi
 # The overview's source: the application list is a non-empty JSON array of entries with an id.
 curl -fsS http://localhost:8083/api/v1/apps | python3 -c 'import json,sys; a=json.load(sys.stdin); assert a and all(x["id"] and x["name"] for x in a), a' \
   || { echo "::error::the agent's app list is not a non-empty JSON array of apps"; exit 1; }
