@@ -170,7 +170,7 @@ type dbusView struct {
 	obj   dbus.BusObject
 }
 
-// Gone is true once the name has no owner or a new one; other errors count as alive.
+// Gone is true once the connection or the name owner is gone or changed; other errors count as alive.
 func (v *dbusView) Gone() bool {
 	owner, err := v.d.owner()
 	var de dbus.Error
