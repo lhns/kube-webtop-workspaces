@@ -144,6 +144,7 @@ case $subst in *cache.nixos.org*http://cache.invalid/ci*) echo "substituters: $s
 # Read once: grep -q on a pipe would SIGPIPE docker logs, which fails the pipeline (pipefail).
 clog=$(docker logs desktop-boot 2>&1)
 ! grep 'webtop-identity:' <<<"$clog" || { echo "::error::the rename at activation failed"; exit 1; }
+! docker exec desktop-boot test -e /run/webtop/identity-error || { echo "::error::identity-error written"; exit 1; }
 pw=$(docker exec desktop-boot getent passwd ci || true)
 case $pw in "ci:x:1000:100:CI Tester:/home/ci:"?*) ;; *) echo "::error::passwd entry of ci: '$pw'"; exit 1 ;; esac
 [ "$(docker exec desktop-boot loginctl show-user 1000 --property=Name --value)" = ci ] \
@@ -169,7 +170,7 @@ grep -qx /home/ci "$hp/home-paths" || { echo "::error::/home/ci not added to hom
 for bad in root ../x /home/root /home/../x; do
   grep -qF "home-paths: ignoring '$bad'" <<<"$clog" || { echo "::error::'$bad' not reported as ignored"; exit 1; }
 done
-grep -qF '"loginName":"ci","homePaths":["/home/ci","/home/user"]' "$reports" \
+grep -qF '"loginName":"ci","homePaths":["/home/ci","/home/user"],"loginError":""' "$reports" \
   || { echo "::error::the agent did not report the login name and home paths"; exit 1; }
 
 # Software installation (ADR 0013): one declaration that `nix profile` edits. First the setup unit
@@ -343,6 +344,20 @@ as_user hello >/dev/null || fail "hello is not installed after the migration"
 warns=$(docker exec desktop-boot journalctl -u webtop-home-manager --since "$since" --no-pager | grep 'warning:' \
   | grep -v "deprecated alias\|cache.invalid" || true)
 [ -z "$warns" ] || fail "nix profile warned during the switch: $warns"
+# A stop between the import's `nix profile remove` and the switch: the next run only switches.
+wst=/home/ci/.local/state/webtop
+sum=$(as_user sha256sum "$decl")
+as_user sh -c "touch $wst/packages-json-import && printf 'removed\n%s\nhello\n' \"\$(readlink /home/ci/.local/state/nix/profiles/profile)\" > $wst/import-phase"
+since=$(docker exec desktop-boot date '+%Y-%m-%d %H:%M:%S')
+docker exec desktop-boot systemctl start webtop-home-manager
+wait_setup
+[ "$(docker exec desktop-boot systemctl show -P Result webtop-home-manager)" = success ] || fail "the resumed import failed"
+docker exec desktop-boot journalctl -u webtop-home-manager --since "$since" -o cat | grep -q 'resuming the import' \
+  || fail "the unit did not resume the import"
+as_user sh -c "! test -e $wst/import-phase && ! test -e $wst/packages-json-import && ! test -e $wst/home-manager-switch" \
+  || fail "the resumed import left its state behind"
+[ "$(as_user sha256sum "$decl")" = "$sum" ] || fail "the resumed import changed packages.json"
+as_user hello >/dev/null || fail "hello is gone after the resumed import"
 # A failing switch fails the unit and says so.
 as_user sh -c "cp $decl /tmp/decl.bak && jq '.elements.broken = {originalUrl: \"flake:nixpkgs\", attrPath: \"legacyPackages.x86_64-linux.noSuchPackageCi\"}' /tmp/decl.bak > $decl"
 gen=/home/ci/.local/state/nix/profiles/home-manager
@@ -370,5 +385,23 @@ for run in 1 2; do
   sleep 1 # --since has second resolution
 done
 as_user grep -qF 'homeConfigurations."ci"' /home/ci/.config/home-manager/flake.nix || fail "the rename-only rewrite did not rename"
+# The restore scripts' progress file reaches the controller in the agent's report, and the
+# tray job tracker runs.
+docker exec desktop-boot systemctl is-active webtop-restore-job >/dev/null || fail "webtop-restore-job is not running"
+as_user webtop-restore-progress start 2 || fail "webtop-restore-progress start failed"
+as_user webtop-restore-progress current "Reinstalling ci" && as_user webtop-restore-progress step
+for _ in $(seq 1 15); do
+  grep -qF '"softwareRestore":{"active":true,"done":1,"total":2,"failed":false}' "$reports" && break
+  sleep 1
+done
+grep -qF '"softwareRestore":{"active":true,"done":1,"total":2,"failed":false}' "$reports" \
+  || fail "the agent did not report the restore progress: $(tail -n 3 "$reports")"
+as_user webtop-restore-progress finish
+for _ in $(seq 1 15); do
+  grep -qF '"softwareRestore":{"active":false,"done":2,"total":2,"failed":false}' "$reports" && break
+  sleep 1
+done
+grep -qF '"softwareRestore":{"active":false,"done":2,"total":2,"failed":false}' "$reports" \
+  || fail "the agent did not report the finished restore"
 echo "software installation: ok"
 echo "boot test passed"

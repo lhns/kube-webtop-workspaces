@@ -231,7 +231,7 @@ func (c *Config) Default() {
 		d.RunSizeLimit = resource.MustParse("256Mi")
 	}
 	if d.TerminationGracePeriodSeconds == nil {
-		d.TerminationGracePeriodSeconds = ptr(int64(120))
+		d.TerminationGracePeriodSeconds = ptr(int64(420))
 	}
 
 	s := &c.Storage

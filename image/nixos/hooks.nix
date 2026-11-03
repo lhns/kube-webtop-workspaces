@@ -9,17 +9,8 @@ let
   envFile = "-/run/webtop/env";
   userBus = "unix:path=/run/user/${uid}/bus";
 
-  # Best effort and in the background: Plasma's notification server may not be up yet, and a call
-  # to an unowned name can hang until the D-Bus timeout. $NOTIFY_PREFIX runs it as the user (root).
-  notifyFn = ''
-    notify() {
-      (for _ in $(seq 1 12); do
-        # shellcheck disable=SC2086
-        timeout 5 ''${NOTIFY_PREFIX:-} notify-send -a "Desktop" -i system-software-update "$1" "$2" 2>/dev/null && exit
-        sleep 5
-      done) &
-    }
-  '';
+  notify = import ../notify.nix { inherit pkgs; inherit uid; };
+  progress = import ../restore-progress.nix { inherit pkgs; };
 
   restore = pkgs.writeShellApplication {
     name = "webtop-nix-restore";
@@ -30,12 +21,8 @@ let
   # Root. Any restore exit code is fine: what did not come back is left to the reinstall.
   restoreUnit = pkgs.writeShellApplication {
     name = "webtop-nix-restore-unit";
-    runtimeInputs = with pkgs; [ coreutils util-linux libnotify systemd restore ];
+    runtimeInputs = with pkgs; [ coreutils systemd restore ];
     text = ''
-      NOTIFY_PREFIX="runuser -u $(id -nu ${uid}) -- env DBUS_SESSION_BUS_ADDRESS=${userBus}"
-      export NOTIFY_PREFIX
-      ${notifyFn}
-      notify "Desktop image updated" "Restoring your Nix packages in the background."
       webtop-nix-restore || echo "webtop-nix-restore exit $?"
       # Not reached when the unit is stopped: the marker stays and the restore resumes next boot.
       rm -f /persist/nix/reinstall/restore
@@ -46,13 +33,15 @@ let
 
   reinstall = pkgs.writeShellApplication {
     name = "webtop-nix-reinstall";
-    runtimeInputs = with pkgs; [ coreutils gnused jq config.nix.package libnotify ];
+    runtimeInputs = with pkgs; [ coreutils gnused jq config.nix.package notify progress ];
     text = ''
       r=/persist/nix/reinstall
       # As webtop-home-manager.service has them, for the setup script it runs.
       export DBUS_SESSION_BUS_ADDRESS=${userBus} XDG_RUNTIME_DIR=/run/user/${uid}
-      ${notifyFn}
+      # The agent shows these as a job in the tray; never fatal.
+      progress() { webtop-restore-progress "$@" || true; }
       failed=0
+      progress start 1
       profiles="$HOME/.local/state/nix/profiles"
       old="$profiles.old-$(date +%s)"
       # Dangling links (their generations were not restored) are moved aside: nix cannot extend them.
@@ -84,9 +73,13 @@ let
           refs=$(jq -r '.elements | to_entries[] | .value | select(.url != null and .attrPath != null)
                         | "\(.url)#\(.attrPath)"' "$manifest")
           # Into the profile, where they were: declared packages come back with the switch below.
+          # shellcheck disable=SC2086
+          progress total $(( $(echo $refs | wc -w) + 1 ))
           for ref in $refs; do
             echo "reinstalling $ref"
+            progress current "Reinstalling $ref"
             nix profile add --profile-backend profile "$ref" || { echo "failed: $ref"; failed=1; }
+            progress step
           done
           jq -r '.elements | to_entries[] | .value | select(.url == null) | .storePaths[]?' "$manifest" \
             | sed 's/^/not reinstallable (no flake reference): /'
@@ -95,11 +88,13 @@ let
 
       # home-manager: relock, switch (and on the first such boot, move to packages.json).
       ${config.systemd.services.webtop-home-manager.serviceConfig.ExecStart} || failed=1
+      progress step
 
       if [ "$failed" = 0 ]; then
-        notify "Packages restored" "Your Nix packages are back."
+        progress finish
       else
-        notify "Package reinstall incomplete" "See: journalctl -u webtop-nix-reinstall"
+        progress finish "Some of your software could not be restored; see: journalctl -u webtop-nix-reinstall"
+        webtop-notify "Package reinstall incomplete" "See: journalctl -u webtop-nix-reinstall" system-software-update &
       fi
       wait
       exit "$failed"
@@ -109,7 +104,30 @@ in
 {
   # kioclient starts the app of /apps/<name> from its desktop file (agent/internal/apps); Plasma
   # already pulls it in, listed so that stays true. webtop-app-screen comes with the webtop module.
-  environment.systemPackages = [ agent pkgs.kdePackages.kde-cli-tools ];
+  environment.systemPackages = [ agent pkgs.kdePackages.kde-cli-tools progress notify ];
+
+  # The restore scripts run as the user and replace their progress file atomically, so it gets a
+  # directory of its own: /run/webtop is root's.
+  systemd.tmpfiles.rules = [ "d /run/webtop/restore 0755 ${uid} - -" ];
+
+  # The restore's progress as a job in the tray, from the user's session bus.
+  systemd.services.webtop-restore-job = {
+    description = "Show the software restore as a job in the tray";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "webtop-session.service" ];
+    environment = {
+      DBUS_SESSION_BUS_ADDRESS = userBus;
+      XDG_RUNTIME_DIR = "/run/user/${uid}";
+    };
+    serviceConfig = {
+      Type = "exec"; # not oneshot: multi-user.target must not wait for the session
+      User = uid;
+      ExecStart = "${exe} restore-job";
+      EnvironmentFile = envFile;
+      Restart = "always";
+      RestartSec = 5;
+    };
+  };
 
   # Boot progress until Plasma and Selkies are up, then client/idle reports, plus the gateway's apps
   # API on :8081. The controller waits for its ready report (requireAgentReady), so it always restarts.
@@ -209,7 +227,7 @@ in
     description = "Reinstall the user's Nix packages after an image update";
     wantedBy = [ "multi-user.target" ];
     wants = [ "network-online.target" ];
-    after = [ "network-online.target" "nix-daemon.socket" "webtop-session.service" ];
+    after = [ "network-online.target" "nix-daemon.socket" "nix-daemon.service" "webtop-session.service" ];
     unitConfig.ConditionPathExists = [
       "/persist/nix/reinstall/pending"
       "!/persist/nix/reinstall/restore"
@@ -218,9 +236,12 @@ in
       Type = "exec"; # see webtop-nix-restore
       User = uid;
       ExecStart = lib.getExe reinstall;
-      TimeoutStopSec = 10;
-      # "+": as root, the records belong to root. Only after success; a failure retries next boot.
-      ExecStopPost = "+${pkgs.runtimeShell} -c '[ \"$$SERVICE_RESULT\" = success ] && ${pkgs.coreutils}/bin/rm -f /persist/nix/reinstall/pending || true'";
+      # As webtop-home-manager.service: the setup script it runs ignores a stop during the import.
+      # Everything else here ends on SIGTERM.
+      TimeoutStopSec = "5min";
+      # "+": as root, the records belong to root. Only after the script ran to the end: a failure or a
+      # stop retries next boot (systemd counts a SIGTERM death as success, hence EXIT_CODE).
+      ExecStopPost = "+${pkgs.runtimeShell} -c '[ \"$$SERVICE_RESULT\" = success ] && [ \"$$EXIT_CODE\" = exited ] && ${pkgs.coreutils}/bin/rm -f /persist/nix/reinstall/pending || true'";
     };
   };
   systemd.services.webtop-nix-trash = {

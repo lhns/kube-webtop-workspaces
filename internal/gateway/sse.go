@@ -24,6 +24,8 @@ type statusEvent struct {
 	Asleep bool `json:"asleep,omitempty"`
 	// PodUID tells a tab that watches a running desktop that the pod was replaced.
 	PodUID string `json:"podUID,omitempty"`
+	// SoftwareRestore is true while the software is restored after an image update.
+	SoftwareRestore bool `json:"softwareRestore,omitempty"`
 	// Pull is set while the image is being downloaded.
 	Pull *pullEvent `json:"pull,omitempty"`
 }
@@ -44,7 +46,7 @@ func eventOf(d *v1alpha1.Desktop, now time.Time) statusEvent {
 	ev := statusEvent{
 		Phase: string(d.Status.Phase), Stage: stageText(d.Status.Stage), BootProgress: d.Status.BootProgress,
 		Message: d.Status.Message, Authorized: !authorizedFalse(d), PodUID: d.Status.PodUID,
-		Asleep: d.Status.Asleep,
+		Asleep: d.Status.Asleep, SoftwareRestore: restoring(d),
 	}
 	if ip := d.Status.ImagePull; ip != nil && d.Status.Stage == v1alpha1.StagePullingImage && ip.StartedAt != nil {
 		ev.Pull = &pullEvent{
@@ -53,6 +55,11 @@ func eventOf(d *v1alpha1.Desktop, now time.Time) statusEvent {
 		}
 	}
 	return ev
+}
+
+// restoring is true while the agent reports a software restore in progress.
+func restoring(d *v1alpha1.Desktop) bool {
+	return d.Status.SoftwareRestore != nil && d.Status.SoftwareRestore.Active
 }
 
 // isReady matches the proxy condition, so a "ready" reload never lands on a boot page.
