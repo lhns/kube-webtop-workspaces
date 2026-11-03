@@ -129,7 +129,7 @@ auto-optimise-store = true" nix copy --no-check-sigs --to "$O" "$u1" "$u2r" "$u3
   fi
   # As webtop-init's bind_lower: state dirs exist before the read-only bind.
   mkdir -p /t/B/nix/var/nix/profiles/per-user /t/B/nix/var/nix/gcroots/per-user /t/B/nix/var/nix/temproots
-  mkdir -p "$LB" && mount --bind /t/B "$LB" && mount -o remount,bind,ro "$LB"
+  mkdir -p "$LB" && mount --bind /t/B "$LB" && mount -o remount,bind,ro /t/B "$LB" # source given, as in webtop-init
   nix-store --store "local?root=$PR/A&read-only=true" --dump-db | heads | sort > "$S/lower-paths"
   echo A > "$S/lower-stamp"
 }
