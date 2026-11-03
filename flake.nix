@@ -15,7 +15,7 @@
       url = "github:NixOS/flake-registry";
       flake = false;
     };
-    webtop-nix.url = "github:lhns/webtop-nix/91bc063be03fd198184179be24cd876a8786b76d";
+    webtop-nix.url = "github:lhns/webtop-nix/d64ddf33dabbfe32d43f0df8755da21115074b3f";
   };
 
   outputs = { self, nixpkgs, home-manager, flake-registry, webtop-nix, ... }:
@@ -98,8 +98,12 @@
           name = "ghcr.io/lhns/kube-webtop-workspaces-desktop";
           tag = "dev";
           inherit nixos;
-          # Baked into the registry (home-manager.nix); they change with input bumps only.
-          extraGroups = [ { name = "sources"; anchors = [ nixpkgs home-manager flake-registry ]; } ];
+          # Change with input bumps only: the sources baked into the registry (home-manager.nix), and
+          # the all-locales glibc the prebuilt home-manager generation references.
+          extraGroups = [
+            { name = "sources"; anchors = [ nixpkgs home-manager flake-registry ]; }
+            { name = "locales"; anchors = [ pkgs.glibcLocales ]; }
+          ];
           copyToRoot = [ rootfs webtopInit stamp ];
           config = {
             Entrypoint = [ "/webtop-init" ];
