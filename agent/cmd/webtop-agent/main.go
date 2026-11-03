@@ -244,3 +244,5 @@ func serveApps(ctx context.Context, cfg config.Config) {
 		log.Printf("apps API: %v", err) // the agent's other jobs go on; systemd restarts it on exit only
 	}
 }
+
+// layer-reuse probe (reverted)
