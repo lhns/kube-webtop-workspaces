@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -97,6 +98,10 @@ func TestTrackerLifecycle(t *testing.T) {
 	if u["percent"] != uint32(25) || u["infoMessage"] != "Reinstalling a (2 of 4)" || u["title"] == "" {
 		t.Fatalf("update: %v", u)
 	}
+	tr.Step(Progress{Active: true, Done: 1, Total: 4, Current: "Reinstalling a", Fraction: 0.5, Detail: "Building b"})
+	if u := v.updates[2]; u["percent"] != uint32(37) || u["infoMessage"] != "Reinstalling a (2 of 4): Building b" {
+		t.Fatalf("update with detail: %v", u)
+	}
 	tr.Step(Progress{Failed: true, Done: 1, Total: 4, Message: "boom"})
 	tr.Step(Progress{Failed: true})
 	if len(v.ended) != 1 || v.ended[0] != "1:boom" || fv.n != 2 {
@@ -135,14 +140,46 @@ func TestTrackerReopensWhenShellIsGone(t *testing.T) {
 	}
 }
 
-const nixSample = `{"action":"start","id":1,"level":3,"type":104,"text":""}
-{"action":"result","id":1,"type":105,"fields":[0,4,0,0]}
-{"action":"result","id":1,"type":106,"fields":[101,419430400]}
-{"action":"start","id":2,"level":3,"type":103,"text":""}
-{"action":"result","id":2,"type":105,"fields":[1,3,2,0]}
-{"action":"start","id":3,"level":3,"type":101,"text":"downloading 'https://cache.nixos.org/x.nar.xz'"}
-{"action":"result","id":3,"type":105,"fields":[104857600,209715200,0,0]}
+// Ids as Nix makes them: pid << 32 plus a counter. Pid 7 is the daemon's worker; its realise
+// activity (102) carries the expected download size.
+const nixSample = `{"action":"start","id":30064771072,"level":3,"type":102,"text":"","parent":0}
+{"action":"result","id":30064771072,"type":106,"fields":[101,419430400]}
+{"action":"start","id":30064771073,"level":3,"type":104,"text":"","parent":0}
+{"action":"result","id":30064771073,"type":105,"fields":[0,4,0,0]}
+{"action":"start","id":30064771074,"level":3,"type":103,"text":"","parent":0}
+{"action":"result","id":30064771074,"type":105,"fields":[1,3,2,0]}
+{"action":"start","id":30064771075,"level":3,"type":101,"text":"downloading 'https://cache.nixos.org/x.nar.xz'","parent":0}
+{"action":"result","id":30064771075,"type":105,"fields":[104857600,209715200,0,0]}
 `
+
+// The rest of a partial line, a finished transfer, then a build.
+const nixSample2 = `ult","id":30064771074,"type":105,"fields":[2,3,1,0]}
+{"action":"stop","id":30064771075}
+{"action":"start","id":30064771076,"level":3,"type":105,"text":"building '/nix/store/0123456789abcdfghijklmnpqrsvwxyz-firefox-1.0.drv'","parent":30064771073}
+`
+
+// Pid 7 ends; the next nix process (pid 8) downloads 50 of 200 MiB.
+const nixSample3 = `{"action":"stop","id":30064771076}
+{"action":"stop","id":30064771074}
+{"action":"stop","id":30064771073}
+{"action":"stop","id":30064771072}
+{"action":"start","id":34359738368,"level":3,"type":102,"text":"","parent":0}
+{"action":"result","id":34359738368,"type":106,"fields":[101,209715200]}
+{"action":"start","id":34359738369,"level":3,"type":103,"text":"","parent":0}
+{"action":"result","id":34359738369,"type":105,"fields":[0,2,1,0]}
+{"action":"start","id":34359738370,"level":3,"type":101,"text":"","parent":0}
+{"action":"result","id":34359738370,"type":105,"fields":[52428800,209715200,0,0]}
+`
+
+func appendFile(t *testing.T, path, s string) {
+	t.Helper()
+	fh, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fh.WriteString(s)
+	fh.Close()
+}
 
 func TestNixLogProgress(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nix.jsonl")
@@ -155,17 +192,23 @@ func TestNixLogProgress(t *testing.T) {
 	if !ok || f != 1.0/7 || info != "Downloading 1/7 (100/400 MiB)" {
 		t.Fatalf("%v %q %v", f, info, ok)
 	}
-	// The rest of the partial line, a finished transfer, then a build.
-	extra := `ult","id":2,"type":105,"fields":[2,3,1,0]}
-{"action":"stop","id":3}
-{"action":"start","id":4,"level":3,"type":105,"text":"building '/nix/store/0123456789abcdfghijklmnpqrsvwxyz-firefox-1.0.drv'"}
-`
-	fh, _ := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
-	fh.WriteString(extra)
-	fh.Close()
+	appendFile(t, path, nixSample2)
 	f, info, ok = n.Poll()
 	if !ok || f != 2.0/7 || info != "Building firefox-1.0" {
 		t.Fatalf("%v %q %v", f, info, ok)
+	}
+	// The finished 100 MiB of pid 7 do not count for pid 8.
+	appendFile(t, path, nixSample3)
+	f, info, ok = n.Poll()
+	if !ok || f != 0 || info != "Downloading 0/2 (50/200 MiB)" {
+		t.Fatalf("%v %q %v", f, info, ok)
+	}
+	// Replaced by a new run's file, longer than what was read: read from the start.
+	os.Remove(path)
+	os.WriteFile(path, []byte(nixSample+strings.Repeat("padding\n", 200)), 0o644)
+	f, info, ok = n.Poll()
+	if !ok || f != 1.0/7 || info != "Downloading 1/7 (100/400 MiB)" {
+		t.Fatalf("after replacement: %v %q %v", f, info, ok)
 	}
 	// Truncated for a new run: back to indeterminate.
 	os.WriteFile(path, nil, 0o644)

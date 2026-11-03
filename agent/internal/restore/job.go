@@ -51,11 +51,11 @@ func (t *Tracker) Step(p Progress) {
 			return
 		}
 		info := p.Current
-		if p.Detail != "" {
-			info = p.Detail
-		}
 		if p.Total > 0 {
-			info = fmt.Sprintf("%s (%d of %d)", p.Current, min(p.Done+1, p.Total), p.Total)
+			info = fmt.Sprintf("%s (%d of %d)", info, min(p.Done+1, p.Total), p.Total)
+		}
+		if p.Detail != "" {
+			info += ": " + p.Detail
 		}
 		if err := t.view.Update(map[string]any{
 			"title": "Restoring your software after an update", "infoMessage": info, "percent": p.Percent(),
@@ -126,6 +126,9 @@ type DBusViewer struct {
 }
 
 func (d *DBusViewer) Request() (View, error) {
+	if d.conn != nil && !d.conn.Connected() {
+		d.Close() // the bus went away (session restart): dial again
+	}
 	if d.conn == nil {
 		conn, err := dbus.ConnectSessionBus()
 		if err != nil {

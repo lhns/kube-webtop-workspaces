@@ -2,8 +2,9 @@
 # The software restore's progress for the agent (agent/internal/restore): steps are the reinstalled
 # profile entries plus the home-manager switch. Atomic, so the reader never sees a partial file.
 # `total`, `current` and `step` do nothing unless a restore is running, so the setup script can call
-# them on any boot. `nixconfig` prints a NIX_CONFIG that makes nix log its events to a file the agent
-# follows for a real progress bar: NIX_CONFIG=$(webtop-restore-progress nixconfig) nix ... `finish` with a message marks the restore failed.
+# them on any boot. `finish` with a message marks the restore failed. `nixconfig` prints NIX_CONFIG
+# plus, during a restore, the log file whose events the agent turns into a progress bar:
+# NIX_CONFIG=$(webtop-restore-progress nixconfig) nix ...
 f=/run/webtop/restore/progress.json
 log=/run/webtop/restore/nix.jsonl
 cur() { cat "$f" 2>/dev/null || echo '{}'; }
@@ -20,12 +21,6 @@ case $1 in
       | .done = (if $m == "" then .total else .done end)' > "$f.tmp" && commit ;;
   nixconfig)
     printf '%s' "${NIX_CONFIG:-}"
-    # Root and the user both append to it; the file stays writable for whoever comes second.
-    if active; then
-      printf '
-json-log-path = %s
-' "$log"
-      : >> "$log" && chmod 666 "$log" 2>/dev/null || true
-    fi ;;
+    if active; then printf '\njson-log-path = %s\n' "$log"; fi ;;
   *) echo "usage: webtop-restore-progress start TOTAL | total TOTAL | current TEXT | step | finish [MESSAGE] | nixconfig" >&2; exit 2 ;;
 esac

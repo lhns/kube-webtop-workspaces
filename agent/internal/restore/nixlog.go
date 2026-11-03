@@ -35,21 +35,26 @@ type activity struct {
 	order          int
 }
 
+// pid of the process that started an activity: Nix ids are its pid << 32 plus a counter (libutil
+// logging.cc), and the daemon's activities come through with the daemon's pid.
+func pid(id uint64) uint64 { return id >> 32 }
+
 // NixLog follows the events of the Nix processes of a restore and condenses them to one fraction
 // and an info line, the way `nix`' own progress bar does.
 type NixLog struct {
 	Path string
 
+	file     os.FileInfo
 	off      int64
 	partial  []byte
 	acts     map[uint64]*activity
 	seq      int
-	finished map[int]uint64 // bytes of stopped file transfers
+	finished map[uint64]uint64 // bytes of stopped file transfers, per pid while it has activities
 }
 
 // Reset forgets everything read so far.
 func (n *NixLog) Reset() {
-	n.off, n.partial, n.acts, n.finished, n.seq = 0, nil, nil, nil, 0
+	n.file, n.off, n.partial, n.acts, n.finished, n.seq = nil, 0, nil, nil, nil, 0
 }
 
 type nixEvent struct {
@@ -74,9 +79,14 @@ func (n *NixLog) read() {
 		return
 	}
 	defer f.Close()
-	if st, err := f.Stat(); err != nil || st.Size() < n.off {
-		n.Reset() // truncated or replaced: a new run
+	st, err := f.Stat()
+	if err != nil {
+		return
 	}
+	if n.file == nil || !os.SameFile(n.file, st) || st.Size() < n.off {
+		n.Reset() // replaced or truncated: a new run
+	}
+	n.file = st
 	if _, err := f.Seek(n.off, io.SeekStart); err != nil {
 		return
 	}
@@ -88,7 +98,7 @@ func (n *NixLog) read() {
 		if i < 0 {
 			break
 		}
-		n.apply(bytes.TrimPrefix(b[:i], []byte("@nix ")))
+		n.apply(b[:i])
 		b = b[i+1:]
 	}
 	n.partial = append([]byte(nil), b...)
@@ -112,7 +122,7 @@ func (n *NixLog) apply(line []byte) {
 		return
 	}
 	if n.acts == nil {
-		n.acts, n.finished = map[uint64]*activity{}, map[int]uint64{}
+		n.acts, n.finished = map[uint64]*activity{}, map[uint64]uint64{}
 	}
 	switch e.Action {
 	case "start":
@@ -120,9 +130,16 @@ func (n *NixLog) apply(line []byte) {
 		n.acts[e.ID] = &activity{typ: e.Type, text: e.Text, order: n.seq}
 	case "stop":
 		if a := n.acts[e.ID]; a != nil && a.typ == actFileTransfer {
-			n.finished[actFileTransfer] += a.done
+			n.finished[pid(e.ID)] += a.done
 		}
 		delete(n.acts, e.ID)
+		// The expected bytes are per process, so are the finished ones.
+		for id := range n.acts {
+			if pid(id) == pid(e.ID) {
+				return
+			}
+		}
+		delete(n.finished, pid(e.ID))
 	case "result":
 		a := n.acts[e.ID]
 		if a == nil {
@@ -145,10 +162,11 @@ func (n *NixLog) summary() (float64, string, bool) {
 	var done, expected, bytesDone, bytesExpected uint64
 	var building *activity
 	for _, a := range n.acts {
+		// The worker's realise activity carries the expected download size, not actCopyPaths.
+		bytesExpected += a.setExpected[actFileTransfer]
 		switch a.typ {
 		case actCopyPaths, actBuilds:
 			done, expected = done+a.done, expected+a.expected
-			bytesExpected += a.setExpected[actFileTransfer]
 		case actFileTransfer:
 			bytesDone += a.done
 		case actBuild:
@@ -160,7 +178,9 @@ func (n *NixLog) summary() (float64, string, bool) {
 	if expected == 0 {
 		return 0, "", false
 	}
-	bytesDone += n.finished[actFileTransfer]
+	for _, b := range n.finished {
+		bytesDone += b
+	}
 	frac := min(float64(done)/float64(expected), 1)
 	switch {
 	case building != nil:
