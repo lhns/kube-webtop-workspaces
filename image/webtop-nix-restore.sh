@@ -100,6 +100,41 @@ for r in "${todo[@]}"; do
   [ "$ok" = 1 ] || failed+=("$r")
 done
 
+# A root whose closure is split across old overlays (an interrupted partial invalidation followed by
+# a reset): copied path by path, references first, each from a pairing of an old upper that has its
+# files with an old DB that has its row, newest first. Only roots whose every missing path has such
+# a pairing are tried; nix copy re-hashes, so a wrong pairing fails instead of registering bad bytes.
+if [ "${#failed[@]}" -gt 0 ] && [ "${#olds[@]}" -gt 1 ]; then
+  still=()
+  for r in "${failed[@]}"; do
+    missing=()
+    while read -r p; do
+      nix path-info "$p" >/dev/null 2>&1 || missing+=("$p")
+    done < <(nix-store --store "$(src "${from[$r]}")" -qR "$r")
+    ok=1
+    for p in "${missing[@]}"; do
+      c=0
+      for f in "${olds[@]}"; do if [ -e "$f/upper/${p#/nix/store/}" ]; then c=1; fi; done
+      [ "$c" = 1 ] || { ok=0; break; }
+    done
+    if [ "$ok" = 1 ]; then
+      for p in "${missing[@]}"; do
+        got=0
+        for f in "${olds[@]}"; do
+          [ -e "$f/upper/${p#/nix/store/}" ] || continue
+          for d in "${olds[@]}"; do
+            nix path-info --store "$(src "$d")" "$p" >/dev/null 2>&1 || continue
+            if nix copy --from "local?real=$f/upper&state=$d/var" --no-check-sigs "$p"; then got=1; break 2; fi
+          done
+        done
+        [ "$got" = 1 ] || { ok=0; break; }
+      done
+    fi
+    [ "$ok" = 1 ] || still+=("$r")
+  done
+  failed=("${still[@]}")
+fi
+
 if [ "${#failed[@]}" -gt 0 ]; then
   log "not restored: ${failed[*]}"
   exit 1

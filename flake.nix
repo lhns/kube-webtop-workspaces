@@ -53,13 +53,19 @@
         (pkgs.lib.remove c.services.webtop.user (pkgs.lib.unique
           (pkgs.lib.mapAttrsToList (_: u: u.name) c.users.users ++ pkgs.lib.mapAttrsToList (_: g: g.name) c.users.groups))));
 
-      # The shebang is a static busybox: it runs before /nix/store is overlaid.
+      # The shebangs are a static busybox: they run before /nix/store is overlaid. nix-store runs from
+      # the image's store, which is what /nix/store is until then.
       webtopInit = pkgs.runCommand "webtop-init" { } ''
         mkdir -p $out
         substitute ${./image/webtop-init} $out/webtop-init \
           --subst-var-by busybox ${pkgs.pkgsStatic.busybox} \
           --subst-var-by reservedNames ${reservedNames}
-        chmod +x $out/webtop-init
+        substitute ${./image/webtop-nix-lower} $out/webtop-nix-lower \
+          --subst-var-by busybox ${pkgs.pkgsStatic.busybox}
+        substitute ${./image/webtop-nix-partial} $out/webtop-nix-partial \
+          --subst-var-by busybox ${pkgs.pkgsStatic.busybox} \
+          --subst-var-by nixStore ${nixos.config.nix.package}/bin/nix-store
+        chmod +x $out/webtop-init $out/webtop-nix-lower $out/webtop-nix-partial
       '';
 
       rootfs = pkgs.runCommand "rootfs" { } ''
@@ -70,12 +76,13 @@
         ln -s ${pkgs.pkgsStatic.busybox}/bin/sh $out/bin/sh
       '';
 
-      # Identifies the image's store (the overlay's lower). webtop-init compares it with the stamp on
-      # the volume; it lives outside /nix so busybox can read it before the overlay is mounted.
+      # Identifies the image's store (the overlay's lower). webtop-nix-lower compares it with the stamp
+      # on the volume; it lives outside /nix so busybox can read it before the overlay is mounted.
+      # Over paths and NAR hashes: a path rebuilt with other bytes is a change too.
       lowerClosure = pkgs.closureInfo { rootPaths = [ toplevel webtopInit rootfs ]; };
       stamp = pkgs.runCommand "webtop-image-stamp" { } ''
         mkdir -p $out
-        sha256sum ${lowerClosure}/store-paths | cut -d' ' -f1 > $out/webtop-image-stamp
+        sha256sum ${lowerClosure}/registration | cut -d' ' -f1 > $out/webtop-image-stamp
       '';
     in
     {

@@ -5,16 +5,17 @@
 #   nix/var               /nix/var/nix of the overlay store (its DB holds the upper paths and the
 #                         lower paths they reference)
 #   nix/lower-stamp       stamp of the lower store the upper was built against
+#   nix/lower-paths       that store's path list (webtop-nix-lower, webtop-nix-partial)
 #   nix/reinstall/        after an image update: manifests, and the `pending` / `restore` markers
-#   nix/trash-*/          the previous overlay, kept until webtop-nix-restore.service has copied the
-#                         users' paths out of it (webtop-nix-trash.service deletes it)
+#   nix/trash-*/          what an image update moved out of the overlay, kept until
+#                         webtop-nix-restore.service has copied the users' paths out of it
+#                         (webtop-nix-trash.service deletes it)
 #   home/user             the user's home, bind-mounted at each path in its .config/webtop/home-paths
 #                         (ADR 0011); /home is a tmpfs holding only those
 # WEBTOP_INIT_DEBUG=1       a failing step parks the container (shell / sleep) instead of exiting.
 # WEBTOP_INIT_SKIP_OVERLAY=1 skips the store overlay (boots on the image's store alone).
 export PATH=@busybox@/bin
 
-STAMP_FILE=/webtop-image-stamp
 # Account and group names of the image except the desktop user's, from its NixOS config.
 RESERVED=@reservedNames@
 P=/persist
@@ -66,65 +67,6 @@ bind_lower() {
   mount -o remount,bind,ro /nix /.lower/nix
 }
 
-# Store path name a profile symlink chain ends in. Resolved by hand: the target is usually an
-# upper-only path, which does not exist before the overlay is mounted.
-profile_target() {
-  l=$1
-  for _ in 1 2 3 4; do
-    [ -L "$l" ] || break
-    t=$(readlink "$l")
-    case "$t" in
-      /nix/store/*) echo "${t#/nix/store/}" | cut -d/ -f1; return 0 ;;
-      /*) l=$t ;;
-      *) l=$(dirname "$l")/$t ;;
-    esac
-  done
-  return 1
-}
-
-# The overlay store forbids a changed lower store. When the image's store differs from the one the
-# upper was built on: record each user's Nix profile manifest (fallback), move upper/work/var to
-# trash-<epoch> and start on a fresh upper. webtop-nix-restore.service copies the users' paths back
-# from the trash; webtop-nix-reinstall.service reinstalls what did not come back.
-check_stamp() {
-  new=$(cat "$STAMP_FILE") || return 1
-  old=$(cat "$N/lower-stamp" 2>/dev/null)
-  [ "$old" = "$new" ] && return 0
-  if [ -z "$old" ] && [ ! -d "$N/upper" ]; then
-    log "first boot on this volume"
-    mkdir -p "$N" && echo "$new" > "$N/lower-stamp"
-    return
-  fi
-  log "image store changed (${old:-no stamp} -> $new): starting a fresh store overlay"
-  ts=$(date +%s)
-  r=$N/reinstall
-  mkdir -p "$r" || return 1
-  for home in "$P"/home/*; do
-    [ -d "$home/.local/state/nix/profiles" ] || continue
-    u=$(basename "$home")
-    if sp=$(profile_target "$home/.local/state/nix/profiles/profile"); then
-      for d in "$N/upper" /.lower/nix/store; do
-        if [ -f "$d/$sp/manifest.json" ]; then
-          cp "$d/$sp/manifest.json" "$r/$u.manifest.json" && log "recorded the nix profile of $u ($sp)"
-          break
-        fi
-      done
-    fi
-  done
-  mkdir -p "$N/trash-$ts" || return 1
-  for d in upper work var; do
-    if [ -e "$N/$d" ]; then mv "$N/$d" "$N/trash-$ts/$d" || return 1; fi
-  done
-  # The users' profile links dangle until the restore; their GC roots come back at once so the
-  # restored paths are never collectable.
-  mkdir -p "$N/var" || return 1
-  for d in gcroots profiles; do
-    if [ -d "$N/trash-$ts/var/$d" ]; then cp -a "$N/trash-$ts/var/$d" "$N/var/$d" || return 1; fi
-  done
-  touch "$r/pending" "$r/restore"
-  echo "$new" > "$N/lower-stamp"
-}
-
 prepare_persist() {
   # The upper DB is NOT seeded from the image: the overlay store reads lower paths from the lower
   # store's own DB (/.lower/nix/var/nix/db). This one holds the upper paths and the lower paths
@@ -132,9 +74,11 @@ prepare_persist() {
   mkdir -p "$N/upper" "$N/work" "$N/var" "$P/home"
 }
 
+# index=off: with index on, a kept upper whose root records the old lower's origin fails to mount
+# after an image update. xino=off: offline lower changes are allowed only without index and xino.
 mount_overlay() {
   mount -t overlay overlay \
-    -o "lowerdir=/.lower/nix/store,upperdir=$N/upper,workdir=$N/work,userxattr" \
+    -o "lowerdir=/.lower/nix/store,upperdir=$N/upper,workdir=$N/work,userxattr,index=off,xino=off" \
     /nix/store
 }
 
@@ -302,7 +246,7 @@ if [ "$WEBTOP_INIT_SKIP_OVERLAY" = 1 ]; then
   step "prepare /persist" mkdir -p "$P/home"
 else
   step "bind image /nix read-only at /.lower/nix" bind_lower
-  step "lower store stamp" check_stamp
+  step "store overlay after image updates" /webtop-nix-lower
   step "prepare /persist" prepare_persist
   step "overlay on /nix/store" mount_overlay
   step "bind $N/var on /nix/var/nix" bind_var

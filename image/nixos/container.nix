@@ -40,6 +40,9 @@ in
     sandbox = false;
     # By group: the desktop user's name is chosen at runtime (identity.nix).
     trusted-users = [ "root" "@wheel" ];
+    # A registered path's bytes are on disk before its row: the image-update invalidation
+    # (webtop-nix-partial) keeps upper paths by their rows. Costs an fsync per installed path.
+    fsync-store-paths = true;
   };
   # %% : systemd would read the URL's %-escapes as unit specifiers.
   systemd.services.nix-daemon.environment.NIX_CONFIG =
