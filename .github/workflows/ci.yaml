@@ -353,12 +353,12 @@ jobs:
         run: nix build .#checks.${{ matrix.system }}.agent .#checks.${{ matrix.system }}.toplevel-eval -L
       # -L prints the layer split table (webtop-nix image/split-layers.py) as well.
       - name: build image
-        run: nix build .#image .#image.layerSplit -L -o image
+        run: nix build .#image .#image.layerSplit -L -o img
       - name: layer table
         run: |
           {
             echo "### desktop image (${{ matrix.arch }})"
-            nix run .#layer-report -- image image-1/groups.json --previous "$DESKTOP_IMAGE:main"
+            nix run .#layer-report -- img img-1/groups.json --previous "$DESKTOP_IMAGE:main"
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
       # Boots the image under docker and waits for the agent's Ready, which needs KWin compositing.
@@ -408,7 +408,7 @@ jobs:
             --dest-creds "${{ github.actor }}:${GHCR_TOKEN}" "docker://${DESKTOP_IMAGE}@@unknown-digest@@"
           mkdir -p out && cp digest "out/${{ matrix.arch }}"
           echo "desktop image (${{ matrix.arch }}): \`${DESKTOP_IMAGE}@$(cat digest)\`" >> "$GITHUB_STEP_SUMMARY"
-          REGISTRY_AUTH="${{ github.actor }}:${GHCR_TOKEN}" nix run .#layer-report -- image image-1/groups.json \
+          REGISTRY_AUTH="${{ github.actor }}:${GHCR_TOKEN}" nix run .#layer-report -- img img-1/groups.json \
             --previous "$DESKTOP_IMAGE:main" --pushed "$DESKTOP_IMAGE@$(cat digest)" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: log in to ghcr
         if: needs.meta.outputs.publish == 'true'
