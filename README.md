@@ -176,7 +176,7 @@ of a command fails, all of it is reverted. `--profile-backend profile` or `--pro
 stock behaviour for one call. Entries are locked: a package from a local `path:` flake picks up edits only with
 `nix profile upgrade`, and such a flake needs its `flake.lock` before the first `add` (`nix flake
 lock`), since writing it changes the directory's hash. Packages in `home.nix` work as before. KDE add-ons from Plasma's "Get New…" dialogs live in
-`~/.local/share`, outside the declaration; there is no Discover.
+`~/.local/share`, outside the declaration. The GUI for installing is the Nix Software Center (it runs `nix profile`); there is no Discover.
 
 `webtop-home-manager-template.service` keeps the starter files current with `webtop-template`: an
 unmodified `flake.nix`/`home.nix` (also one of the earlier templates without `packages.nix`, for any of

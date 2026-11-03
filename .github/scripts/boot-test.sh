@@ -303,6 +303,13 @@ grep -q 'git ignores' <<<"$out" || fail "a git-ignored packages.json was not ref
 [ "$(as_user sha256sum "$decl")" = "$sum" ] || fail "a refused change was not reverted"
 as_user rm -rf "$hmdir/.git" "$hmdir/.gitignore"
 as_user nix profile remove tree >/dev/null || fail "removing tree failed"
+# The software center's backend against the patched Nix, next to a declared element it must leave alone.
+as_user nix profile add nixpkgs#tree || fail "adding tree failed"
+nsc=$(as_user sh -c 'readlink -f "$(command -v nix-software-center)"')
+smoke=$(dirname "$(dirname "$nsc")")/libexec/nix-software-center/nsc-backend-smoke
+as_user "$smoke" nixpkgs#cowsay --require-progress || fail "software center backend smoke failed"
+as_user nix profile list --json | jq -e '.elements.tree.backend == "declaration" and (.elements.cowsay == null)' >/dev/null || fail "the smoke disturbed the declaration: $(as_user nix profile list --json)"
+as_user nix profile remove tree >/dev/null || fail "removing tree after the smoke failed"
 # An earlier starter flake (before packages.nix, for the old name `user`): the template unit rewrites it
 # for ci with packages.nix, and the setup unit moves the `nix profile` flake packages into packages.json.
 as_user nix profile remove hello >/dev/null || fail "nix profile remove hello failed"
