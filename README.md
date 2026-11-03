@@ -39,8 +39,13 @@ pod environment, gateway behaviour, configuration, RBAC and metrics.
 
 ## Desktop image
 
-Built from `flake.nix` with nix2container: `nix build .#image`, then
-`nix run .#image.copyTo -- docker://<ref>`. Published for amd64 and arm64 as one multi-arch index
+Built from `flake.nix` with webtop-nix's image builder (nix2container, its ADR 0005;
+[ADR 0015](docs/adr/0015-desktop-image-layered-by-webtop-nix-builder.md)): `nix build .#image`, then
+`nix run .#image.copyTo -- --dest-compress-format zstd --dest-compress-level 6 docker://<ref>`. The layers are a split of
+the system's closure, stable to volatile (base, toolkits, data, KDE, Firefox, webtop-nix packages, the KWin
+graft, the baked flake sources, kww's own packages, config) with the Nix DB and root files on top, so an
+update that leaves nixpkgs alone pulls only the layers it changed. The build prints the table
+(`nix build .#image.layerSplit`); CI adds the layers new against `main` to the run summary. Published for amd64 and arm64 as one multi-arch index
 ([ADR 0014](docs/adr/0014-multi-arch-images-built-natively-published-as-one-index.md)); `packages.<system>`
 for `x86_64-linux` and `aarch64-linux`, each built on its own architecture.
 
@@ -245,7 +250,7 @@ title applies on the desktop's next start (ADR 0006).
 **KWin patch.** KWin 6.8 dropped QPainter compositing, so without a GPU it needs a patch to render
 nested under Selkies: [webtop-nix](https://github.com/lhns/webtop-nix) grafts a patched KWin (LinuxServer's
 software-presentation patch) over the stock one (`services.webtop.kwinSoftwarePresentation`, its ADR 0004).
-Plasma is otherwise plain nixpkgs, so `nix flake update` moves it; the patch only applies to KWin 6.8.x,
+Plasma is otherwise plain nixpkgs, which this flake follows from webtop-nix: bumping the webtop-nix pin moves it; the patch only applies to KWin 6.8.x,
 and the evaluation fails on another minor version. Building that KWin takes 25–45 minutes on a GitHub runner, so
 the `desktop-image` job caches it (`packages.<system>.kwin`, keyed by its store path, so per architecture).
 
@@ -284,8 +289,7 @@ green. `main` publishes `0.0.0-dev.<sha7>`; a tag publishes images `vX.Y.Z` (and
 `X.Y.Z`. Both images are amd64+arm64 indexes and a tag's digest is the index's. The `desktop-image` job
 builds the image on PRs too, on an x86 and an arm runner, and boots each under docker
 (`.github/scripts/boot-test.sh`): it passes only when the agent reports Ready, which needs KWin
-compositing. `nixpkgs-sync` requires the nixpkgs in `flake.lock` to equal the one webtop-nix locks at
-the pinned commit. `prune.yaml` lists old dev versions weekly and deletes them only with the repo
+compositing. `nixpkgs-sync` requires `inputs.nixpkgs` to follow webtop-nix's. `prune.yaml` lists old dev versions weekly and deletes them only with the repo
 variable `PRUNE_ENABLED=true`.
 
 ## License

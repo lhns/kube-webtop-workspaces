@@ -134,26 +134,16 @@ jobs:
         run: go mod tidy && git diff --exit-code go.mod go.sum
 
   # The desktop image's NixOS system and webtop-nix must share one nixpkgs (one Qt tree, one store
-  # closure): kww's locked nixpkgs has to be the one webtop-nix locks at the commit kww pins.
+  # closure, the image builder's skopeo): kww's nixpkgs must follow webtop-nix's, not be its own input.
   nixpkgs-sync:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
-      - name: compare locked nixpkgs revisions
+      - name: nixpkgs follows webtop-nix
         run: |
-          set -euo pipefail
-          # The node a flake's root input "nixpkgs" points to is not necessarily called "nixpkgs".
-          rev() { jq -r '.nodes[.nodes.root.inputs.nixpkgs].locked.rev'; }
-          ours=$(rev < flake.lock)
-          pin=$(jq -r '.nodes["webtop-nix"].locked | "\(.owner)/\(.repo) \(.rev)"' flake.lock)
-          theirs=$(curl -sSfL --retry 3 "https://raw.githubusercontent.com/${pin% *}/${pin#* }/flake.lock" | rev)
-          echo "kww:        $ours"
-          echo "webtop-nix: $theirs (${pin})"
-          if [ "$ours" != "$theirs" ]; then
-            echo "::error::nixpkgs differs from webtop-nix. Update both to the same rev (nix flake update nixpkgs, then re-pin webtop-nix)."
-            exit 1
-          fi
+          jq -e '.nodes.root.inputs.nixpkgs == ["webtop-nix", "nixpkgs"]' flake.lock \
+            || { echo "::error::inputs.nixpkgs must be follows = \"webtop-nix/nixpkgs\""; exit 1; }
 
   # The store overlay across image updates (webtop-nix-lower, webtop-nix-partial,
   # webtop-nix-restore.sh) against real local-overlay stores in privileged nixos/nix containers.
@@ -361,8 +351,15 @@ jobs:
       # derivation) makes evaluating the other system's toplevel a build of it.
       - name: checks
         run: nix build .#checks.${{ matrix.system }}.agent .#checks.${{ matrix.system }}.toplevel-eval -L
+      # -L prints the layer split table (webtop-nix image/split-layers.py) as well.
       - name: build image
-        run: nix build .#image -L
+        run: nix build .#image .#image.layerSplit -L -o image
+      - name: layer table
+        run: |
+          {
+            echo "### desktop image (${{ matrix.arch }})"
+            nix run .#layer-report -- image image-1/groups.json --previous "$DESKTOP_IMAGE:main"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
 
       # Boots the image under docker and waits for the agent's Ready, which needs KWin compositing.
       # The architecture check guards the index, whose platform entries come from each image's config.
@@ -399,17 +396,20 @@ jobs:
 
       # ------ publish (main, tags) ------
       # By digest only: desktop-index puts the tags on the index. copyTo is skopeo copy from the Nix
-      # store; layers already pushed are skipped.
+      # store; layers already pushed are skipped. zstd at webtop-nix's level with its pinned skopeo:
+      # an unchanged layer gives the same blob, so nodes reuse it (webtop-nix ADR 0005).
       - name: push image
         if: needs.meta.outputs.publish == 'true'
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          nix run .#image.copyTo -- --digestfile digest \
+          nix run .#image.copyTo -- --dest-compress-format zstd --dest-compress-level 6 --digestfile digest \
             --dest-creds "${{ github.actor }}:${GHCR_TOKEN}" "docker://${DESKTOP_IMAGE}@@unknown-digest@@"
           mkdir -p out && cp digest "out/${{ matrix.arch }}"
           echo "desktop image (${{ matrix.arch }}): \`${DESKTOP_IMAGE}@$(cat digest)\`" >> "$GITHUB_STEP_SUMMARY"
+          REGISTRY_AUTH="${{ github.actor }}:${GHCR_TOKEN}" nix run .#layer-report -- image image-1/groups.json \
+            --previous "$DESKTOP_IMAGE:main" --pushed "$DESKTOP_IMAGE@$(cat digest)" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: log in to ghcr
         if: needs.meta.outputs.publish == 'true'
         uses: docker/login-action@v4
