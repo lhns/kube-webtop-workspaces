@@ -61,7 +61,6 @@ bb=$(x sh -c 'readlink -f /bin/busybox | cut -d/ -f1-4')
 g=$(x nix-build --no-out-link -E "$(nixexpr ci-gone 'echo g > \$out')")
 ug=$(x nix-build --out-link /nix/var/nix/gcroots/ci-ug -E "$(nixexpr ci-ug "echo \${builtins.storePath \"$g\"} > \$out")")
 us=$(x nix-build --out-link /nix/var/nix/gcroots/ci-us -E "$(nixexpr ci-us "echo \${builtins.storePath \"$bb\"} > \$out")")
-x touch "$bb/ci-delta" # a copy-up leftover inside a lower path
 x nix-store --check-validity "$g" "$ug" "$us"
 x nix-store -q --references "$ug" | grep -qx "$g" || fail "ug does not reference g"
 stop
@@ -69,8 +68,9 @@ stop
 # Offline: g "was in the old image" (its files gone with it), and the image changed.
 u=$dir/persist/nix/upper
 sudo test -e "$u/${g#/nix/store/}" || fail "g is not in the upper"
-sudo test -d "$u/${bb#/nix/store/}" || fail "the copy-up leftover is not in the upper"
 sudo rm -rf "${u:?}/${g#/nix/store/}"
+# What a write into a lower path through the overlay leaves: a plain upper dir with the new file.
+sudo mkdir -p "$u/${bb#/nix/store/}" && sudo touch "$u/${bb#/nix/store/}/ci-delta"
 echo "$g" | sudo tee -a "$dir/persist/nix/lower-paths" >/dev/null
 echo old-image | sudo tee "$dir/persist/nix/lower-stamp" >/dev/null
 
