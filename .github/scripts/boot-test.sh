@@ -389,7 +389,7 @@ as_user grep -qF 'homeConfigurations."ci"' /home/ci/.config/home-manager/flake.n
 # tray job tracker runs.
 docker exec desktop-boot systemctl is-active webtop-restore-job >/dev/null || fail "webtop-restore-job is not running"
 as_user webtop-restore-progress start 2 || fail "webtop-restore-progress start failed"
-as_user webtop-restore-progress current "Reinstalling ci" && as_user webtop-restore-progress done
+as_user webtop-restore-progress current "Reinstalling ci" && as_user webtop-restore-progress step
 for _ in $(seq 1 15); do
   grep -qF '"softwareRestore":{"active":true,"done":1,"total":2,"failed":false}' "$reports" && break
   sleep 1

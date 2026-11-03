@@ -78,7 +78,7 @@ let
             echo "reinstalling $ref"
             progress current "Reinstalling $ref"
             nix profile add --profile-backend profile "$ref" || { echo "failed: $ref"; failed=1; }
-            progress done
+            progress step
           done
           jq -r '.elements | to_entries[] | .value | select(.url == null) | .storePaths[]?' "$manifest" \
             | sed 's/^/not reinstallable (no flake reference): /'
@@ -87,7 +87,7 @@ let
 
       # home-manager: relock, switch (and on the first such boot, move to packages.json).
       ${config.systemd.services.webtop-home-manager.serviceConfig.ExecStart} || failed=1
-      progress done
+      progress step
 
       if [ "$failed" = 0 ]; then
         progress finish
