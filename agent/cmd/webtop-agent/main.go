@@ -157,8 +157,14 @@ func suspendPoweroff(cfg config.Config) int {
 func restoreJob(cfg config.Config) {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer stop()
-	t := &restore.Tracker{Viewer: &restore.DBusViewer{Desktop: "org.kde.discover"}}
-	t.Run(ctx, func() restore.Progress { return restore.Read(cfg.StateDir, cfg.RestoreMarker) }, 2*time.Second)
+	// The shell takes name and icon of the entry from this desktop file (image/nixos/hooks.nix).
+	viewer := &restore.DBusViewer{Desktop: "webtop-restore"}
+	defer viewer.Close()
+	t := &restore.Tracker{Viewer: viewer}
+	nixLog := &restore.NixLog{Path: filepath.Join(cfg.StateDir, restore.NixLogFile)}
+	t.Run(ctx, func() restore.Progress {
+		return nixLog.Apply(restore.Read(cfg.StateDir, cfg.RestoreMarker))
+	}, 2*time.Second)
 }
 
 // watchRestore puts the restore progress into the reports, and sends one when it changes.
