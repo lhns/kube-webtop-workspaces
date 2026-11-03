@@ -42,18 +42,18 @@ func TestRead(t *testing.T) {
 type fakeView struct {
 	updates []map[string]any
 	ended   []string
-	fail    bool // Update fails (the shell restarted)
-	closed  bool
+	fail    bool // Update fails (the bus is gone)
+	gone    bool // the shell that owns the entry exited
 }
 
 func (f *fakeView) Update(p map[string]any) error {
 	if f.fail {
-		return errors.New("no such object")
+		return errors.New("connection closed")
 	}
 	f.updates = append(f.updates, p)
 	return nil
 }
-func (f *fakeView) Close() { f.closed = true }
+func (f *fakeView) Gone() bool { return f.gone }
 func (f *fakeView) Terminate(code uint32, msg string) error {
 	f.ended = append(f.ended, string(rune('0'+code))+":"+msg)
 	return nil
@@ -116,11 +116,21 @@ func TestTrackerReopensAfterFailedUpdate(t *testing.T) {
 	first := fv.view
 	first.fail = true
 	tr.Step(Progress{Active: true, Current: "b"})
-	if !first.closed {
-		t.Fatal("the dead view was not closed")
-	}
 	tr.Step(Progress{Active: true, Current: "b"})
 	if fv.n != 2 || fv.view == first || len(fv.view.updates) != 1 {
 		t.Fatalf("not reopened: requests %d, updates %v", fv.n, fv.view.updates)
+	}
+}
+
+func TestTrackerReopensWhenShellIsGone(t *testing.T) {
+	fv := &fakeViewer{}
+	tr := &Tracker{Viewer: fv}
+	tr.Step(Progress{Active: true, Current: "a"})
+	first := fv.view
+	first.gone = true
+	// Unchanged progress: the owner check alone triggers the new request.
+	tr.Step(Progress{Active: true, Current: "a"})
+	if fv.n != 2 || fv.view == first || len(fv.view.updates) != 1 || len(first.ended) != 0 {
+		t.Fatalf("requests %d, updates %v, old ended %v", fv.n, fv.view.updates, first.ended)
 	}
 }

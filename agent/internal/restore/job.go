@@ -2,6 +2,7 @@ package restore
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -14,8 +15,8 @@ type View interface {
 	Update(props map[string]any) error
 	// Terminate ends the entry and closes the view.
 	Terminate(code uint32, msg string) error
-	// Close drops the view without ending the entry (the shell ends it with the connection).
-	Close()
+	// Gone reports that the shell which owns the entry has exited, so it is lost.
+	Gone() bool
 }
 
 // Viewer opens job entries (org.kde.JobViewServerV2).
@@ -35,6 +36,9 @@ type Tracker struct {
 func (t *Tracker) Step(p Progress) {
 	switch {
 	case p.Active:
+		if t.view != nil && t.view.Gone() {
+			t.view = nil // a new shell shows nothing of the old entry
+		}
 		if t.view == nil {
 			v, err := t.Viewer.Request()
 			if err != nil {
@@ -53,9 +57,8 @@ func (t *Tracker) Step(p Progress) {
 		if err := t.view.Update(map[string]any{
 			"title": "Restoring your software after an update", "infoMessage": info, "percent": p.Percent(),
 		}); err != nil {
-			// The shell restarted (the view is gone) or hangs: open a new view next time.
+			// Only a send error gets here (the bus is gone): open a new view next time.
 			log.Printf("restore job: %v", err)
-			t.view.Close()
 			t.view = nil
 			return
 		}
@@ -78,7 +81,7 @@ func (t *Tracker) Step(p Progress) {
 	}
 }
 
-// Run polls until ctx ends.
+// Run polls until ctx ends. An entry still open then ends with the Viewer's connection.
 func (t *Tracker) Run(ctx context.Context, read func() Progress, every time.Duration) {
 	tick := time.NewTicker(every)
 	defer tick.Stop()
@@ -99,37 +102,76 @@ const (
 	callTimeout = 10 * time.Second
 )
 
-// call invokes method without D-Bus activation: only a running shell shows jobs.
+// call invokes a method with a reply, without D-Bus activation: only a running shell shows jobs.
 func call(obj dbus.BusObject, method string, args ...any) *dbus.Call {
 	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
 	defer cancel()
 	return obj.CallWithContext(ctx, method, dbus.FlagNoAutoStart, args...)
 }
 
-// DBusViewer talks to the shell on the session bus (the caller runs as the desktop user).
+// send is for the NoReply methods of org.kde.JobViewV3: the shell never answers them, so waiting
+// would time out. Only a send error is reported.
+func send(obj dbus.BusObject, method string, args ...any) error {
+	return obj.Call(method, dbus.FlagNoReplyExpected|dbus.FlagNoAutoStart, args...).Err
+}
+
+// DBusViewer talks to the shell on the session bus (the caller runs as the desktop user). It
+// keeps one connection: the shell fails the entries of a requester that disconnects.
 type DBusViewer struct {
-	Desktop string // desktop entry of the "application" that owns the job
+	Desktop string // desktop entry id of the "application" that owns the job
+	conn    *dbus.Conn
 }
 
 func (d *DBusViewer) Request() (View, error) {
-	conn, err := dbus.ConnectSessionBus()
-	if err != nil {
-		return nil, fmt.Errorf("session bus: %w", err)
+	if d.conn == nil {
+		conn, err := dbus.ConnectSessionBus()
+		if err != nil {
+			return nil, fmt.Errorf("session bus: %w", err)
+		}
+		d.conn = conn
 	}
 	var obj dbus.ObjectPath
 	// Capabilities 0: neither suspendable nor killable. "immediate" shows it without the delay.
-	c := call(conn.Object(service, path), "org.kde.JobViewServerV2.requestView",
+	c := call(d.conn.Object(service, path), "org.kde.JobViewServerV2.requestView",
 		d.Desktop, int32(0), map[string]dbus.Variant{"immediate": dbus.MakeVariant(true)})
 	if err := c.Store(&obj); err != nil {
-		conn.Close()
 		return nil, fmt.Errorf("requestView: %w", err)
 	}
-	return &dbusView{conn: conn, obj: conn.Object(service, obj)}, nil
+	owner, err := d.owner()
+	if err != nil {
+		return nil, fmt.Errorf("requestView: %w", err)
+	}
+	return &dbusView{d: d, owner: owner, obj: d.conn.Object(owner, obj)}, nil
+}
+
+// Close ends the connection, and with it any entry still open.
+func (d *DBusViewer) Close() {
+	if d.conn != nil {
+		d.conn.Close()
+		d.conn = nil
+	}
+}
+
+func (d *DBusViewer) owner() (string, error) {
+	var owner string
+	err := call(d.conn.BusObject(), "org.freedesktop.DBus.GetNameOwner", service).Store(&owner)
+	return owner, err
 }
 
 type dbusView struct {
-	conn *dbus.Conn
-	obj  dbus.BusObject
+	d     *DBusViewer
+	owner string // unique name of the shell that made the entry
+	obj   dbus.BusObject
+}
+
+// Gone is true once the name has no owner or a new one; other errors count as alive.
+func (v *dbusView) Gone() bool {
+	owner, err := v.d.owner()
+	var de dbus.Error
+	if errors.As(err, &de) && de.Name == "org.freedesktop.DBus.Error.NameHasNoOwner" {
+		return true
+	}
+	return err == nil && owner != v.owner
 }
 
 func (v *dbusView) Update(props map[string]any) error {
@@ -137,12 +179,18 @@ func (v *dbusView) Update(props map[string]any) error {
 	for k, val := range props {
 		m[k] = dbus.MakeVariant(val)
 	}
-	return call(v.obj, "org.kde.JobViewV3.update", m).Err
+	return v.sent(send(v.obj, "org.kde.JobViewV3.update", m))
 }
 
 func (v *dbusView) Terminate(code uint32, msg string) error {
-	defer v.Close()
-	return call(v.obj, "org.kde.JobViewV3.terminate", code, msg, map[string]dbus.Variant{}).Err
+	return v.sent(send(v.obj, "org.kde.JobViewV3.terminate", code, msg, map[string]dbus.Variant{}))
 }
 
-func (v *dbusView) Close() { v.conn.Close() }
+// sent drops a connection that failed to send, so the next Request dials again; no entry is
+// live on a broken connection.
+func (v *dbusView) sent(err error) error {
+	if err != nil {
+		v.d.Close()
+	}
+	return err
+}
