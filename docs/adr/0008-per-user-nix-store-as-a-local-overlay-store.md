@@ -38,3 +38,10 @@ sandbox is off, because `pivot_root` fails in the user-namespaced pod.
 An image update keeps the old overlay until the users' live paths (GC roots, profiles, home-manager
 generations) are copied into the new store after boot; paths only the old image had are substituted.
 Nothing runs at shutdown; the reinstall remains the fallback.
+
+## Amendment 2026-11-03
+
+An image update keeps the overlay and invalidates only the upper paths whose closure the new image
+breaks (with Nix's own GC, before the overlay is mounted); the whole-overlay reset of 2026-10-30 is
+the fallback, entered from the exact pre-run state. The overlay is mounted with `index=off,xino=off`
+and Nix runs with `fsync-store-paths = true`.

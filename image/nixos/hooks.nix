@@ -63,8 +63,9 @@ let
         done
       }
 
-      # The declaration's versions (ADR 0013) are only a history; dangling ones are moved aside.
-      for l in "$profiles/declaration" "$profiles"/declaration-*-link; do
+      # A generation whose store path did not come back cannot be rolled back to: every dangling
+      # one moves aside (nix profile, home-manager, the declaration's history, ADR 0013).
+      for l in "$profiles"/*-link "$profiles/declaration"; do
         if [ -L "$l" ] && [ ! -e "$l" ]; then aside "$l"; fi
       done
 

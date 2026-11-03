@@ -50,15 +50,17 @@ if [ -e "$import_marker" ] && [ -f "$hm/packages.json" ]; then
 fi
 
 # Root inputs resolved through the image's registry are locked to the old image's store paths;
-# relock those that are gone.
+# relock those that are no longer valid with the locked content (a path that merely exists may not be
+# a valid store path, or hold other bytes).
 if [ -f "$hm/flake.lock" ]; then
   stale=()
-  while IFS=$'\t' read -r name path; do
-    if [ ! -e "$path" ]; then stale+=("$name"); fi
+  while IFS=$'\t' read -r name path hash; do
+    h=$(nix-store -q --hash "$path" 2>/dev/null) && h=$(nix hash convert --hash-algo sha256 --to sri "$h") || h=
+    if [ "$h" != "$hash" ]; then stale+=("$name"); fi
   done < <(jq -r '. as $l | .nodes.root.inputs | to_entries[] | select(.value | type == "string")
                   | .key as $k | $l.nodes[.value]
                   | select(.original.type == "indirect" and .locked.type == "path")
-                  | [$k, .locked.path] | @tsv' "$hm/flake.lock")
+                  | [$k, .locked.path, (.locked.narHash // "")] | @tsv' "$hm/flake.lock")
   if [ "${#stale[@]}" -gt 0 ]; then
     echo "relocking stale inputs: ${stale[*]}"
     nix flake update --flake "$hm" "${stale[@]}"
@@ -66,15 +68,15 @@ if [ -f "$hm/flake.lock" ]; then
   fi
 fi
 
-# A dangling generation link: an image update did not bring the generation back.
-if [ -L "$gen" ] && [ ! -e "$gen" ]; then
-  old="$state/nix/profiles.old-$(date +%s)" # as webtop-nix-reinstall names it
-  mkdir -p "$old"
-  for l in "$gen" "$gen"-*-link; do
-    if [ -L "$l" ] && [ ! -e "$l" ]; then mv "$l" "$old/"; fi
-  done
-  switch=1
-fi
+# Dangling generation links: an image update did not bring those generations back. None can be
+# rolled back to; a dangling current one needs a switch.
+old="$state/nix/profiles.old-$(date +%s)" # as webtop-nix-reinstall names it
+for l in "$gen" "$gen"-*-link; do
+  if [ -L "$l" ] && [ ! -e "$l" ]; then
+    mkdir -p "$old" && mv "$l" "$old/"
+    if [ "$l" = "$gen" ]; then switch=1; fi
+  fi
+done
 
 if [ -z "$switch" ] || [ ! -f "$hm/flake.nix" ]; then exit 0; fi
 rc=0

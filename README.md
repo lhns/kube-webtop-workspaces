@@ -54,12 +54,14 @@ Built from `flake.nix` with nix2container: `nix build .#image`, then
 | `image/webtop-home-manager.sh` | moves `nix profile` packages into packages.json once, relocks after image updates, switches |
 | `image/webtop-profile-hook.sh` | `profile-hook`: applies a changed `packages.json` with `home-manager switch` |
 | `image/nixos/identity.nix` | renames the desktop user (uid 1000) to the login name at activation |
+| `image/webtop-nix-lower` | run by webtop-init: the store overlay after an image update (partial invalidation, else reset) |
+| `image/webtop-nix-partial` | invalidates what a new image store breaks in the overlay, rolls back on failure |
 | `image/webtop-nix-restore.sh` | copies the users' paths from the old store overlay into the new one |
 | `agent/` | in-pod agent (Go, its own module; packaged by `image/agent.nix`) |
 
 **Entrypoint.** `webtop-init` makes `/` rprivate, binds the image's `/nix` read-only at
 `/.lower/nix`, mounts an overlayfs on `/nix/store` (lower: the image's store, upper:
-`/persist/nix/upper`, `userxattr`), binds `/persist/nix/var` on `/nix/var/nix`, mounts the user's home at its paths
+`/persist/nix/upper`, `userxattr,index=off,xino=off`), binds `/persist/nix/var` on `/nix/var/nix`, mounts the user's home at its paths
 (below), writes the `WEBTOP_*` env to `/run/webtop/env` and extra binary caches (`WEBTOP_NIX_*`) to
 `/run/webtop/nix.conf` (systemd does not pass the container env to units) and execs systemd. Stop signal `SIGRTMIN+3`. `WEBTOP_INIT_DEBUG=1` parks the container on a
 failed step instead of exiting; `WEBTOP_INIT_SKIP_OVERLAY=1` boots on the image's store alone.
@@ -69,13 +71,23 @@ the container log (`kubectl logs`).
 **Nix store** (ADR 0008). The daemon opens `/nix/store` as a `local-overlay` store whose lower is
 the image's store (with its own DB) and whose upper and DB are on the volume; clients, root included,
 use the daemon. The user's packages (`nix profile`, home-manager) cost only what they add.
-An image update changes the lower store, which the overlay store forbids: webtop-init compares
-`/webtop-image-stamp` (a hash of the image's store paths) with `/persist/nix/lower-stamp`, and on a
-change records each user's profile manifest, moves the old upper/DB to `/persist/nix/trash-*`, starts
-fresh and keeps the old GC roots. After boot, in the background (no shutdown step),
-`webtop-nix-restore.service` (`image/webtop-nix-restore.sh`) copies the users' live paths (profiles,
-home-manager generations, GC roots) from the kept overlay into the new store; paths only the old image
-had are substituted. It skips when there is no room (free space after the copy must stay above a
+An image update changes the lower store, which the overlay store does not expect:
+`webtop-nix-lower` (run by webtop-init before the overlay is mounted) compares
+`/webtop-image-stamp` (a hash of the image's store paths and their NAR hashes) with
+`/persist/nix/lower-stamp`, and on a change records each user's profile manifest and runs
+`webtop-nix-partial`. That compares the upper DB with the old image's path list
+(`/persist/nix/lower-paths`) and the new image's DB: rows of paths the new image dropped or ships
+with other bytes, rows whose files are not whole in the upper, and everything referring to them are
+invalidated with `nix-store --delete --ignore-liveness` on the upper opened as a plain local store;
+upper entries that would merge with or hide a path of the new image (copy-up leftovers, whiteouts,
+copies of paths the image now ships, unfinished writes) and the invalidated paths move to
+`/persist/nix/trash-*`, with a snapshot of the DB. A post-condition then checks every row again.
+Everything else stays in place. If anything fails (or two attempts were interrupted), the pre-run
+state is put back and the overlay is reset as a whole: the old upper/DB move to the trash, the
+store starts fresh, the old GC roots are kept. The reason is in the container log. After boot, in
+the background (no shutdown step), `webtop-nix-restore.service` (`image/webtop-nix-restore.sh`)
+copies the users' live paths (profiles, home-manager generations, GC roots) that are not in the new
+store from the trash; paths only the old image had are substituted. It skips when there is no room (free space after the copy must stay above a
 reserve). Only then `webtop-nix-trash.service` deletes the old overlay, and
 `webtop-nix-reinstall.service` runs for what did not come back (roots that depend on image-only paths
 such as the patched KWin, or no network): it reinstalls the recorded flake packages of the profile (by
