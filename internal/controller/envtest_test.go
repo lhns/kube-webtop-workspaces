@@ -112,7 +112,7 @@ ldap: {url: "ldap://fake", baseDN: "dc=x", groupDN: "cn=g,dc=x"}
 		panic(err)
 	}
 	dir := &fakeDir{members: map[string]struct{}{}, displayNames: map[string]string{"alice": "Alice, Example"}}
-	for _, u := range []string{"alice", "bob", "carol", "dave", "erin", "frank", "grace", "heidi"} {
+	for _, u := range []string{"alice", "bob", "carol", "dave", "erin", "frank", "grace", "heidi", "gina"} {
 		dir.members[u] = struct{}{}
 	}
 	rec, syncer, err := Setup(mgr, cfg, dir)
