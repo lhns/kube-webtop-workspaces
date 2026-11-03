@@ -373,7 +373,7 @@ jobs:
       # Paths built here (ultimate), minus KWin (own cache), derivations and the flake source. Not the
       # closure: the substituted rest comes from cache.nixos.org again.
       - name: save built paths
-        if: github.ref == 'refs/heads/main' && steps.nixrestore.outputs.cache-hit != 'true'
+        if: (github.ref == 'refs/heads/main' || github.event_name == 'pull_request') && steps.nixrestore.outputs.cache-hit != 'true'
         run: |
           nix path-info --all --json | jq -r 'if type=="object" then to_entries[]|select(.value.ultimate)|.key else .[]|select(.ultimate)|.path end' \n            | grep -vE '\.drv$|-source$' | sort > built
           nix path-info -r .#kwin | sort > kwin
@@ -383,7 +383,7 @@ jobs:
           xargs -a new -r nix copy --no-recursive --to "file://$HOME/nix-built-cache?compression=zstd"
           du -sh ~/nix-built-cache
       - uses: actions/cache/save@v6
-        if: github.ref == 'refs/heads/main' && steps.nixrestore.outputs.cache-hit != 'true'
+        if: (github.ref == 'refs/heads/main' || github.event_name == 'pull_request') && steps.nixrestore.outputs.cache-hit != 'true'
         with:
           path: ~/nix-built-cache
           key: ${{ steps.nixcache.outputs.key }}
