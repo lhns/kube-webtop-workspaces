@@ -14,7 +14,8 @@ let
   render = vars: name: renderFile vars ../home-manager/${name} name;
   # @user@ and @home@ are the login name, known only at runtime (identity.nix).
   runtimeFile = render { inherit system; inherit (config.system) stateVersion; };
-  # Earlier starter files (before packages.nix): unmodified ones are rewritten too.
+  # Earlier starter files (before packages.nix), verbatim as amd64-only images wrote them (x86_64-linux):
+  # unmodified ones are rewritten too.
   legacyFile = name: renderFile { inherit (config.system) stateVersion; } ../home-manager/legacy/${name} "legacy-${name}";
   # The user's home on the volume, whatever paths it is mounted at (webtop-init).
   home = "/persist/home/user";

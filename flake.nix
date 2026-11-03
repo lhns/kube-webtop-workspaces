@@ -19,14 +19,14 @@
       flake = false;
     };
     webtop-nix = {
-      url = "github:lhns/webtop-nix/143dab45e0957fc5e1d43428a81e5f1fbb46d431";
+      url = "github:lhns/webtop-nix/5462476c768b0adbd359eae91cc319f29cc923fc";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
 
   outputs = { self, nixpkgs, nix2container, home-manager, flake-registry, webtop-nix, ... }:
     let
-      # The only place a system is named; CI builds and boot-tests each one natively.
+      # Supported systems (ADR 0014); CI builds and boot-tests each one natively, in a matrix.
       systems = [ "x86_64-linux" "aarch64-linux" ];
       forAllSystems = nixpkgs.lib.genAttrs systems;
 

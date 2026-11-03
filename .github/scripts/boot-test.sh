@@ -301,25 +301,8 @@ as_user nix profile remove tree >/dev/null || fail "removing tree failed"
 # An earlier starter flake (before packages.nix, for the old name `user`): the template unit rewrites it
 # for ci with packages.nix, and the setup unit moves the `nix profile` flake packages into packages.json.
 as_user nix profile remove hello >/dev/null || fail "nix profile remove hello failed"
-cat > "$dir/legacy-flake.nix" <<'FLAKE'
-{
-  inputs = {
-    # nixpkgs and home-manager are the image's (its flake registry): no download; relocked after image updates.
-    nixpkgs.url = "nixpkgs";
-    home-manager = {
-      url = "home-manager";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
-  };
-
-  outputs = { nixpkgs, home-manager, ... }: {
-    homeConfigurations."user" = home-manager.lib.homeManagerConfiguration {
-      pkgs = nixpkgs.legacyPackages.x86_64-linux;
-      modules = [ ./home.nix ];
-    };
-  };
-}
-FLAKE
+# The shipped legacy template, so x86_64-linux on every runner: earlier images were amd64 only.
+sed 's|@user@|user|g' "$(dirname "$0")/../../image/home-manager/legacy/flake-2.nix" > "$dir/legacy-flake.nix"
 # Not docker cp: /home is a bind mount inside the container, which docker cp does not see.
 as_user sh -c "echo $(base64 -w0 "$dir/legacy-flake.nix") | base64 -d > /home/ci/.config/home-manager/flake.nix"
 as_user rm /home/ci/.config/home-manager/packages.nix "$decl"

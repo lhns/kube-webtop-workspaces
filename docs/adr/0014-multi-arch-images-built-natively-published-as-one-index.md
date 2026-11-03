@@ -25,7 +25,8 @@ aarch64 system builds aarch64 derivations. Deployments pin images as `tag@digest
 - Pins stay one line (`tag@<index digest>`); the kubelet picks the node's platform.
 - CI runs the desktop build and boot tests twice; a cold KWin build happens once per architecture.
 - Per-arch manifests are untagged. `prune-ghcr.sh` keeps untagged versions, so those of pruned
-  indexes accumulate until the script learns to follow index references.
+  indexes, and their `sha256-<digest>.sig`/`.att` tags, accumulate until the script learns to follow
+  index references.
 - A desktop's persisted state is per architecture: the user's Nix store overlay holds binaries for
   one, and the starter home-manager flake names its system. In a mixed-arch cluster, pin desktops to
   one architecture (`desktop.nodeSelector` `kubernetes.io/arch`).
