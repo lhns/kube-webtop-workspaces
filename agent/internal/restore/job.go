@@ -51,6 +51,9 @@ func (t *Tracker) Step(p Progress) {
 			return
 		}
 		info := p.Current
+		if p.Detail != "" {
+			info = p.Detail
+		}
 		if p.Total > 0 {
 			info = fmt.Sprintf("%s (%d of %d)", p.Current, min(p.Done+1, p.Total), p.Total)
 		}

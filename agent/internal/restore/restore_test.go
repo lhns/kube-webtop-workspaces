@@ -134,3 +134,64 @@ func TestTrackerReopensWhenShellIsGone(t *testing.T) {
 		t.Fatalf("requests %d, updates %v, old ended %v", fv.n, fv.view.updates, first.ended)
 	}
 }
+
+const nixSample = `{"action":"start","id":1,"level":3,"type":104,"text":""}
+{"action":"result","id":1,"type":105,"fields":[0,4,0,0]}
+{"action":"result","id":1,"type":106,"fields":[101,419430400]}
+{"action":"start","id":2,"level":3,"type":103,"text":""}
+{"action":"result","id":2,"type":105,"fields":[1,3,2,0]}
+{"action":"start","id":3,"level":3,"type":101,"text":"downloading 'https://cache.nixos.org/x.nar.xz'"}
+{"action":"result","id":3,"type":105,"fields":[104857600,209715200,0,0]}
+`
+
+func TestNixLogProgress(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nix.jsonl")
+	n := &NixLog{Path: path}
+	if _, _, ok := n.Poll(); ok {
+		t.Fatal("progress without a log")
+	}
+	os.WriteFile(path, []byte(nixSample+`{"action":"res`), 0o644) // last line still being written
+	f, info, ok := n.Poll()
+	if !ok || f != 1.0/7 || info != "Downloading 1/7 (100/400 MiB)" {
+		t.Fatalf("%v %q %v", f, info, ok)
+	}
+	// The rest of the partial line, a finished transfer, then a build.
+	extra := `ult","id":2,"type":105,"fields":[2,3,1,0]}
+{"action":"stop","id":3}
+{"action":"start","id":4,"level":3,"type":105,"text":"building '/nix/store/0123456789abcdfghijklmnpqrsvwxyz-firefox-1.0.drv'"}
+`
+	fh, _ := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	fh.WriteString(extra)
+	fh.Close()
+	f, info, ok = n.Poll()
+	if !ok || f != 2.0/7 || info != "Building firefox-1.0" {
+		t.Fatalf("%v %q %v", f, info, ok)
+	}
+	// Truncated for a new run: back to indeterminate.
+	os.WriteFile(path, nil, 0o644)
+	if _, _, ok := n.Poll(); ok {
+		t.Fatal("stale progress after truncation")
+	}
+}
+
+func TestNixLogIgnoresGarbage(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nix.jsonl")
+	os.WriteFile(path, []byte("not json\n@nix {\"action\":\"msg\"}\n{\"action\":\"result\",\"id\":9,\"type\":105,\"fields\":[1,2]}\n"), 0o644)
+	if _, _, ok := (&NixLog{Path: path}).Poll(); ok {
+		t.Fatal("progress from garbage")
+	}
+}
+
+func TestPercentWithFraction(t *testing.T) {
+	p := Progress{Active: true, Done: 1, Total: 4, Fraction: 0.5}
+	if p.Percent() != 37 {
+		t.Fatalf("%d", p.Percent())
+	}
+	if (Progress{Done: 4, Total: 4, Fraction: 0.5}).Percent() != 100 {
+		t.Fatal("finished")
+	}
+	n := &NixLog{Path: filepath.Join(t.TempDir(), "none")}
+	if q := n.Apply(Progress{Active: true}); q.Fraction != 0 || q.Detail != "" {
+		t.Fatalf("fallback: %+v", q)
+	}
+}

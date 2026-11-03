@@ -20,6 +20,11 @@ type Progress struct {
 	Current string `json:"current"`
 	Failed  bool   `json:"failed"`
 	Message string `json:"message"`
+
+	// From the Nix log (NixLog), not the file: the position inside the current step, 0 to 1, and
+	// what it is doing. Fraction 0 means unknown.
+	Fraction float64 `json:"-"`
+	Detail   string  `json:"-"`
 }
 
 // Read returns the progress. While no script has written the file yet, a pending reinstall
@@ -46,6 +51,9 @@ func Read(stateDir, marker string) Progress {
 func (p Progress) Percent() uint32 {
 	if p.Total <= 0 {
 		return 0
+	}
+	if p.Fraction > 0 && p.Done < p.Total {
+		return uint32((float64(p.Done) + p.Fraction) * 100 / float64(p.Total))
 	}
 	return uint32(min(p.Done, p.Total) * 100 / p.Total)
 }

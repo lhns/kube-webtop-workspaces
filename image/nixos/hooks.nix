@@ -87,7 +87,7 @@ let
           for ref in $refs; do
             echo "reinstalling $ref"
             progress current "Reinstalling $ref"
-            nix profile add --profile-backend profile "$ref" || { echo "failed: $ref"; failed=1; }
+            NIX_CONFIG=$(progress nixconfig) nix profile add --profile-backend profile "$ref" || { echo "failed: $ref"; failed=1; }
             progress step
           done
           jq -r '.elements | to_entries[] | .value | select(.url == null) | .storePaths[]?' "$manifest" \

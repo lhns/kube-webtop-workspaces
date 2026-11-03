@@ -97,11 +97,11 @@ progress current "home-manager switch (downloading/building)"
 # A flake still written for the account's old name `user` (ADR 0011) is switched as it expects.
 if [ "$(webtop-hm-attr "$hm")" = user ]; then
   echo "no homeConfigurations.\"$USER\" in $hm: switching the one for user (HOME=/home/user)"
-  USER=user HOME=/home/user home-manager switch --flake "$hm#user" || rc=$?
+  NIX_CONFIG=$(progress nixconfig) USER=user HOME=/home/user home-manager switch --flake "$hm#user" || rc=$?
   notify "Update your home-manager flake" "It still names user. See: journalctl -u webtop-home-manager-template" dialog-warning
 else
   echo "home-manager switch --flake $hm"
-  home-manager switch --flake "$hm" || rc=$?
+  NIX_CONFIG=$(progress nixconfig) home-manager switch --flake "$hm" || rc=$?
 fi
 if [ "$rc" = 0 ]; then
   rm -f "$switch_marker" "$import_marker" "$before" "$phase"

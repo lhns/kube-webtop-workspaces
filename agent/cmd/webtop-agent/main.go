@@ -161,7 +161,10 @@ func restoreJob(cfg config.Config) {
 	viewer := &restore.DBusViewer{Desktop: "webtop-restore"}
 	defer viewer.Close()
 	t := &restore.Tracker{Viewer: viewer}
-	t.Run(ctx, func() restore.Progress { return restore.Read(cfg.StateDir, cfg.RestoreMarker) }, 2*time.Second)
+	nixLog := &restore.NixLog{Path: filepath.Join(cfg.StateDir, restore.NixLogFile)}
+	t.Run(ctx, func() restore.Progress {
+		return nixLog.Apply(restore.Read(cfg.StateDir, cfg.RestoreMarker))
+	}, 2*time.Second)
 }
 
 // watchRestore puts the restore progress into the reports, and sends one when it changes.
