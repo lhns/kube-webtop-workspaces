@@ -10,7 +10,7 @@ runs:
     - uses: cachix/install-nix-action@v31
       with:
         extra_nix_config: |
-          extra-substituters = file:///home/runner/kwin-cache
+          extra-substituters = file:///home/runner/kwin-cache file:///home/runner/nix-built-cache
           require-sigs = false
     # The key is the store path, which changes with the patch, nixpkgs and flake.lock.
     - name: patched KWin store path
