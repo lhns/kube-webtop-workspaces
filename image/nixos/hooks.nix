@@ -12,6 +12,15 @@ let
   notify = import ../notify.nix { inherit pkgs; inherit uid; };
   progress = import ../restore-progress.nix { inherit pkgs; };
 
+  # The "application" of the restore's tray entry: the shell reads its name and icon from here.
+  restoreDesktop = pkgs.makeDesktopItem {
+    name = "webtop-restore";
+    desktopName = "Software restore";
+    icon = "system-software-update";
+    exec = "true";
+    noDisplay = true;
+  };
+
   restore = pkgs.writeShellApplication {
     name = "webtop-nix-restore";
     runtimeInputs = with pkgs; [ coreutils findutils gnugrep config.nix.package ];
@@ -78,7 +87,7 @@ let
           for ref in $refs; do
             echo "reinstalling $ref"
             progress current "Reinstalling $ref"
-            nix profile add --profile-backend profile "$ref" || { echo "failed: $ref"; failed=1; }
+            NIX_CONFIG=$(progress nixconfig) nix profile add --profile-backend profile "$ref" || { echo "failed: $ref"; failed=1; }
             progress step
           done
           jq -r '.elements | to_entries[] | .value | select(.url == null) | .storePaths[]?' "$manifest" \
@@ -104,7 +113,7 @@ in
 {
   # kioclient starts the app of /apps/<name> from its desktop file (agent/internal/apps); Plasma
   # already pulls it in, listed so that stays true. webtop-app-screen comes with the webtop module.
-  environment.systemPackages = [ agent pkgs.kdePackages.kde-cli-tools progress notify ];
+  environment.systemPackages = [ agent pkgs.kdePackages.kde-cli-tools progress notify restoreDesktop ];
 
   # The restore scripts run as the user and replace their progress file atomically, so it gets a
   # directory of its own: /run/webtop is root's.
