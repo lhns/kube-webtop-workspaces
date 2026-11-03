@@ -61,7 +61,8 @@
         webtopInit = pkgs.runCommand "webtop-init" { } ''
           mkdir -p $out
           substitute ${./image/webtop-init} $out/webtop-init \
-            --subst-var-by busybox ${pkgs.pkgsStatic.busybox} \n            --subst-var-by reservedNames ${reservedNames}
+            --subst-var-by busybox ${pkgs.pkgsStatic.busybox} 
+            --subst-var-by reservedNames ${reservedNames}
           chmod +x $out/webtop-init
         '';
 
