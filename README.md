@@ -55,13 +55,14 @@ for `x86_64-linux` and `aarch64-linux`, each built on its own architecture.
 | `image/nixos/container.nix` | NixOS as a container, Nix store settings, journal relay |
 | `image/nixos/desktop.nix` | `services.webtop` (webtop-nix) wired to the pod contract |
 | `image/nixos/hooks.nix` | agent units: power hook, session save, suspend, image-update restore and reinstall |
-| `image/nixos/home-manager.nix` | home-manager from the image (registry, CLI), the patched Nix, starter flake unit (`webtop-template`), setup unit, prebuilt generation |
-| `image/home-manager/` | the starter flake: `flake.nix`, `home.nix`, `packages.nix` (reads `packages.json`) |
+| `image/nixos/home-manager.nix` | home-manager from the image (registry, CLI), the patched Nix, starter flake unit (`webtop-template`), `webtop-home-manager-update`, setup unit, prebuilt generation |
+| `image/home-manager/` | the starter flake: `flake.nix`, `home.nix`, `packages.json` |
+| `image/webtop-flake/` | the image's `webtop` flake: `homeModules.packages` (reads `packages.json`) |
 | `image/nix/` | Nix with `nix profile` backends (`profile-backends.patch`, ADR 0013) |
-| `image/webtop-home-manager.sh` | moves `nix profile` packages into packages.json once, relocks after image updates, switches |
+| `image/webtop-home-manager.sh` | relocks after image updates, switches |
+| `image/webtop-home-manager-template.sh`, `image/webtop-home-manager-update.sh` | create and keep the starter flake current; `webtop-home-manager-update` shows and takes a newer template |
 | `image/webtop-notify.sh`, `image/notify.nix` | `webtop-notify`: the one desktop-notification helper (root or the user) |
 | `image/webtop-restore-progress.sh`, `image/restore-progress.nix` | progress of the software restore after an image update, for the tray job and the boot page |
-| `image/webtop-hm-attr.sh` | which `homeConfigurations` to switch (the one for `user` while the flake still names it) |
 | `image/webtop-profile-hook.sh` | `profile-hook`: applies a changed `packages.json` with `home-manager switch` |
 | `image/nixos/identity.nix` | renames the desktop user (uid 1000) to the login name at activation |
 | `image/webtop-nix-lower` | run by webtop-init: the store overlay after an image update (partial invalidation, else reset) |
@@ -128,8 +129,7 @@ last wrote (hashes in `~/.local/state/webtop/templates.sha256`) or byte-identica
 template rendered for a name in `home-paths`. An edited flake is left alone; if it still names
 another user, the journal of that unit and a desktop notification list the lines to change
 (`homeConfigurations."…"`, `home.username`, `home.homeDirectory`). Until then a plain
-`home-manager switch` fails, and the reinstall after an image update switches the old `user` config
-(as `USER=user HOME=/home/user`, through the `/home/user` mount) instead. A failed rename at
+`home-manager switch` fails. A failed rename at
 activation leaves the account `user` with `/home/user` mounted; the reason is reported (condition
 `LoginName`, `RenameFailed`). The unmodified check is the
 `webtop-template write|unmodified` helper, for other units that update files the image put into the
@@ -144,17 +144,19 @@ generated `hm-session-vars.sh`, older generations kept as GC roots (a rollback t
 the current generation refers to the new path.
 
 **home-manager.** On first boot, only if `~/.config/home-manager` is absent (and once), a starter
-flake is created there (`image/home-manager/`) and switched to. Its `nixpkgs` and `home-manager` inputs come from the
+flake is created there (`image/home-manager/`) and switched to. Its `nixpkgs`, `home-manager` and `webtop` inputs come from the
 image (no download): flake inputs resolve indirect refs through the global registry only, so the image
-sets `flake-registry` to the upstream registry with its own `nixpkgs` and `home-manager` pins in front.
+sets `flake-registry` to the upstream registry with its own pins in front (`webtop` is a store path of
+`image/webtop-flake/`).
 The template is written for the login name; its generation is prebuilt for the placeholder `user`, so the
 first switch builds the few derivations that carry the name. Building a changed config may substitute build
 tools from cache.nixos.org. A flake in a git repo ignores untracked files (`git add` them; the profile
-hook does `git add --intent-to-add packages.json`). After an image update the image-registry inputs are
-relocked automatically (`webtop-home-manager`, which the reinstall unit runs).
+hook does `git add --intent-to-add packages.json`), and so is `local.nix`. After an image update the
+image-registry inputs are relocked automatically (`webtop-home-manager`, which the reinstall unit runs);
+`webtop` whenever it is not the image's current copy.
 
 **Software** (ADR 0013). One declaration, `~/.config/home-manager/packages.json`, which the
-starter flake's `packages.nix` installs and points `nix profile` at:
+starter flake's `webtop.homeModules.packages` module installs and points `nix profile` at:
 
 | to | run |
 | --- | --- |
@@ -166,7 +168,7 @@ starter flake's `packages.nix` installs and points `nix profile` at:
 | try without installing | `nix shell nixpkgs#hello` |
 
 Nix is patched (`image/nix/`): with `profile-backend = declaration:<file>` (set in the user's
-`~/.config/nix/nix.conf` by `packages.nix`), `add` builds the installable and records it in the
+`~/.config/nix/nix.conf` by that module), `add` builds the installable and records it in the
 file the way `manifest.json` records an element, then runs `profile-hook`
 (`webtop-profile-hook`: `home-manager switch`); if the hook fails the file is restored. Store
 paths and elements the file does not declare stay in the profile as before (home-manager's own
@@ -178,16 +180,21 @@ stock behaviour for one call. Entries are locked: a package from a local `path:`
 lock`), since writing it changes the directory's hash. Packages in `home.nix` work as before. KDE add-ons from Plasma's "Get New…" dialogs live in
 `~/.local/share`, outside the declaration. The GUI for installing is the Nix Software Center (it runs `nix profile`); there is no Discover.
 
+Your own additions go into `~/.config/home-manager/local.nix`, a module the starter flake imports if it
+exists and the image never writes. In a git repo `git add` it, like `packages.json`: an untracked file
+is invisible to the flake.
+
 `webtop-home-manager-template.service` keeps the starter files current with `webtop-template`: an
-unmodified `flake.nix`/`home.nix` (also one of the earlier templates without `packages.nix`, for any of
-the home's names) is rewritten for the login name, and an unmodified `packages.nix` follows the image.
-When that adds `packages.nix` and `packages.json`, `webtop-home-manager.service` then moves the
-`nix profile` flake packages into `packages.json` once (store-path entries stay in the profile) and
-switches, with a notification; if the switch fails, packages.json and the profile are put back and it
-retries next boot. A stop in between (after the packages left the profile) is resumed: the next run only
-switches. The same flake-attribute choice (`webtop-hm-attr`) serves the profile hook. A setup with a `~/.config/nix/nix.conf` of its own gets the rename only (stock
-`nix profile`); an edited one is left alone, with a notice. To opt in, copy `packages.nix` and
-`packages.json` from `image/home-manager/` and add `./packages.nix` to the modules.
+unmodified `flake.nix`/`home.nix` (what the unit last wrote, or the template rendered for another of the
+home's names) is rewritten for the login name and the current template. An older template that
+imported `packages.nix` is upgraded the same way: `packages.nix` is removed if unmodified, and
+`packages.json` stays. Files you edited are never rewritten, nor is a starter whose `packages.nix` you
+edited or whose `~/.config/nix/nix.conf` is your own (the module writes that file); an edited flake
+that still imports `./packages.nix` keeps working. For these a notification says once per template
+version that a newer one exists. `webtop-home-manager-update` prints the difference to the current
+template and changes nothing; `webtop-home-manager-update --apply` backs up each differing file as
+`<file>.bak-<time>`, installs the template and switches, and restores files and hashes if the switch
+fails. Nothing is merged: move your edits over by hand (into `local.nix`, where they survive).
 
 **Power.** The agent reports stops to the controller before PID 1 exits (contract section 8.2):
 
