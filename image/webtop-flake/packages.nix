@@ -1,5 +1,7 @@
-# Installs what packages.json declares and points `nix profile` at that file, so `nix profile add`,
-# `remove`, `upgrade` and `rollback` edit it and switch. Without this module, `nix profile` is stock.
+# Installs what the given packages.json declares and points `nix profile` at ~/.config/home-manager's
+# copy, so `nix profile add`, `remove`, `upgrade` and `rollback` edit it and switch. Without this
+# module, `nix profile` is stock.
+file:
 { config, lib, pkgs, ... }:
 
 let
@@ -31,13 +33,13 @@ let
     in map (lib.setPrio (e.priority or 5)) selected;
 in
 {
-  home.packages = lib.concatMap package (lib.attrValues (lib.importJSON ./packages.json).elements);
+  home.packages = lib.concatMap package (lib.attrValues (lib.importJSON file).elements);
 
   # Not nix.settings: home-manager validates those with nix.package, which would have to be the
   # image's patched Nix, and its nix.conf would replace this one.
   assertions = [{
     assertion = config.nix.settings == { } && config.nix.extraOptions == "";
-    message = "packages.nix writes ~/.config/nix/nix.conf: put further Nix settings into its text, or drop the module.";
+    message = "the webtop packages module writes ~/.config/nix/nix.conf: put further Nix settings into its text, or drop the module.";
   }];
   xdg.configFile."nix/nix.conf".text = ''
     profile-backend = declaration:${config.xdg.configHome}/home-manager/packages.json
