@@ -55,7 +55,7 @@ docker rm -f desktop-boot >/dev/null 2>&1 || true
 args=(--privileged --cgroupns=private --shm-size=1g --add-host=host.docker.internal:host-gateway -p 8080:8080 -p 8083:8081
   -v "$dir/persist:/persist" -v "$dir/token:/token:ro"
   -e WEBTOP_CONTROLLER_URL=http://host.docker.internal:8081 -e WEBTOP_TOKEN_PATH=/token
-  -e WEBTOP_HTTP_PORT=8080 -e WEBTOP_USER=ci -e WEBTOP_DESKTOP=ci -e WEBTOP_NAMESPACE=ci -e "WEBTOP_DISPLAY_NAME=CI Tester"
+  -e WEBTOP_HTTP_PORT=8080 -e NSC_UNFREE_LISTED_DEFAULT=0 -e WEBTOP_USER=ci -e WEBTOP_DESKTOP=ci -e WEBTOP_NAMESPACE=ci -e "WEBTOP_DISPLAY_NAME=CI Tester"
   -e WEBTOP_NIX_EXTRA_SUBSTITUTERS=http://cache.invalid/ci -e "WEBTOP_NIX_EXTRA_TRUSTED_PUBLIC_KEYS=ci:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
   -e "WEBTOP_SELKIES_UI_TITLE=$title" -e "WEBTOP_SELKIES_CI_PROBE=$probe"
   -e "WEBTOP_SELKIES_CI_TAB=$tab" -e "WEBTOP_SELKIES_CI_NL=$nl")
@@ -142,6 +142,10 @@ if grep -qE 'SELKIES_CI_(TAB|INJECT)' <<<"$sel"; then
   echo "::error::a refused Selkies setting reached the process:"; echo "$sel"; exit 1
 fi
 echo "Selkies environment carries the cluster settings exactly"
+# webtop-init -> /run/webtop/session.env -> the Plasma session (and so the apps it starts).
+spid=$(docker exec desktop-boot systemctl show -P MainPID webtop-session)
+senv=$(docker exec desktop-boot cat "/proc/$spid/environ" | tr '\0' '\n')
+grep -qaFx 'NSC_UNFREE_LISTED_DEFAULT=0' <<<"$senv" || { echo "::error::the session lacks NSC_UNFREE_LISTED_DEFAULT=0"; exit 1; }
 subst=$(docker exec desktop-boot /run/current-system/sw/bin/nix config show substituters || true)
 case $subst in *cache.nixos.org*http://cache.invalid/ci*) echo "substituters: $subst" ;;
   *) echo "::error::WEBTOP_NIX_EXTRA_SUBSTITUTERS not in nix.conf (substituters: $subst)"; exit 1 ;; esac

@@ -286,6 +286,12 @@ before systemd starts; also `SELKIES_PORT=$WEBTOP_HTTP_PORT`, last) and leaves t
   `~/.config/webtop/selkies.env`. The last is a convenience, not a boundary: the user can edit their own
   systemd user units. Restrictions that matter (file transfers off) must not rely on it.
 
+The software center's default (chart: `desktop.softwareCenter.unfreeListedDefault`, default true) is the
+pod env `NSC_UNFREE_LISTED_DEFAULT`, `1` or `0`. `webtop-init` writes it, when it is one of those,
+as `NSC_UNFREE_LISTED_DEFAULT=<v>` to `/run/webtop/session.env`, which the image adds to
+`webtop-session.service` (so it reaches Plasma and the apps it starts). It only sets the default for
+listing unfree packages: the user's choice in `~/.config/nix-software-center/sources.json` wins.
+
 Optional agent overrides, never set by the controller (the defaults are what ships):
 
 | Variable | Default |

@@ -135,6 +135,13 @@
             "extraTrustedPublicKeys": {"type": "array", "items": {"type": "string"}}
           }
         },
+        "softwareCenter": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "unfreeListedDefault": {"type": "boolean"}
+          }
+        },
         "prePull": {
           "type": "object",
           "additionalProperties": false,

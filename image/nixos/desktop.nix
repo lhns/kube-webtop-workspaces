@@ -29,6 +29,9 @@
     overrideStrategy = "asDropin";
     serviceConfig.RuntimeMaxSec = "infinity";
   };
+  # The session (Plasma and its apps) gets webtop-init's session.env, e.g. the software center's default.
+  systemd.services.webtop-session.serviceConfig.EnvironmentFile = [ "-/run/webtop/session.env" ];
+
   # webtop-init writes SELKIES_PORT and the cluster's desktop.selkies / desktop.title here
   # (docs/contract.md, "Selkies settings"); it wins over extraEnvironment above, and the user's
   # allowlisted ~/.config/webtop/selkies.env (services.webtop.userSettings) wins over it.

@@ -238,6 +238,15 @@ write_nix_conf() {
   } > /run/webtop/nix.conf
 }
 
+# The software center's default, for the session (docs/contract.md): only 0 or 1.
+write_session_env() {
+  mkdir -p /run/webtop &&
+  case "$NSC_UNFREE_LISTED_DEFAULT" in
+    0|1) echo "NSC_UNFREE_LISTED_DEFAULT=$NSC_UNFREE_LISTED_DEFAULT" ;;
+  esac > /run/webtop/session.env.tmp &&
+  mv /run/webtop/session.env.tmp /run/webtop/session.env
+}
+
 step "mount /run" mount_run
 step "make / rprivate" make_rprivate
 step "volume at /persist" persist_path
@@ -258,6 +267,7 @@ step "console relay" console_relay
 step "write /run/webtop/env" write_env
 step "write /run/webtop/selkies.env" write_selkies_env
 step "write /run/webtop/nix.conf" write_nix_conf
+step "write /run/webtop/session.env" write_session_env
 log "step: writable /sys/power stand-in"
 fake_sys_power || log "no /sys/power stand-in: the desktop will not offer sleep"
 
