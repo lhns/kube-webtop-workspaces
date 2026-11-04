@@ -23,6 +23,12 @@
 
   services.webtop.softwareCenter.enable = true;
 
+  # With no crashes to hand off this unit only watches the journal, and its 30-minute limit then counts as a
+  # failure: every session goes degraded half an hour after login.
+  systemd.user.services.drkonqi-coredump-pickup = {
+    overrideStrategy = "asDropin";
+    serviceConfig.RuntimeMaxSec = "infinity";
+  };
   # Nix's default search path names a channels directory the image does not have, and warns on every impure
   # evaluation. The registry's nixpkgs also keeps `<nixpkgs>` and `nix-shell -p` working.
   nix.settings.nix-path = "nixpkgs=flake:nixpkgs";
