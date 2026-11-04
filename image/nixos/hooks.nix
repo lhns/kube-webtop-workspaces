@@ -9,7 +9,7 @@ let
   envFile = "-/run/webtop/env";
   userBus = "unix:path=/run/user/${uid}/bus";
 
-  inherit (cfg.nixProfile) notify progress;
+  inherit (cfg.nixProfile) notify progress reinstall;
 
   # The "application" of the restore's tray entry: the shell reads its name and icon from here.
   restoreDesktop = pkgs.makeDesktopItem {
@@ -37,14 +37,6 @@ let
       systemctl start --no-block webtop-nix-trash.service webtop-nix-reinstall.service
       wait
     '';
-  };
-
-  reinstall = pkgs.writeShellApplication {
-    name = "webtop-nix-reinstall";
-    runtimeInputs = with pkgs; [ coreutils gnused jq config.nix.package notify progress ];
-    # Its setup step needs what webtop-home-manager.service has in its environment (the unit below).
-    text = "WEBTOP_SETUP=${config.systemd.services.webtop-home-manager.serviceConfig.ExecStart}\n"
-      + builtins.readFile ../webtop-nix-reinstall.sh;
   };
 in
 {

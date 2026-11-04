@@ -8,6 +8,8 @@
     # The home on the volume, whatever paths it is mounted at (webtop-init). Existing homes'
     # templates.sha256 are keyed by this: changing it makes every unmodified starter flake look edited.
     homeStoragePath = "/persist/home/user";
+    # The home's store survives an image update here: webtop-nix-restore, then the reinstall unit (hooks.nix).
+    fromImageStore = false;
     progress = import ../restore-progress.nix { inherit pkgs; };
   };
 
