@@ -420,16 +420,6 @@ jobs:
       - name: boot test (compositing off must be caught)
         timeout-minutes: 15
         run: .github/scripts/boot-test.sh ${{ env.DESKTOP_IMAGE }}:dev 600 gray
-      - name: TEMP closure compare with main
-        continue-on-error: true
-        run: |
-          base=$(nix eval --raw "github:lhns/kube-webtop-workspaces/c384cded7ad2ebf73d370d2859546550b2b5b7d6#packages.$(uname -m)-linux.toplevel.drvPath" --override-input webtop-nix github:lhns/webtop-nix/99d3621c0067deeabb8af3ee7cae51599326ad7b)
-          new=$(nix eval --raw .#toplevel.drvPath)
-          nix derivation show -r "$base^*" | jq -r 'if has("derivations") then .derivations else . end | keys[]' | sort > /tmp/a
-          nix derivation show -r "$new^*" | jq -r 'if has("derivations") then .derivations else . end | keys[]' | sort > /tmp/b
-          echo "drvs: $(wc -l < /tmp/a) $(wc -l < /tmp/b)"
-          echo "== only in main:"; comm -23 /tmp/a /tmp/b | sed 's|.*/[a-z0-9]\{32\}-||'
-          echo "== only here:"; comm -13 /tmp/a /tmp/b | sed 's|.*/[a-z0-9]\{32\}-||'
       - name: store overlay across an image update
         timeout-minutes: 15
         run: .github/scripts/lower-swap-test.sh ${{ env.DESKTOP_IMAGE }}:dev 300
