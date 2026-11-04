@@ -52,7 +52,7 @@ grep -q 'not reinstallable (no flake reference): /nix/store/bare' "$t/out" || fa
 [ "$(grep -n '^setup$' "$t/calls" | cut -d: -f1)" -gt "$(grep -n 'packages.x.tree' "$t/calls" | head -n1 | cut -d: -f1)" ] || fail "the switch ran before the reinstall"
 grep -qx 'progress total 3' "$t/calls" || fail "the total is not the packages plus the switch"
 [ "$(grep -c '^progress step' "$t/calls")" = 3 ] || fail "not one step per package and the switch"
-[ "$(tail -n 1 "$t/calls")" = 'progress finish ' ] || [ "$(tail -n 1 "$t/calls")" = 'progress finish' ] || fail "no plain finish last: $(tail -n 1 "$t/calls")"
+[ "$(tail -n 1 "$t/calls")" = 'progress finish' ] || fail "no plain finish last: $(tail -n 1 "$t/calls")"
 ! grep -q '^notify' "$t/calls" || fail "a notification without a failure"
 ok "dangling links aside, packages by locked URL, then the switch"
 
