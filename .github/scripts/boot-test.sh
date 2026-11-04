@@ -144,8 +144,8 @@ fi
 echo "Selkies environment carries the cluster settings exactly"
 # webtop-init -> /run/webtop/session.env -> the Plasma session (and so the apps it starts).
 spid=$(docker exec desktop-boot systemctl show -P MainPID webtop-session)
-docker exec desktop-boot cat "/proc/$spid/environ" | tr '\0' '\n' | grep -qaFx 'NSC_UNFREE_LISTED_DEFAULT=0' \
-  || { echo "::error::the session lacks NSC_UNFREE_LISTED_DEFAULT=0"; exit 1; }
+senv=$(docker exec desktop-boot cat "/proc/$spid/environ" | tr '\0' '\n')
+grep -qaFx 'NSC_UNFREE_LISTED_DEFAULT=0' <<<"$senv" || { echo "::error::the session lacks NSC_UNFREE_LISTED_DEFAULT=0"; exit 1; }
 subst=$(docker exec desktop-boot /run/current-system/sw/bin/nix config show substituters || true)
 case $subst in *cache.nixos.org*http://cache.invalid/ci*) echo "substituters: $subst" ;;
   *) echo "::error::WEBTOP_NIX_EXTRA_SUBSTITUTERS not in nix.conf (substituters: $subst)"; exit 1 ;; esac
