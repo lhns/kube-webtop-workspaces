@@ -58,3 +58,7 @@ separately from home-manager, and nothing showed one list of what the user insta
 
 The software center (a fork of nix-software-center) ships in the image as the GUI over `nix profile`: it
 runs the same commands, so it installs into the declaration. Discover stays excluded.
+
+## Amendment 2026-11-04
+
+The `packages.nix` module is the image's `webtop` flake (`homeModules.packages ./packages.json`, a store path in the flake registry), so module changes reach users with the image and the starter flake no longer holds it. The migrations of earlier starter flakes, including the one-time import of `nix profile` packages, are dropped; unmodified starters still follow the template by recorded hash.

@@ -95,7 +95,7 @@ let
         fi
       fi
 
-      # home-manager: relock, switch (and on the first such boot, move to packages.json).
+      # home-manager: relock, switch.
       ${config.systemd.services.webtop-home-manager.serviceConfig.ExecStart} || failed=1
       progress step
 
@@ -245,8 +245,7 @@ in
       Type = "exec"; # see webtop-nix-restore
       User = uid;
       ExecStart = lib.getExe reinstall;
-      # As webtop-home-manager.service: the setup script it runs ignores a stop during the import.
-      # Everything else here ends on SIGTERM.
+      # As webtop-home-manager.service, whose setup script it runs.
       TimeoutStopSec = "5min";
       # "+": as root, the records belong to root. Only after the script ran to the end: a failure or a
       # stop retries next boot (systemd counts a SIGTERM death as success, hence EXIT_CODE).
