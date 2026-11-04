@@ -61,7 +61,6 @@ for `x86_64-linux` and `aarch64-linux`, each built on its own architecture.
 | `image/webtop-nix-lower` | run by webtop-init: the store overlay after an image update (partial invalidation, else reset) |
 | `image/webtop-nix-partial` | invalidates what a new image store breaks in the overlay, rolls back on failure |
 | `image/webtop-nix-restore.sh` | copies the users' paths from the old store overlay into the new one |
-| `image/webtop-nix-reinstall.sh` | after an image update: dangling generations aside, profile packages from the manifest, home-manager switch |
 | `agent/` | in-pod agent (Go, its own module; packaged by `image/agent.nix`) |
 
 **Entrypoint.** `webtop-init` makes `/` rprivate, binds the image's `/nix` read-only at
@@ -274,7 +273,6 @@ make generate   # deepcopy, CRD (config/crd), RBAC (config/rbac)
 make build vet
 make test       # unit + envtest; setup-envtest downloads kube-apiserver/etcd
 test/nix-store/run.sh  # image-update store restore against real overlay stores (privileged docker)
-test/nix-store/reinstall-test.sh  # the reinstall with Nix stubbed (bash, jq)
 ```
 
 envtest has no Windows binaries. On Windows, run the tests in a Linux container:

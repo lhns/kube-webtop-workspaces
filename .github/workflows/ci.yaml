@@ -152,8 +152,6 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
-      - name: reinstall (stubbed Nix)
-        run: test/nix-store/reinstall-test.sh
       - name: store restore test
         run: test/nix-store/run.sh restore-test.sh
       - name: partial invalidation test
