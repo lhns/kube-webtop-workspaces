@@ -24,8 +24,6 @@ spec:
         app.kubernetes.io/component: desktop-prepull
     spec:
       automountServiceAccountToken: false
-      # busybox sleep as PID 1 ignores SIGTERM.
-      terminationGracePeriodSeconds: 1
       {{- with $d.prePull.priorityClassName }}
       priorityClassName: {{ . }}
       {{- end }}
@@ -47,10 +45,11 @@ spec:
       {{- end }}
       containers:
         - name: prepull
-          image: {{ $d.image | quote }}
-          imagePullPolicy: {{ $d.imagePullPolicy }}
-          # The image's entrypoint is /webtop-init; it only needs to stay in use.
-          command: ["/bin/busybox", "sleep", "2147483647"]
+          # Nothing from the desktop image runs; the image volume below keeps it pulled and
+          # counts as in use for kubelet image GC.
+          image: {{ $d.prePull.pauseImage | quote }}
+          volumeMounts:
+            - {name: desktop-image, mountPath: /desktop-image, readOnly: true}
           securityContext:
             runAsNonRoot: true
             runAsUser: 65534
@@ -65,4 +64,9 @@ spec:
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+      volumes:
+        - name: desktop-image
+          image:
+            reference: {{ $d.image | quote }}
+            pullPolicy: {{ $d.imagePullPolicy }}
 {{- end }}

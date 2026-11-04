@@ -153,8 +153,15 @@ for name, args in cases.items():
     else:
         pod = ds[0]["spec"]["template"]["spec"]
         c = pod["containers"][0]
-        if c["image"] != "example.org/desktop:1" or c["command"][:2] != ["/bin/busybox", "sleep"]:
-            fail(f"{name}: pre-pull container must run busybox sleep from the desktop image")
+        vols = {v["name"]: v for v in pod.get("volumes", [])}
+        if any(x["image"] == "example.org/desktop:1" for x in pod["containers"]) or "command" in c or "args" in c:
+            fail(f"{name}: pre-pull pod must not run the desktop image")
+        if not c["image"].startswith("registry.k8s.io/pause:") or "@sha256:" not in c["image"]:
+            fail(f"{name}: pre-pull container must run the pinned pause image: {c['image']}")
+        if vols.get("desktop-image", {}).get("image", {}).get("reference") != "example.org/desktop:1":
+            fail(f"{name}: pre-pull pod must attach the desktop image as an image volume")
+        if c.get("volumeMounts") != [{"name": "desktop-image", "mountPath": "/desktop-image", "readOnly": True}]:
+            fail(f"{name}: pre-pull image volume must be mounted read-only")
         if c["securityContext"] != {"runAsNonRoot": True, "runAsUser": 65534, "runAsGroup": 65534,
                                     "allowPrivilegeEscalation": False, "readOnlyRootFilesystem": True,
                                     "capabilities": {"drop": ["ALL"]}, "seccompProfile": {"type": "RuntimeDefault"}}:
