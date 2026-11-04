@@ -1,0 +1,18 @@
+--- a/path.cc
++++ b/path.cc
+@@ -138,6 +138,15 @@
+         throw Error("cannot fetch input '%s' because it uses a relative path", input.to_string());
+     }
+ 
++    // A locked input is the store object of its NAR hash. Without a fingerprint, every evaluation
++    // of a flake with it dumps the whole tree to the store again (no fetcher cache entry).
++    std::optional<std::string> getFingerprint(Store & store, const Input & input) const override
++    {
++        if (auto narHash = input.getNarHash())
++            return fmt("path:%s", narHash->to_string(HashFormat::SRI, true));
++        return std::nullopt;
++    }
++
+     std::pair<ref<SourceAccessor>, Input>
+     getAccessor(const Settings & settings, Store & store, const Input & _input) const override
+     {

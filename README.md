@@ -58,7 +58,7 @@ for `x86_64-linux` and `aarch64-linux`, each built on its own architecture.
 | `image/nixos/home-manager.nix` | home-manager from the image (registry, CLI), the patched Nix, starter flake unit (`webtop-template`), `webtop-home-manager-update`, setup unit, prebuilt generation |
 | `image/home-manager/` | the starter flake: `flake.nix`, `home.nix`, `packages.json` |
 | `image/webtop-flake/` | the image's `webtop` flake: `homeModules.packages` (reads `packages.json`) |
-| `image/nix/` | Nix with `nix profile` backends (`profile-backends.patch`, ADR 0013) |
+| `image/nix/` | Nix with `nix profile` backends (`profile-backends.patch`, ADR 0013) and cacheable `path:` inputs (`path-input-fingerprint.patch`) |
 | `image/webtop-home-manager.sh` | relocks after image updates, switches |
 | `image/webtop-home-manager-template.sh`, `image/webtop-home-manager-update.sh` | create and keep the starter flake current; `webtop-home-manager-update` shows and takes a newer template |
 | `image/webtop-notify.sh`, `image/notify.nix` | `webtop-notify`: the one desktop-notification helper (root or the user) |
