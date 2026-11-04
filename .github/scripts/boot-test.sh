@@ -314,6 +314,18 @@ smoke=$(dirname "$(dirname "$nsc")")/libexec/nix-software-center/nsc-backend-smo
 as_user "$smoke" nixpkgs#cowsay --require-progress || fail "software center backend smoke failed"
 as_user nix profile list --json | jq -e '.elements.tree.backend == "declaration" and (.elements.cowsay == null)' >/dev/null || fail "the smoke disturbed the declaration: $(as_user nix profile list --json)"
 as_user nix profile remove tree >/dev/null || fail "removing tree after the smoke failed"
+# An unfree app (nixpkgs-unfree) survives a switch although its recorded url no longer exists: the
+# switch rebuilds it from the image's nixpkgs, with no prompt (stdin is closed) and no --impure.
+as_user nix profile add nixpkgs-unfree#hello-unfree || fail "nix profile add nixpkgs-unfree#hello-unfree failed"
+as_user jq -e '.elements["hello-unfree"].originalUrl == "flake:nixpkgs-unfree"' "$decl" >/dev/null   || fail "hello-unfree is not declared as flake:nixpkgs-unfree: $(as_user cat "$decl")"
+as_user hello-unfree >/dev/null || fail "hello-unfree is not on PATH after the add"
+as_user sh -c "jq '.elements[\"hello-unfree\"].url = \"path:/nonexistent/old-unfree-flake\"' $decl > /tmp/ci-decl && cat /tmp/ci-decl > $decl"
+as_user jq -e '.elements["hello-unfree"].url == "path:/nonexistent/old-unfree-flake"' "$decl" >/dev/null || fail "the recorded url was not broken"
+out=$(as_user timeout 900 home-manager switch --flake /home/ci/.config/home-manager 2>&1)   || fail "home-manager switch with a stale unfree url failed: $out"
+grep -qiE 'prompt|allowUnfree|--impure|refusing to evaluate' <<<"$out" && fail "the unfree restore complained: $out"
+as_user hello-unfree >/dev/null || fail "hello-unfree is gone after the switch with a stale url"
+as_user nix profile remove hello-unfree >/dev/null || fail "removing hello-unfree failed"
+! as_user sh -c 'command -v hello-unfree' >/dev/null || fail "hello-unfree is still installed"
 limit=$(in_session systemctl --user show -p RuntimeMaxUSec --value drkonqi-coredump-pickup.service)
 [ "$limit" = infinity ] || fail "drkonqi-coredump-pickup keeps a runtime limit: $limit"
 out=$(as_user nix eval --impure --raw --expr 'toString <nixpkgs>' 2>&1) || fail "<nixpkgs> does not resolve: $out"
