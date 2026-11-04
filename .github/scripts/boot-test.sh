@@ -310,6 +310,10 @@ smoke=$(dirname "$(dirname "$nsc")")/libexec/nix-software-center/nsc-backend-smo
 as_user "$smoke" nixpkgs#cowsay --require-progress || fail "software center backend smoke failed"
 as_user nix profile list --json | jq -e '.elements.tree.backend == "declaration" and (.elements.cowsay == null)' >/dev/null || fail "the smoke disturbed the declaration: $(as_user nix profile list --json)"
 as_user nix profile remove tree >/dev/null || fail "removing tree after the smoke failed"
+limit=$(in_session systemctl --user show -p RuntimeMaxUSec --value drkonqi-coredump-pickup.service)
+[ "$limit" = infinity ] || fail "drkonqi-coredump-pickup keeps a runtime limit: $limit"
+out=$(as_user nix eval --impure --raw --expr 'toString <nixpkgs>' 2>&1) || fail "<nixpkgs> does not resolve: $out"
+grep -q 'search path entry' <<<"$out" && fail "nix warns about the search path: $out"
 # The starter template's lifecycle. Files are written from the host (docker cp does not see /home, a
 # bind mount); the previous template is frozen in previous-template/ (it imported packages.nix).
 pdir=/persist/home/user/.config/home-manager

@@ -5,12 +5,12 @@ description: >
 runs:
   using: composite
   steps:
-    # The cache is a local binary cache of the patched KWin closure; the rest of the build comes from
-    # cache.nixos.org. Signatures are not checked: only this repo's workflows write it.
+    # The cache is a local binary cache of the patched KWin closure; nix-built-cache (ci.yaml) holds the
+    # desktop job's other built paths; the rest comes from cache.nixos.org. Signatures are not checked: only this repo's workflows write it.
     - uses: cachix/install-nix-action@v31
       with:
         extra_nix_config: |
-          extra-substituters = file:///home/runner/kwin-cache
+          extra-substituters = file:///home/runner/kwin-cache file:///home/runner/nix-built-cache
           require-sigs = false
     # The key is the store path, which changes with the patch, nixpkgs and flake.lock.
     - name: patched KWin store path

@@ -347,10 +347,54 @@ jobs:
           df -h /
       - uses: ./.github/actions/kwin-cache
 
+      # Local binary cache of what this job builds (not on cache.nixos.org). Only main saves, so PR runs
+      # restore main's entries and cannot evict them. Unsigned, like kwin-cache: only this repo's
+      # workflows write it, and a PR's entry is scoped to its own merge ref.
+      # The key cannot come from evaluating (the KWin graft's import from derivation builds). The agent's
+      # Go sources are left out on purpose: they rebuild in seconds, the rest in 20 minutes.
+      - name: empty built-paths cache directory
+        run: |
+          sudo rm -rf ~/nix-built-cache
+          mkdir ~/nix-built-cache
+      - name: restore built paths
+        id: nixrestore
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/nix-built-cache
+          key: nix-built-${{ matrix.arch }}-${{ hashFiles('flake.lock', '**/*.nix') }}
+          restore-keys: nix-built-${{ matrix.arch }}-
+
       # Not `nix flake check`: it evaluates every system's checks, and the KWin graft (import from
       # derivation) makes evaluating the other system's toplevel a build of it.
       - name: checks
         run: nix build .#checks.${{ matrix.system }}.agent .#checks.${{ matrix.system }}.toplevel-eval -L
+      # Paths built here (ultimate), minus KWin (own cache). A binary cache refuses a path whose references
+      # it lacks, so they are copied with their closure to a scratch cache and only the built ones kept;
+      # the substituted rest comes from cache.nixos.org again.
+      - name: save built paths
+        if: github.ref == 'refs/heads/main' && steps.nixrestore.outputs.cache-hit != 'true'
+        run: |
+          nix path-info --all --json --json-format 1 | jq -r 'to_entries[]|select(.value.ultimate)|.key' | grep -v '\.drv$' | sort > built
+          nix path-info -r .#kwin | sort > kwin
+          comm -23 built kwin > new
+          wc -l < new
+          sudo chown -R "$USER" ~/nix-built-cache
+          full=$RUNNER_TEMP/full
+          xargs -a new -r nix copy --to "file://$full?compression=zstd"
+          cp "$full/nix-cache-info" ~/nix-built-cache/
+          while read -r p; do
+            h=$(basename "$p" | cut -c1-32)
+            cp "$full/$h.narinfo" ~/nix-built-cache/
+            nar=$(sed -n 's/^URL: //p' "$full/$h.narinfo")
+            mkdir -p ~/nix-built-cache/"$(dirname "$nar")"
+            cp "$full/$nar" ~/nix-built-cache/"$nar"
+          done < new
+          du -sh ~/nix-built-cache
+      - uses: actions/cache/save@v6
+        if: github.ref == 'refs/heads/main' && steps.nixrestore.outputs.cache-hit != 'true'
+        with:
+          path: ~/nix-built-cache
+          key: nix-built-${{ matrix.arch }}-${{ hashFiles('flake.lock', '**/*.nix') }}
       # -L prints the layer split table (webtop-nix image/split-layers.py) as well.
       - name: build image
         run: nix build .#image .#image.layerSplit -L -o img
@@ -410,28 +454,6 @@ jobs:
           echo "desktop image (${{ matrix.arch }}): \`${DESKTOP_IMAGE}@$(cat digest)\`" >> "$GITHUB_STEP_SUMMARY"
           REGISTRY_AUTH="${{ github.actor }}:${GHCR_TOKEN}" nix run .#layer-report -- img img-1/groups.json \
             --previous "$DESKTOP_IMAGE:main" --pushed "$DESKTOP_IMAGE@$(cat digest)" | tee -a "$GITHUB_STEP_SUMMARY" || echo "layer report failed (informational)"
-      - name: log in to ghcr
-        if: needs.meta.outputs.publish == 'true'
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: install syft
-        if: needs.meta.outputs.publish == 'true'
-        uses: anchore/sbom-action/download-syft@v0
-        with:
-          syft-version: v1.14.0
-      - name: generate image SBOM
-        if: needs.meta.outputs.publish == 'true'
-        run: syft "${DESKTOP_IMAGE}@$(cat digest)" -o spdx-json=kube-webtop-workspaces-desktop-${{ matrix.arch }}.sbom.spdx.json
-      # No attestation: Rekor rejects the SBOM of the Nix closure. It is published as a file only.
-      - name: upload SBOM
-        if: needs.meta.outputs.publish == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: desktop-${{ matrix.arch }}-sbom
-          path: kube-webtop-workspaces-desktop-${{ matrix.arch }}.sbom.spdx.json
       # Matrix legs cannot each set a job output, so the digest travels as an artifact.
       - name: upload digest
         if: needs.meta.outputs.publish == 'true'
@@ -439,6 +461,48 @@ jobs:
         with:
           name: desktop-digest-${{ matrix.arch }}
           path: out/${{ matrix.arch }}
+
+  # Off the critical path: only the digest is needed, and a failure here does not stop publishing.
+  desktop-sbom:
+    if: needs.meta.outputs.publish == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    name: desktop-sbom (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    needs: [meta, desktop-image]
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: desktop-digest-${{ matrix.arch }}
+          path: out
+      - name: log in to ghcr
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: install syft
+        uses: anchore/sbom-action/download-syft@v0
+        with:
+          syft-version: v1.14.0
+      - name: generate image SBOM
+        run: syft "${DESKTOP_IMAGE}@$(cat out/${{ matrix.arch }})" -o spdx-json=kube-webtop-workspaces-desktop-${{ matrix.arch }}.sbom.spdx.json
+      # No attestation: Rekor rejects the SBOM of the Nix closure. It is published as a file only.
+      - name: upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.arch }}-sbom
+          path: kube-webtop-workspaces-desktop-${{ matrix.arch }}.sbom.spdx.json
 
   # The multi-arch index over the per-arch images, every tag in one call: one index, one digest.
   desktop-index:
@@ -494,11 +558,12 @@ jobs:
 
   # ------ Helm chart and GitHub Release --------------------------------------
   chart:
-    if: needs.meta.outputs.publish == 'true'
+    if: ${{ !cancelled() && needs.meta.outputs.publish == 'true' && needs.controller-image.result == 'success' && needs.desktop-index.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # After both images, so a published chart never points at a missing one.
-    needs: [meta, controller-image, desktop-index]
+    # desktop-sbom only has to have finished: its SBOMs go to the release if they exist.
+    needs: [meta, controller-image, desktop-index, desktop-sbom]
     permissions:
       contents: write
       packages: write
