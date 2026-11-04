@@ -58,7 +58,7 @@ func (t *Tracker) Step(p Progress) {
 			info += ": " + p.Detail
 		}
 		if err := t.view.Update(map[string]any{
-			"title": "Restoring your software after an update", "infoMessage": info, "percent": p.Percent(),
+			"title": "Software restore", "infoMessage": info, "percent": p.Percent(),
 		}); err != nil {
 			// Only a send error gets here (the bus is gone): open a new view next time.
 			log.Printf("restore job: %v", err)
