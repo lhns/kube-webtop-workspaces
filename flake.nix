@@ -5,20 +5,10 @@
     # webtop-nix's nixpkgs: one Qt tree with its grafted KWin (README, "KWin patch"), and its image
     # builder's skopeo, so a layer compresses to the same blob as in the last build.
     nixpkgs.follows = "webtop-nix/nixpkgs";
-    # The users' home-manager flakes resolve it from the system registry (image/nixos/home-manager.nix).
-    home-manager = {
-      url = "github:nix-community/home-manager";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
-    # Upstream global flake registry, baked in with the image's own pins (image/nixos/home-manager.nix).
-    flake-registry = {
-      url = "github:NixOS/flake-registry";
-      flake = false;
-    };
     webtop-nix.url = "github:lhns/webtop-nix/e46715e063dec2a9a6968b205751ffa3540d3626";
   };
 
-  outputs = { self, nixpkgs, home-manager, flake-registry, webtop-nix, ... }:
+  outputs = { self, nixpkgs, webtop-nix, ... }:
     let
       # Supported systems (ADR 0014); CI builds and boot-tests each one natively, in a matrix.
       systems = [ "x86_64-linux" "aarch64-linux" ];
@@ -31,7 +21,7 @@
 
         nixos = nixpkgs.lib.nixosSystem {
           inherit system;
-          specialArgs = { inherit agent nixpkgs home-manager flake-registry; };
+          specialArgs = { inherit agent; };
           modules = [
             webtop-nix.nixosModules.webtop
             ./image/nixos/container.nix
@@ -98,12 +88,6 @@
           name = "ghcr.io/lhns/kube-webtop-workspaces-desktop";
           tag = "dev";
           inherit nixos;
-          # Change with input bumps only: the sources baked into the registry (home-manager.nix), and
-          # the all-locales glibc the prebuilt home-manager generation references.
-          extraGroups = [
-            { name = "sources"; anchors = [ nixpkgs home-manager ]; }
-            { name = "locales"; anchors = [ pkgs.glibcLocales ]; }
-          ];
           copyToRoot = [ rootfs webtopInit stamp ];
           config = {
             Entrypoint = [ "/webtop-init" ];

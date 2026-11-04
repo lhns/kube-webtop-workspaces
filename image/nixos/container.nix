@@ -34,7 +34,7 @@ in
   # with the overlay URL would need write access, and root's default "auto" store would see only
   # the upper DB.
   nix.settings = {
-    experimental-features = [ "nix-command" "flakes" "local-overlay-store" "read-only-local-store" ];
+    experimental-features = [ "local-overlay-store" "read-only-local-store" ];
     store = "daemon";
     # The build sandbox fails in the pod (pivot_root: EPERM under the user namespace).
     sandbox = false;

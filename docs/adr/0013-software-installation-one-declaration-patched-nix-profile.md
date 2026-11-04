@@ -62,3 +62,7 @@ runs the same commands, so it installs into the declaration. Discover stays excl
 ## Amendment 2026-11-04
 
 The `packages.nix` module is the image's `webtop` flake (`homeModules.packages ./packages.json`, a store path in the flake registry), so module changes reach users with the image and the starter flake no longer holds it. The migrations of earlier starter flakes, including the one-time import of `nix profile` packages, are dropped; unmodified starters still follow the template by recorded hash.
+
+## Amendment 2026-11-04 (moved)
+
+Superseded in location by webtop-nix ADR 0006: the patched Nix, the declaration, the starter flake and its upgrade live there as `services.webtop.nixProfile`. This repo enables the option and adds what an image update needs.
