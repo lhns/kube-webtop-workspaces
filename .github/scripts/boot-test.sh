@@ -312,6 +312,8 @@ as_user nix profile list --json | jq -e '.elements.tree.backend == "declaration"
 as_user nix profile remove tree >/dev/null || fail "removing tree after the smoke failed"
 limit=$(in_session systemctl --user show -p RuntimeMaxUSec --value drkonqi-coredump-pickup.service)
 [ "$limit" = infinity ] || fail "drkonqi-coredump-pickup keeps a runtime limit: $limit"
+out=$(as_user nix eval --impure --raw --expr 'toString <nixpkgs>' 2>&1) || fail "<nixpkgs> does not resolve: $out"
+grep -q 'search path entry' <<<"$out" && fail "nix warns about the search path: $out"
 # An earlier starter flake (before packages.nix, for the old name `user`): the template unit rewrites it
 # for ci with packages.nix, and the setup unit moves the `nix profile` flake packages into packages.json.
 as_user nix profile remove hello >/dev/null || fail "nix profile remove hello failed"
