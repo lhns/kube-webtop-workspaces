@@ -5,7 +5,8 @@
 # depends on looks like it was in the old image's store and is gone from the new one (the second
 # image would otherwise be a second multi-GB build). Also checks the environment the partial
 # invalidation relies on: overlay module parameters, the mount options inside a user namespace, and
-# that every path in the image's DB exists in its store.
+# that every path in the image's DB exists in its store. Then the user's installed software through
+# the restore and the reinstall, which needs network access to substitute.
 #
 # Usage: lower-swap-test.sh <image> <timeout-seconds-per-boot>
 set -euo pipefail
@@ -100,5 +101,75 @@ for _ in $(seq 1 90); do sudo test -e "$dir/persist/nix/reinstall/restore" || br
 x journalctl -u webtop-nix-restore -o cat --no-pager | tail -n 5
 x nix-store --verify --check-contents || fail "the store does not verify"
 stop
-docker rm -f "$c" >/dev/null
 echo "store overlay across an image update: ok"
+
+# ------ Installed software across an image update, on a new volume: a home-manager generation, a
+# declared package and an undeclared profile package, through the restore and through the reinstall.
+as_user() { x runuser -u ci -- env HOME=/home/ci PATH=/home/ci/.nix-profile/bin:/home/ci/.local/state/nix/profiles/profile/bin:/run/current-system/sw/bin "$@"; }
+journal() { x journalctl -u "$1" --no-pager -o cat | tail -n 40; }
+wait_setup() {
+  for _ in $(seq 1 $((timeout / 3))); do
+    [ "$(x systemctl show -P ActiveState webtop-home-manager)" = active ] || [ "$(x systemctl show -P ExecMainExitTimestampMonotonic webtop-home-manager)" = 0 ] || return 0
+    sleep 3
+  done
+  journal webtop-home-manager; fail "the setup unit did not finish"
+}
+# Until the image update's work is done: the markers go only after it succeeded.
+wait_markers() {
+  for _ in $(seq 1 $((timeout / 3))); do
+    sudo test -e "$dir/persist/nix/reinstall/restore" || sudo test -e "$dir/persist/nix/reinstall/pending" || return 0
+    sleep 3
+  done
+  journal webtop-nix-restore; journal webtop-nix-reinstall; fail "the update's markers are still there"
+}
+software_works() { # <what>
+  as_user hello >/dev/null || { journal webtop-nix-reinstall; fail "$1: the declared package does not run"; }
+  as_user cowsay ok >/dev/null || { journal webtop-nix-reinstall; fail "$1: the undeclared profile package does not run"; }
+  as_user nix profile list --json | jq -e '.elements.hello.backend == "declaration" and .elements.cowsay.backend == "profile"' >/dev/null \
+    || fail "$1: nix profile list: $(as_user nix profile list)"
+  as_user test -e /home/ci/.local/state/nix/profiles/home-manager || fail "$1: no home-manager generation"
+  x nix-store --verify --check-contents || fail "$1: the store does not verify"
+}
+
+sudo rm -rf "$dir/persist"
+mkdir "$dir/persist"
+echo "== software: boot 1"
+boot
+wait_setup
+as_user nix profile add nixpkgs#hello || fail "nix profile add failed"
+as_user nix profile add --profile-backend profile nixpkgs#cowsay || fail "nix profile add to the profile failed"
+hello=$(as_user sh -c 'dirname "$(dirname "$(readlink -f "$(command -v hello)")")"')
+cowsay=$(as_user sh -c 'dirname "$(dirname "$(readlink -f "$(command -v cowsay)")")"')
+software_works "before the update"
+stop
+
+# Offline: both "were in the old image", so everything that references them is invalidated; the
+# restore copies those from the trash and substitutes these two.
+for q in "$hello" "$cowsay"; do
+  sudo rm -rf "${u:?}/${q#/nix/store/}"
+  echo "$q" | sudo tee -a "$dir/persist/nix/lower-paths" >/dev/null
+done
+sudo sed -i '1s/.*/stamp old-image/' "$dir/persist/nix/lower-paths"
+echo old-image | sudo tee "$dir/persist/nix/lower-stamp" >/dev/null
+echo "== software: boot 2 (restore)"
+boot
+docker logs "$c" 2>&1 | grep -q 'store overlay kept' || fail "the partial invalidation did not run or fell back"
+wait_markers
+software_works "after the restore"
+manifest=$(as_user cat /home/ci/.local/state/nix/profiles/profile/manifest.json)
+stop
+
+# What a restore that could not copy leaves: no store, the manifest webtop-nix-lower recorded, the marker.
+sudo rm -rf "$dir/persist/nix/upper" "$dir/persist/nix/work" "$dir/persist/nix/var" "$dir/persist/nix/lower-stamp" "$dir/persist/nix/lower-paths"
+sudo mkdir -p "$dir/persist/nix/reinstall"
+sudo tee "$dir/persist/nix/reinstall/user.manifest.json" >/dev/null <<<"$manifest"
+sudo touch "$dir/persist/nix/reinstall/pending"
+echo "== software: boot 3 (reinstall)"
+boot
+wait_markers
+[ "$(x systemctl show -P Result webtop-nix-reinstall)" = success ] || { journal webtop-nix-reinstall; fail "the reinstall failed"; }
+software_works "after the reinstall"
+sudo sh -c "ls -d $dir/persist/home/user/.local/state/nix/profiles.old-*" >/dev/null || fail "the dangling generations were not moved aside"
+stop
+docker rm -f "$c" >/dev/null
+echo "installed software across an image update: ok"
