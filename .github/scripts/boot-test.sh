@@ -310,55 +310,61 @@ smoke=$(dirname "$(dirname "$nsc")")/libexec/nix-software-center/nsc-backend-smo
 as_user "$smoke" nixpkgs#cowsay --require-progress || fail "software center backend smoke failed"
 as_user nix profile list --json | jq -e '.elements.tree.backend == "declaration" and (.elements.cowsay == null)' >/dev/null || fail "the smoke disturbed the declaration: $(as_user nix profile list --json)"
 as_user nix profile remove tree >/dev/null || fail "removing tree after the smoke failed"
-# An earlier starter flake (before packages.nix, for the old name `user`): the template unit rewrites it
-# for ci with packages.nix, and the setup unit moves the `nix profile` flake packages into packages.json.
-as_user nix profile remove hello >/dev/null || fail "nix profile remove hello failed"
-# The shipped legacy template, so x86_64-linux on every runner: earlier images were amd64 only.
-sed 's|@user@|user|g' "$(dirname "$0")/../../image/home-manager/legacy/flake-2.nix" > "$dir/legacy-flake.nix"
-# Not docker cp: /home is a bind mount inside the container, which docker cp does not see.
-as_user sh -c "echo $(base64 -w0 "$dir/legacy-flake.nix") | base64 -d > /home/ci/.config/home-manager/flake.nix"
-as_user rm /home/ci/.config/home-manager/packages.nix "$decl"
-# An earlier starter flake had no nix.conf (any nix.conf makes the setup "customized").
-as_user rm /home/ci/.config/nix/nix.conf
-as_user nix profile add --profile-backend profile nixpkgs#hello || fail "adding hello to the profile failed"
-since=$(docker exec desktop-boot date '+%Y-%m-%d %H:%M:%S')
-docker exec desktop-boot systemctl restart webtop-home-manager-template
-docker exec desktop-boot journalctl -u webtop-home-manager-template --since "$since" -o cat | grep -q 'rewrote the starter flake' \
-  || fail "the template unit did not rewrite the earlier flake"
-docker exec desktop-boot systemctl start webtop-home-manager
-wait_setup
-[ "$(docker exec desktop-boot systemctl show -P Result webtop-home-manager)" = success ] \
-  || { docker exec desktop-boot journalctl -u webtop-home-manager --no-pager | tail -n 50; fail "the migration failed"; }
-as_user jq -e '.elements.hello.originalUrl == "flake:nixpkgs"' "$decl" >/dev/null || fail "the migration did not declare hello"
-as_user grep -q 'packages.nix' /home/ci/.config/home-manager/flake.nix || fail "the migration did not add packages.nix"
-as_user grep -qF 'homeConfigurations."ci"' /home/ci/.config/home-manager/flake.nix || fail "the migration did not rename the flake"
-as_user nix profile list --json | jq -e '.elements.hello.backend == "declaration" and (.elements["hello-1"] == null)' >/dev/null \
-  || fail "hello is not (only) declared after the migration: $(as_user nix profile list --json)"
-as_user hello >/dev/null || fail "hello is not installed after the migration"
-# home-manager's own `nix profile` calls in that switch went through the profile backend quietly
-# (the deprecated `install` alias warning is stock Nix's).
-warns=$(docker exec desktop-boot journalctl -u webtop-home-manager --since "$since" --no-pager | grep 'warning:' \
-  | grep -v "deprecated alias\|cache.invalid" || true)
-[ -z "$warns" ] || fail "nix profile warned during the switch: $warns"
-# A stop between the import's `nix profile remove` and the switch: the next run only switches.
+# The starter template's lifecycle. Files are written from the host (docker cp does not see /home, a
+# bind mount); the previous template is frozen in previous-template/ (it imported packages.nix).
+pdir=/persist/home/user/.config/home-manager
+hmdir=/home/ci/.config/home-manager
 wst=/home/ci/.local/state/webtop
+put() { as_user sh -c "echo $(base64 -w0 <<<"$2") | base64 -d > $1"; }
+prev() { sed -e 's|@user@|ci|g' -e "s|@system@|$nixsys|g" "$(dirname "$0")/previous-template/$1"; }
+# The previous template as the template unit wrote it (hashes recorded).
+write_prev() {
+  put /tmp/prev-flake.nix "$(prev flake.nix)"
+  put /tmp/prev-packages.nix "$(prev packages.nix)"
+  as_user webtop-template write $pdir/flake.nix /tmp/prev-flake.nix
+  as_user webtop-template write $pdir/packages.nix /tmp/prev-packages.nix
+}
+# One run of the template unit: its journal.
+tmpl() {
+  sleep 1 # --since has second resolution
+  local since
+  since=$(docker exec desktop-boot date '+%Y-%m-%d %H:%M:%S')
+  docker exec desktop-boot systemctl restart webtop-home-manager-template
+  docker exec desktop-boot journalctl -u webtop-home-manager-template --since "$since" -o cat
+}
+now() { sleep 1; docker exec desktop-boot date '+%Y-%m-%d %H:%M:%S'; }
+run_setup() {
+  docker exec desktop-boot systemctl start webtop-home-manager
+  wait_setup
+  [ "$(docker exec desktop-boot systemctl show -P Result webtop-home-manager)" = success ] \
+    || { docker exec desktop-boot journalctl -u webtop-home-manager --no-pager | tail -n 50; fail "webtop-home-manager failed"; }
+}
+setup_log() { docker exec desktop-boot journalctl -u webtop-home-manager --since "$1" --no-pager -o cat; }
+as_user test ! -e $pdir/packages.nix || fail "the starter has a packages.nix"
+as_user grep -qF 'flake:webtop' $pdir/flake.nix || fail "the starter does not use the webtop module"
+
+# The previous template, recorded by hash, is upgraded without asking: packages.nix goes, packages.json
+# stays, and the flake is locked for the new input.
+as_user jq -e ".elements.hello" "$decl" >/dev/null || fail "hello is not declared before the upgrade"
+write_prev
+put $hmdir/flake.lock "$(jq 'del(.nodes.root.inputs.webtop) | del(.nodes.webtop)' "$hm/flake.lock")"
 sum=$(as_user sha256sum "$decl")
-as_user sh -c "touch $wst/packages-json-import && printf 'removed\n%s\nhello\n' \"\$(readlink /home/ci/.local/state/nix/profiles/profile)\" > $wst/import-phase"
-since=$(docker exec desktop-boot date '+%Y-%m-%d %H:%M:%S')
-docker exec desktop-boot systemctl start webtop-home-manager
-wait_setup
-[ "$(docker exec desktop-boot systemctl show -P Result webtop-home-manager)" = success ] || fail "the resumed import failed"
-docker exec desktop-boot journalctl -u webtop-home-manager --since "$since" -o cat | grep -q 'resuming the import' \
-  || fail "the unit did not resume the import"
-as_user sh -c "! test -e $wst/import-phase && ! test -e $wst/packages-json-import && ! test -e $wst/home-manager-switch" \
-  || fail "the resumed import left its state behind"
-[ "$(as_user sha256sum "$decl")" = "$sum" ] || fail "the resumed import changed packages.json"
-as_user hello >/dev/null || fail "hello is gone after the resumed import"
+out=$(tmpl)
+grep -q 'rewrote the starter flake' <<<"$out" || fail "the previous template was not upgraded: $out"
+as_user test ! -e $pdir/packages.nix || fail "the upgrade left packages.nix"
+! as_user grep -q 'packages.nix' $wst/templates.sha256 || fail "packages.nix's hash was not forgotten"
+as_user grep -qF 'flake:webtop' $pdir/flake.nix || fail "the upgrade did not write the new flake"
+[ "$(as_user sha256sum "$decl")" = "$sum" ] || fail "the upgrade changed packages.json"
+run_setup
+as_user hello >/dev/null || fail "hello is gone after the upgrade"
+jq -e '.nodes.root.inputs.webtop' "$hm/flake.lock" >/dev/null || fail "the upgrade did not lock webtop"
+
 # A failing switch fails the unit and says so.
 as_user sh -c "cp $decl /tmp/decl.bak && jq '.elements.broken = {originalUrl: \"flake:nixpkgs\", attrPath: \"legacyPackages.$nixsys.noSuchPackageCi\"}' /tmp/decl.bak > $decl"
 gen=/home/ci/.local/state/nix/profiles/home-manager
 link=$(as_user readlink "$gen")
 as_user ln -sfn /nix/store/00000000000000000000000000000000-gone "$gen"
+since=$(now)
 docker exec desktop-boot systemctl start webtop-home-manager
 wait_setup
 [ "$(docker exec desktop-boot systemctl show -P Result webtop-home-manager)" = exit-code ] || fail "a failing switch did not fail the unit"
@@ -366,21 +372,73 @@ docker exec desktop-boot journalctl -u webtop-home-manager --no-pager | grep -q 
   || fail "a failing switch was not reported"
 as_user cp /tmp/decl.bak "$decl"
 as_user ln -sfn "$link" "$gen"
-# A setup with a nix.conf of its own gets the rename only, and only once.
-as_user sh -c "echo $(base64 -w0 "$dir/legacy-flake.nix") | base64 -d > /home/ci/.config/home-manager/flake.nix"
-as_user rm /home/ci/.config/home-manager/packages.nix
-as_user sh -c 'rm -f /home/ci/.config/nix/nix.conf && echo "# own" > /home/ci/.config/nix/nix.conf'
-for run in 1 2; do
-  since=$(docker exec desktop-boot date '+%Y-%m-%d %H:%M:%S')
-  docker exec desktop-boot systemctl restart webtop-home-manager-template
-  out=$(docker exec desktop-boot journalctl -u webtop-home-manager-template --since "$since" -o cat)
-  case $run in
-    1) grep -q 'kept without packages.nix' <<<"$out" || fail "an own nix.conf did not keep the flake without packages.nix: $out" ;;
-    2) ! grep -q 'rewrote' <<<"$out" || fail "the rename-only rewrite repeats: $out" ;;
-  esac
-  sleep 1 # --since has second resolution
-done
-as_user grep -qF 'homeConfigurations."ci"' /home/ci/.config/home-manager/flake.nix || fail "the rename-only rewrite did not rename"
+
+# local.nix is the user's: the flake imports it when present.
+put $hmdir/local.nix '{ home.file.".ci-local-nix".text = "ok"; }'
+as_user home-manager switch --flake $hmdir >/dev/null || fail "a switch with local.nix failed"
+as_user test -e /home/ci/.ci-local-nix || fail "local.nix was not picked up"
+
+# A `webtop` input locked to another store path is relocked, although that path is valid.
+want=$(jq -r '.nodes.webtop.locked.path' "$hm/flake.lock")
+sri=$(as_user nix hash convert --hash-algo sha256 --to sri "$(as_user nix-store -q --hash "$jqpath")")
+put $hmdir/flake.lock "$(jq --arg p "$jqpath" --arg h "$sri" '.nodes.webtop.locked |= (.path = $p | .narHash = $h)' "$hm/flake.lock")"
+since=$(now)
+run_setup
+grep -q 'relocking stale inputs: webtop' <<<"$(setup_log "$since")" || fail "the stale webtop input was not relocked"
+[ "$(jq -r '.nodes.webtop.locked.path' "$hm/flake.lock")" = "$want" ] || fail "webtop is not locked to the image's flake again"
+since=$(now)
+run_setup
+! grep -q 'relocking' <<<"$(setup_log "$since")" || fail "an up-to-date lock was relocked"
+
+# webtop-home-manager-update: without arguments nothing changes; --apply backs up, installs the
+# template as unmodified and switches; a failing switch puts files and hashes back.
+files() { as_user sh -c "cd $hmdir && sha256sum flake.nix home.nix packages.json local.nix && ls"; }
+put $hmdir/flake.nix "$(as_user cat $hmdir/flake.nix)"$'\n# mine'
+before=$(files)
+out=$(as_user webtop-home-manager-update) || fail "webtop-home-manager-update failed: $out"
+grep -q '^-# mine' <<<"$out" || fail "the update diff does not show the edit: $out"
+[ "$(files)" = "$before" ] || fail "webtop-home-manager-update without --apply changed files"
+pj=$(as_user sha256sum "$decl")
+lj=$(as_user sha256sum $hmdir/local.nix)
+out=$(as_user webtop-home-manager-update --apply 2>&1) || fail "--apply failed: $out"
+as_user webtop-template unmodified $pdir/flake.nix || fail "the applied template does not count as unmodified"
+! as_user grep -q '# mine' $hmdir/flake.nix || fail "--apply kept the edit"
+as_user sh -c "grep -qx '# mine' $hmdir/flake.nix.bak-*" || fail "--apply made no backup of the edited flake"
+! as_user sh -c "ls $hmdir/home.nix.bak-*" 2>/dev/null || fail "--apply backed up an unchanged home.nix"
+[ "$(as_user sha256sum "$decl")" = "$pj" ] && [ "$(as_user sha256sum $hmdir/local.nix)" = "$lj" ] \
+  || fail "--apply touched packages.json or local.nix"
+put $hmdir/flake.nix "$(as_user cat $hmdir/flake.nix)"$'\n# mine'
+flake=$(as_user sha256sum $hmdir/flake.nix)
+hashes=$(as_user sha256sum $wst/templates.sha256)
+as_user sh -c "jq '.elements.broken = {originalUrl: \"flake:nixpkgs\", attrPath: \"legacyPackages.$nixsys.noSuchPackageCi\"}' /tmp/decl.bak > $decl"
+! as_user webtop-home-manager-update --apply >/dev/null 2>&1 || fail "--apply did not fail with a failing switch"
+[ "$(as_user sha256sum $hmdir/flake.nix)" = "$flake" ] || fail "a failing --apply did not restore flake.nix"
+[ "$(as_user sha256sum $wst/templates.sha256)" = "$hashes" ] || fail "a failing --apply did not restore the hashes"
+as_user cp /tmp/decl.bak "$decl"
+
+# An edited flake that still imports packages.nix keeps working untouched; the new template is
+# announced once.
+put $hmdir/flake.nix "$(prev flake.nix)"$'\n# mine'
+put $hmdir/packages.nix "$(prev packages.nix)"
+files() { as_user sh -c "cd $hmdir && sha256sum flake.nix home.nix packages.nix packages.json"; }
+before=$(files)
+out=$(tmpl)
+grep -q 'webtop-home-manager-update' <<<"$out" || fail "no notice for an edited flake: $out"
+[ "$(files)" = "$before" ] || fail "an edited flake was changed"
+out=$(tmpl)
+! grep -q 'webtop-home-manager-update' <<<"$out" || fail "the notice repeats: $out"
+as_user home-manager switch --flake $hmdir >/dev/null || fail "the edited flake with packages.nix does not switch"
+as_user nix profile add nixpkgs#tree || fail "nix profile add through packages.nix failed"
+as_user jq -e '.elements.tree' "$decl" >/dev/null || fail "tree is not in packages.json"
+as_user nix profile remove tree >/dev/null || fail "removing tree failed"
+
+# A nix.conf of the user's own: the starter is not upgraded (the new module would write that file).
+write_prev
+as_user sh -c "rm -f /home/ci/.config/nix/nix.conf $wst/template-notified && echo '# own' > /home/ci/.config/nix/nix.conf"
+out=$(tmpl)
+! grep -q 'rewrote' <<<"$out" || fail "a flake was upgraded over the user's nix.conf: $out"
+grep -q 'nix.conf' <<<"$out" || fail "no notice about the user's nix.conf: $out"
+as_user grep -qF './packages.nix' $hmdir/flake.nix || fail "the flake was upgraded over the user's nix.conf"
 # The restore scripts' progress file reaches the controller in the agent's report, and the
 # tray job tracker runs.
 docker exec desktop-boot systemctl is-active webtop-restore-job >/dev/null || fail "webtop-restore-job is not running"
