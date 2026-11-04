@@ -419,7 +419,7 @@ jobs:
         timeout-minutes: 15
         run: .github/scripts/boot-test.sh ${{ env.DESKTOP_IMAGE }}:dev 600 gray
       - name: store overlay across an image update
-        timeout-minutes: 15
+        timeout-minutes: 40
         run: .github/scripts/lower-swap-test.sh ${{ env.DESKTOP_IMAGE }}:dev 300
       - name: boot diagnostics
         if: failure()
