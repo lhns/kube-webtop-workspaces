@@ -153,7 +153,9 @@ sudo sed -i '1s/.*/stamp old-image/' "$dir/persist/nix/lower-paths"
 echo old-image | sudo tee "$dir/persist/nix/lower-stamp" >/dev/null
 echo "== software: boot 2 (restore)"
 boot
-docker logs "$c" 2>&1 | grep -q 'store overlay kept' || fail "the partial invalidation did not run or fell back"
+clog=$(docker logs "$c" 2>&1)
+grep 'webtop-nix-partial\|webtop-init: .*store\|webtop-init: .*PARTIAL' <<<"$clog" || true
+grep -q 'store overlay kept' <<<"$clog" || fail "the partial invalidation did not run or fell back"
 wait_markers
 software_works "after the restore"
 manifest=$(as_user cat /home/ci/.local/state/nix/profiles/profile/manifest.json)
