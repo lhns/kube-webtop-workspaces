@@ -9,8 +9,7 @@ let
   envFile = "-/run/webtop/env";
   userBus = "unix:path=/run/user/${uid}/bus";
 
-  notify = import ../notify.nix { inherit pkgs; inherit uid; };
-  progress = import ../restore-progress.nix { inherit pkgs; };
+  inherit (cfg.nixProfile) notify progress;
 
   # The "application" of the restore's tray entry: the shell reads its name and icon from here.
   restoreDesktop = pkgs.makeDesktopItem {

@@ -1,5 +1,5 @@
 # The desktop itself (webtop-nix's services.webtop), wired to the pod contract (docs/contract.md).
-{ pkgs, ... }:
+{ ... }:
 
 {
   services.webtop = {
@@ -29,14 +29,6 @@
     overrideStrategy = "asDropin";
     serviceConfig.RuntimeMaxSec = "infinity";
   };
-  # Nix's default search path names a channels directory the image does not have, and warns on every impure
-  # evaluation. The registry's nixpkgs also keeps `<nixpkgs>` and `nix-shell -p` working.
-  nix.settings.nix-path = "nixpkgs=flake:nixpkgs";
-
-  # One way to install software (ADR 0013): Discover has no Nix backend on NixOS. Plasma's "Get New…"
-  # dialogs (KNewStuff) stay.
-  environment.plasma6.excludePackages = [ pkgs.kdePackages.discover ];
-
   # webtop-init writes SELKIES_PORT and the cluster's desktop.selkies / desktop.title here
   # (docs/contract.md, "Selkies settings"); it wins over extraEnvironment above, and the user's
   # allowlisted ~/.config/webtop/selkies.env (services.webtop.userSettings) wins over it.
