@@ -193,6 +193,17 @@ func (n *NixLog) summary() (float64, string, bool) {
 	return frac, fmt.Sprintf("Downloading %d/%d", done, expected), true
 }
 
+// evaluatingHome reports a live evaluation of a home configuration, the slow part of a switch
+// that reports no total. Other evaluations, like a reinstalled entry's, do not match.
+func (n *NixLog) evaluatingHome() bool {
+	for _, a := range n.acts {
+		if strings.HasPrefix(a.text, "evaluating derivation ") && strings.Contains(a.text, "#homeConfigurations.") {
+			return true
+		}
+	}
+	return false
+}
+
 // buildName is the derivation's name from "building '/nix/store/<hash>-name.drv'".
 func buildName(text string) string {
 	s := text
@@ -215,6 +226,8 @@ func (n *NixLog) Apply(p Progress) Progress {
 	}
 	if f, info, ok := n.Poll(); ok {
 		p.Fraction, p.Detail = f, info
+	} else if n.evaluatingHome() {
+		p.Detail = "Evaluating your configuration"
 	}
 	return p
 }

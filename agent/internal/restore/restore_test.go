@@ -2,6 +2,7 @@ package restore
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -214,6 +215,47 @@ func TestNixLogProgress(t *testing.T) {
 	os.WriteFile(path, nil, 0o644)
 	if _, _, ok := n.Poll(); ok {
 		t.Fatal("stale progress after truncation")
+	}
+}
+
+func TestNixLogEvaluatingLabel(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nix.jsonl")
+	n := &NixLog{Path: path}
+	active := Progress{Active: true, Current: "home-manager switch"}
+	// As a real switch logs it: ids are pid << 32.
+	start := func(id int, text string) string {
+		return fmt.Sprintf(`{"action":"start","id":%d,"type":0,"text":%q}`+"\n", id, text)
+	}
+	stop := func(id int) string { return fmt.Sprintf(`{"action":"stop","id":%d}`+"\n", id) }
+	const eval = 4294967296
+
+	if got := n.Apply(active); got.Detail != "" {
+		t.Fatalf("before any event: %q", got.Detail)
+	}
+	os.WriteFile(path, []byte(start(eval, `evaluating derivation 'path:/home/u/.config/home-manager#homeConfigurations."u".activationPackage'`)+
+		start(eval+1, "copying 'x' to the store")), 0o644)
+	if got := n.Apply(active); got.Detail != "Evaluating your configuration" || got.Fraction != 0 {
+		t.Fatalf("evaluating: %+v", got)
+	}
+	// A real total wins, with the evaluation still live.
+	appendFile(t, path, `{"action":"start","id":8589934592,"type":104,"text":""}`+"\n"+
+		`{"action":"result","id":8589934592,"type":105,"fields":[1,4,0,0]}`+"\n")
+	if got := n.Apply(active); got.Detail != "Downloading 1/4" || got.Fraction != 0.25 {
+		t.Fatalf("with total: %+v", got)
+	}
+	appendFile(t, path, stop(8589934592))
+	if got := n.Apply(active); got.Detail != "Evaluating your configuration" {
+		t.Fatalf("back to evaluating: %+v", got)
+	}
+	// Evaluation over, nothing live: no claim.
+	appendFile(t, path, stop(eval+1)+stop(eval))
+	if got := n.Apply(active); got.Detail != "" {
+		t.Fatalf("after evaluation: %+v", got)
+	}
+	// A reinstalled entry's evaluation keeps that entry's text.
+	appendFile(t, path, start(eval+2, "evaluating derivation 'flake:nixpkgs#hello'"))
+	if got := n.Apply(Progress{Active: true, Current: "Reinstalling hello"}); got.Detail != "" {
+		t.Fatalf("reinstall: %+v", got)
 	}
 }
 
