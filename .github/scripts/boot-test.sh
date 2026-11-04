@@ -436,6 +436,20 @@ as_user nix profile add nixpkgs#tree || fail "nix profile add through packages.n
 as_user jq -e '.elements.tree' "$decl" >/dev/null || fail "tree is not in packages.json"
 as_user nix profile remove tree >/dev/null || fail "removing tree failed"
 
+# An unmodified old flake with an edited packages.nix is held: nothing renamed or removed, announced once.
+write_prev
+put $hmdir/packages.nix "$(prev packages.nix)"$'
+# mine'
+as_user rm -f $wst/template-notified
+files() { as_user sh -c "cd $hmdir && sha256sum flake.nix home.nix packages.nix packages.json"; }
+before=$(files)
+out=$(tmpl)
+grep -q 'packages.nix is edited' <<<"$out" || fail "no notice for an edited packages.nix: $out"
+! grep -q 'rewrote' <<<"$out" || fail "a starter was upgraded over an edited packages.nix: $out"
+[ "$(files)" = "$before" ] || fail "an edited packages.nix was renamed, removed or rewritten"
+out=$(tmpl)
+! grep -q 'webtop-home-manager-update' <<<"$out" || fail "the packages.nix notice repeats: $out"
+
 # A nix.conf of the user's own: the starter is not upgraded (the new module would write that file).
 write_prev
 as_user sh -c "rm -f /home/ci/.config/nix/nix.conf $wst/template-notified && echo '# own' > /home/ci/.config/nix/nix.conf"

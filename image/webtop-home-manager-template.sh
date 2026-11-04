@@ -23,9 +23,9 @@ hold() {
   local stamp
   stamp=$(cat "$tmp/new/flake.nix" "$tmp/new/home.nix" | sha256sum | cut -d' ' -f1)
   [ "$(cat "$state/template-notified" 2>/dev/null || true)" != "$stamp" ] || exit 0
-  echo "$stamp" > "$state/template-notified"
   printf '%s\n' "New home-manager starter template" \
     "Not applied: $1. See what changed: webtop-home-manager-update; --apply takes it and keeps backups." | tee "$notice"
+  echo "$stamp" > "$state/template-notified" # after the notice: a stop in between notifies next boot
   exit 0
 }
 
@@ -35,13 +35,23 @@ mkdir -p "$state"
 
 if [ ! -e "$dir" ]; then
   [ ! -e "$marker" ] || exit 0
+  # Staged and renamed in one step: a stop never leaves a partial starter that would count as existing.
+  rm -rf "$dir.new"
+  mkdir -p "$dir.new"
+  cp "$tmp/new/flake.nix" "$tmp/new/home.nix" "$seed/packages.json" "$dir.new/"
+  chmod 644 "$dir.new"/*
+  touch "$state/home-manager-switch"
+  mv -T "$dir.new" "$dir"
+  # The hashes follow; until then the files equal the template, which counts as unmodified.
   webtop-template write "$dir/flake.nix" "$tmp/new/flake.nix"
   webtop-template write "$dir/home.nix" "$tmp/new/home.nix"
   webtop-template write "$dir/packages.json" "$seed/packages.json"
-  touch "$marker" "$state/home-manager-switch"
+  touch "$marker"
   exit 0
 fi
 if cmp -s "$dir/flake.nix" "$tmp/new/flake.nix" && cmp -s "$dir/home.nix" "$tmp/new/home.nix"; then
+  # An upgrade stopped before its last step.
+  if [ -e "$dir/packages.nix" ] && webtop-template unmodified "$dir/packages.nix"; then webtop-template remove "$dir/packages.nix"; fi
   exit 0
 fi
 
@@ -50,14 +60,16 @@ for p in ${WEBTOP_HOME_PATHS:-}; do
   [ "$n" = "$USER" ] || webtop-template render "$tmp/old/$n" "$n"
 done
 shopt -s nullglob
-if webtop-template unmodified "$dir/flake.nix" "$tmp"/old/*/flake.nix &&
-   webtop-template unmodified "$dir/home.nix" "$tmp"/old/*/home.nix; then
+# The new template counts as known: a stop between a file and its recorded hash leaves it so.
+if webtop-template unmodified "$dir/flake.nix" "$tmp/new/flake.nix" "$tmp"/old/*/flake.nix &&
+   webtop-template unmodified "$dir/home.nix" "$tmp/new/home.nix" "$tmp"/old/*/home.nix; then
   if own_nix_conf; then hold "you have your own ~/.config/nix/nix.conf, which the new flake's module writes"; fi
   # The previous template's flake imported packages.nix; an edited one keeps that flake.
   if [ -e "$dir/packages.nix" ] && ! webtop-template unmodified "$dir/packages.nix"; then hold "packages.nix is edited"; fi
+  # This order lets a stop at any point converge next run; packages.nix goes last, the old flake needs it.
+  [ -e "$dir/packages.json" ] || webtop-template write "$dir/packages.json" "$seed/packages.json"
   webtop-template write "$dir/flake.nix" "$tmp/new/flake.nix"
   webtop-template write "$dir/home.nix" "$tmp/new/home.nix"
-  [ -e "$dir/packages.json" ] || webtop-template write "$dir/packages.json" "$seed/packages.json"
   [ ! -e "$dir/packages.nix" ] || webtop-template remove "$dir/packages.nix"
   touch "$state/home-manager-switch"
   echo "rewrote the starter flake in ~/.config/home-manager for $USER ($HOME)"
