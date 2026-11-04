@@ -43,71 +43,9 @@ let
   reinstall = pkgs.writeShellApplication {
     name = "webtop-nix-reinstall";
     runtimeInputs = with pkgs; [ coreutils gnused jq config.nix.package notify progress ];
-    text = ''
-      r=/persist/nix/reinstall
-      # As webtop-home-manager.service has them, for the setup script it runs.
-      export DBUS_SESSION_BUS_ADDRESS=${userBus} XDG_RUNTIME_DIR=/run/user/${uid}
-      # The agent shows these as a job in the tray; never fatal.
-      progress() { webtop-restore-progress "$@" || true; }
-      failed=0
-      progress start 1
-      profiles="$HOME/.local/state/nix/profiles"
-      old="$profiles.old-$(date +%s)"
-      # Dangling links (their generations were not restored) are moved aside: nix cannot extend them.
-      aside() {
-        mkdir -p "$old"
-        for l in "$@"; do
-          if [ -L "$l" ]; then mv "$l" "$old/"; fi
-        done
-      }
-
-      # A generation whose store path did not come back cannot be rolled back to: every dangling
-      # one moves aside (nix profile, home-manager, the declaration's history, ADR 0013).
-      for l in "$profiles"/*-link "$profiles/declaration"; do
-        if [ -L "$l" ] && [ ! -e "$l" ]; then aside "$l"; fi
-      done
-
-      p="$profiles/profile"
-      # Named after the home's directory on the volume (webtop-init), not the login name.
-      manifest="$r/user.manifest.json"
-      if [ -L "$p" ] && [ -e "$p" ]; then
-        echo "nix profile restored"
-      else
-        if [ -L "$p" ]; then
-          aside "$p" "$profiles"/profile-*-link
-        fi
-        if [ -L "$HOME/.nix-profile" ] && [ ! -e "$HOME/.nix-profile" ]; then rm -f "$HOME/.nix-profile"; fi
-        if [ -f "$manifest" ]; then
-          # Manifest v2 has an array of elements, v3 a map. Installed by locked URL: same versions.
-          refs=$(jq -r '.elements | to_entries[] | .value | select(.url != null and .attrPath != null)
-                        | "\(.url)#\(.attrPath)"' "$manifest")
-          # Into the profile, where they were: declared packages come back with the switch below.
-          # shellcheck disable=SC2086
-          progress total $(( $(echo $refs | wc -w) + 1 ))
-          for ref in $refs; do
-            echo "reinstalling $ref"
-            progress current "Reinstalling $ref"
-            NIX_CONFIG=$(progress nixconfig) nix profile add --profile-backend profile "$ref" || { echo "failed: $ref"; failed=1; }
-            progress step
-          done
-          jq -r '.elements | to_entries[] | .value | select(.url == null) | .storePaths[]?' "$manifest" \
-            | sed 's/^/not reinstallable (no flake reference): /'
-        fi
-      fi
-
-      # home-manager: relock, switch.
-      ${config.systemd.services.webtop-home-manager.serviceConfig.ExecStart} || failed=1
-      progress step
-
-      if [ "$failed" = 0 ]; then
-        progress finish
-      else
-        progress finish "Some of your software could not be restored; see: journalctl -u webtop-nix-reinstall"
-        webtop-notify "Package reinstall incomplete" "See: journalctl -u webtop-nix-reinstall" system-software-update &
-      fi
-      wait
-      exit "$failed"
-    '';
+    # Its setup step needs what webtop-home-manager.service has in its environment (the unit below).
+    text = "WEBTOP_SETUP=${config.systemd.services.webtop-home-manager.serviceConfig.ExecStart}\n"
+      + builtins.readFile ../webtop-nix-reinstall.sh;
   };
 in
 {
@@ -241,10 +179,15 @@ in
       "/persist/nix/reinstall/pending"
       "!/persist/nix/reinstall/restore"
     ];
+    environment = {
+      DBUS_SESSION_BUS_ADDRESS = userBus;
+      XDG_RUNTIME_DIR = "/run/user/${uid}";
+    };
     serviceConfig = {
       Type = "exec"; # see webtop-nix-restore
       User = uid;
-      ExecStart = lib.getExe reinstall;
+      # The manifest is named after the home's directory on the volume (webtop-init), not the login name.
+      ExecStart = "${lib.getExe reinstall} /persist/nix/reinstall/user.manifest.json";
       # As webtop-home-manager.service, whose setup script it runs.
       TimeoutStopSec = "5min";
       # "+": as root, the records belong to root. Only after the script ran to the end: a failure or a
