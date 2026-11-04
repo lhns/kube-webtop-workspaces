@@ -34,10 +34,10 @@ printf '/home/user\nroot\n../x\n/home/root\n/home/../x\n' > "$hp/home-paths"
 # run it is edited, so it must stay as it is, with the lines to change in the journal.
 hm=$dir/persist/home/user/.config/home-manager
 mkdir -p "$hm"
-sv=$(sed -n 's/.*system.stateVersion = "\(.*\)";.*/\1/p' "$(dirname "$0")/../../image/nixos/container.nix")
+# The system's own template (webtop-nix's nixProfile), system and stateVersion already filled in.
 for f in flake.nix home.nix; do
-  sed -e 's|@user@|user|g' -e 's|@home@|/home/user|g' -e "s|@stateVersion@|$sv|g" -e "s|@system@|$nixsys|g" \
-    "$(dirname "$0")/../../image/home-manager/$f" > "$hm/$f"
+  src=$(nix eval --raw ".#nixosConfigurations.desktop-$nixsys.config.environment.etc.\"webtop/home-manager/$f\".source")
+  sed -e 's|@user@|user|g' -e 's|@home@|/home/user|g' "$src" > "$hm/$f"
 done
 if [ "$mode" = gray ]; then echo "# edited" >> "$hm/home.nix"; fi
 cp "$hm/flake.nix" "$hm/home.nix" "$dir/"
