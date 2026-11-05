@@ -75,6 +75,7 @@ rules:
   resources:
   - desktops
   verbs:
+  - delete
   - get
   - list
   - patch

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/lhns/kube-webtop-workspaces/api/v1alpha1"
@@ -29,14 +28,14 @@ var (
 	descInfo     = prometheus.NewDesc("webtop_desktop_info", "Desktop phase and stage (always 1).", []string{"desktop", "user", "phase", "stage"}, nil)
 	descPowerOn  = prometheus.NewDesc("webtop_desktop_power_on", "1 when powerState is On.", desktopLabel, nil)
 	descRunning  = prometheus.NewDesc("webtop_desktop_running", "1 when phase is Running.", desktopLabel, nil)
-	descAuth     = prometheus.NewDesc("webtop_desktop_authorized", "1 when the user is authorized.", desktopLabel, nil)
 	descPending  = prometheus.NewDesc("webtop_desktop_update_pending", "1 when a pod template update is pending.", desktopLabel, nil)
 	descProgress = prometheus.NewDesc("webtop_desktop_boot_progress", "Boot progress 0-100.", desktopLabel, nil)
 	descClients  = prometheus.NewDesc("webtop_desktop_connected_clients", "Clients connected to the desktop.", desktopLabel, nil)
 	descIdle     = prometheus.NewDesc("webtop_desktop_idle_seconds", "Idle seconds reported by the agent.", desktopLabel, nil)
+	descSeen     = prometheus.NewDesc("webtop_desktop_last_seen_timestamp_seconds", "Unix time the gateway last served the owner.", desktopLabel, nil)
 	descAsleep   = prometheus.NewDesc("webtop_desktop_asleep", "1 while the session is frozen by Sleep.", desktopLabel, nil)
 	descLastStop = prometheus.NewDesc("webtop_desktop_last_stop_timestamp_seconds", "Unix time of the last recorded stop.", []string{"desktop", "reason"}, nil)
-	allDescs     = []*prometheus.Desc{descInfo, descPowerOn, descRunning, descAuth, descPending, descProgress, descClients, descIdle, descAsleep, descLastStop}
+	allDescs     = []*prometheus.Desc{descInfo, descPowerOn, descRunning, descPending, descProgress, descClients, descIdle, descAsleep, descLastStop, descSeen}
 )
 
 func (c *Collector) Describe(ch chan<- *prometheus.Desc) {
@@ -78,21 +77,17 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 	for i := range list.Items {
 		d := &list.Items[i]
 		st := &d.Status
-		auth := false
-		for _, cond := range st.Conditions {
-			if cond.Type == v1alpha1.ConditionAuthorized {
-				auth = cond.Status == metav1.ConditionTrue
-			}
-		}
 		g(descInfo, 1, d.Name, d.Spec.User, string(st.Phase), metricStage(st.Stage))
 		g(descPowerOn, b2f(d.Spec.PowerState == v1alpha1.PowerOn), d.Name)
 		g(descRunning, b2f(st.Phase == v1alpha1.PhaseRunning), d.Name)
-		g(descAuth, b2f(auth), d.Name)
 		g(descPending, b2f(st.UpdatePending), d.Name)
 		g(descProgress, float64(st.BootProgress), d.Name)
 		g(descClients, float64(st.ConnectedClients), d.Name)
 		g(descIdle, float64(st.IdleSeconds), d.Name)
 		g(descAsleep, b2f(st.Asleep), d.Name)
+		if d.Spec.LastSeen != nil {
+			g(descSeen, float64(d.Spec.LastSeen.Unix()), d.Name)
+		}
 		if st.LastStop != nil {
 			g(descLastStop, float64(st.LastStop.Time.UnixMicro())/1e6, d.Name, string(st.LastStop.Reason))
 		}

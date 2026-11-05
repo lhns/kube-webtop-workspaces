@@ -1,0 +1,108 @@
+// Package logout detects that the user's session ended without a shutdown, and reads the user's
+// choice about signing out at the login provider. The gateway acts on it (docs/contract.md, 7.8).
+package logout
+
+import (
+	"bufio"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/lhns/kube-webtop-workspaces/agent/internal/powerhook"
+	"github.com/lhns/kube-webtop-workspaces/agent/internal/state"
+	"github.com/lhns/kube-webtop-workspaces/agent/internal/sysd"
+)
+
+const (
+	// ConfFile is the user's file below their home. The user writes it; the agent, which runs as
+	// root, only ever reads two booleans from it.
+	ConfFile = ".config/webtop/session.conf"
+	maxConf  = 4096
+)
+
+// Pref returns the user's onLogout choice, or nil if they made none. Everything else about the
+// file is ignored: unknown keys, malformed lines, other values than true and false. A symlink
+// (the file or a directory above it), a non-regular file or one over 4 KiB counts as no file.
+func Pref(home string) *bool {
+	p := home
+	for _, part := range strings.Split(ConfFile, "/") {
+		p = filepath.Join(p, part)
+		fi, err := os.Lstat(p)
+		if err != nil || fi.Mode()&os.ModeSymlink != 0 {
+			return nil
+		}
+		if p == filepath.Join(home, ConfFile) && (!fi.Mode().IsRegular() || fi.Size() > maxConf) {
+			return nil
+		}
+	}
+	f, err := os.Open(p)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	var pref *bool
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		k, v, ok := strings.Cut(strings.TrimSpace(sc.Text()), "=")
+		if !ok || strings.TrimSpace(k) != "onLogout" {
+			continue
+		}
+		switch strings.TrimSpace(v) {
+		case "true":
+			t := true
+			pref = &t
+		case "false":
+			f := false
+			pref = &f
+		}
+	}
+	return pref
+}
+
+// SessionExit runs from ExecStopPost of the session unit. It records a logout when the session
+// ended by itself: success, and no poweroff, reboot or halt job queued (those are shutdowns, which
+// the power hook reports). env is os.Getenv; home is the desktop user's home.
+func SessionExit(stateDir, home string, env func(string) string, listJobs func() ([]sysd.Job, error), now time.Time) (marked bool, err error) {
+	if env("SERVICE_RESULT") != "success" {
+		return false, nil
+	}
+	jobs, err := listJobs()
+	if err != nil {
+		return false, fmt.Errorf("cannot tell a logout from a shutdown: %w", err)
+	}
+	if powerhook.Instance(jobs) != "" {
+		return false, nil
+	}
+	return true, Mark(stateDir, now, Pref(home))
+}
+
+// Mark writes the marker: a time and the user's choice (on, off or empty).
+func Mark(stateDir string, at time.Time, pref *bool) error {
+	p := ""
+	if pref != nil {
+		p = map[bool]string{true: "on", false: "off"}[*pref]
+	}
+	body := at.UTC().Format(time.RFC3339) + "\n" + p + "\n"
+	return state.WriteAtomic(filepath.Join(stateDir, state.Logout), []byte(body))
+}
+
+// Read returns the marker, ok false if there is none or it is unreadable.
+func Read(stateDir string) (at string, pref *bool, ok bool) {
+	lines := strings.Split(state.Read(filepath.Join(stateDir, state.Logout)), "\n")
+	if _, err := time.Parse(time.RFC3339, strings.TrimSpace(lines[0])); err != nil {
+		return "", nil, false
+	}
+	if len(lines) > 1 {
+		switch strings.TrimSpace(lines[1]) {
+		case "on":
+			t := true
+			pref = &t
+		case "off":
+			f := false
+			pref = &f
+		}
+	}
+	return strings.TrimSpace(lines[0]), pref, true
+}

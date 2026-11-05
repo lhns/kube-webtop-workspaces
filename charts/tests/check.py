@@ -89,10 +89,12 @@ for name, args in cases.items():
 
     cm = next(d for d in docs if d["kind"] == "ConfigMap")
     cfg = yaml.safe_load(cm["data"]["config.yaml"])
-    if "bindPassword" in cfg["ldap"] or "bindSecret" in cfg["ldap"] or "caSecret" in cfg["ldap"]:
-        fail(f"{name}: chart-only ldap keys leaked into the config")
-    if name == "all-on" and cfg["ldap"].get("bindPasswordFile") != "/etc/kube-webtop-workspaces-secrets/ldap/password":
-        fail(f"{name}: bindPasswordFile not set from bindSecret")
+    if "ldap" in cfg:
+        fail(f"{name}: ldap section still rendered")
+    if not str(cfg["controller"].get("gatewayDeployment")).endswith("-gateway"):
+        fail(f"{name}: controller.gatewayDeployment is {cfg['controller'].get('gatewayDeployment')!r}")
+    if name == "all-on" and cfg["gateway"].get("logoutUrl") != "https://auth.example.org/logout":
+        fail(f"{name}: gateway.logoutUrl not rendered")
     if "nix" in cfg["desktop"] or "softwareCenter" in cfg["desktop"]:
         fail(f"{name}: chart-only desktop.nix or softwareCenter leaked into the config")
     nsc = [e["value"] for e in cfg["desktop"].get("extraEnv") or [] if e["name"] == "NSC_UNFREE_LISTED_DEFAULT"]

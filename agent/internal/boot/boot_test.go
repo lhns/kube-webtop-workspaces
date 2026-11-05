@@ -293,3 +293,33 @@ func TestSelkiesSessionsIDs(t *testing.T) {
 		t.Fatalf("got %v, %v", got, err)
 	}
 }
+
+func TestSteadyLogoutReportsImmediately(t *testing.T) {
+	var at atomic.Value
+	at.Store("")
+	off := false
+	s := &fakeSender{}
+	st := &Steady{
+		Sender:  s,
+		Clients: func(context.Context) (int, error) { return 1, nil },
+		Idle:    func() int { return 0 },
+		Logout: func() (string, *bool, bool) {
+			v := at.Load().(string)
+			return v, &off, v != ""
+		},
+		Poll: time.Millisecond, Interval: time.Hour,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go st.Run(ctx)
+	waitFor(t, func() bool { return len(s.snapshot()) == 1 })
+	if s.snapshot()[0].LoggedOutAt != nil {
+		t.Fatal("logout reported without a marker")
+	}
+	at.Store("2026-01-02T03:04:05Z")
+	waitFor(t, func() bool { return len(s.snapshot()) == 2 })
+	r := s.snapshot()[1]
+	if r.LoggedOutAt == nil || *r.LoggedOutAt != "2026-01-02T03:04:05Z" || r.LogoutPref == nil || *r.LogoutPref {
+		t.Fatalf("report = %+v", r)
+	}
+}

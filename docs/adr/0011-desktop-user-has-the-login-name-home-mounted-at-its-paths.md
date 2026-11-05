@@ -17,7 +17,7 @@ directory breaks existing data, and a user's name may change.
 - **Login name** = the Desktop's name (`sanitize(spec.user)`, `WEBTOP_DESKTOP`), if it is a valid
   login name (starts with a letter) and not an account or group of the image. Otherwise the user
   stays `user`, and the controller sets condition `LoginName=False`. **Display name** (GECOS) from
-  `ldap.displayNameAttribute` at each start (`status.displayName`, `WEBTOP_DISPLAY_NAME`), else the
+  the login proxy's name header (`spec.displayName`) at each start (`status.displayName`, `WEBTOP_DISPLAY_NAME`), else the
   login name.
 - **uid/gid stay 1000/100**, so ownership on volumes never changes.
 - **Rename at activation.** The image declares the placeholder `user`; an activation snippet ordered
@@ -52,3 +52,7 @@ directory breaks existing data, and a user's name may change.
 - Relies on update-users-groups.pl (asserted: not sysusers or userborn) and on activation running once
   per container.
 - A desktop whose name is an image account or starts with a digit runs as `user`.
+
+## Amendment 2026-11-05
+
+The display name comes from `gateway.displayNameHeader`, not LDAP (0016).

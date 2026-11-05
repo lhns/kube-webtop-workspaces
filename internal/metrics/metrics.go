@@ -26,21 +26,8 @@ var (
 	ReportRequests = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "webtop_report_requests_total", Help: "Report API requests.",
 	}, []string{"code"})
-
-	LDAPSyncs = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "webtop_ldap_sync_total", Help: "LDAP syncs by result.",
-	}, []string{"result"})
-
-	LDAPLastSuccess = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "webtop_ldap_last_success_timestamp_seconds", Help: "Unix time of the last successful LDAP sync.",
-	})
-
-	LDAPMembers = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "webtop_ldap_members", Help: "Members of the LDAP group at the last successful sync.",
-	})
 )
 
 func init() {
-	crmetrics.Registry.MustRegister(StopsTotal, StartDuration, PowerRequests, ReportRequests,
-		LDAPSyncs, LDAPLastSuccess, LDAPMembers)
+	crmetrics.Registry.MustRegister(StopsTotal, StartDuration, PowerRequests, ReportRequests)
 }

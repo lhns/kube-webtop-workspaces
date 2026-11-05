@@ -23,8 +23,8 @@ One Go binary (`cmd/kube-webtop-workspaces`), run as two Deployments:
   linking to its `/apps/<name>`. Contract:
   [section 7.6](docs/contract.md#76-single-app-baseappsname), ADR 0010.
 - **controller** (`--mode=controller`): reconciles `Desktop` resources
-  (`webtop.lhns.github.io/v1alpha1`) into a PVC, Service and Deployment, and checks LDAP group
-  membership. It also serves the power/report API that the in-pod agent uses to report shutdowns,
+  (`webtop.lhns.github.io/v1alpha1`) into a PVC, Service and Deployment, and stops desktops of long-unseen
+  users when configured. It also serves the power/report API that the in-pod agent uses to report shutdowns,
   reboots, boot progress and session activity. PVCs are never deleted by the controller.
 
 Also:
@@ -103,7 +103,7 @@ declared), with desktop notifications. Packages built locally without a flake re
 if they cannot be restored.
 
 **User identity** (ADR 0011). The desktop user (uid 1000) is named after the desktop
-(`WEBTOP_DESKTOP`), with home `/home/<name>` and the LDAP display name (`WEBTOP_DISPLAY_NAME`) as
+(`WEBTOP_DESKTOP`), with home `/home/<name>` and the login proxy's display name header (`WEBTOP_DISPLAY_NAME`) as
 GECOS. A name that starts with a digit or is an account or group of the image (`root`, `nixbld1`,
 `wheel`, …) falls back to `user`, and the Desktop gets condition `LoginName=False`. The image declares
 the account as `user` and an activation snippet renames it; units, polkit and Nix refer to uid 1000

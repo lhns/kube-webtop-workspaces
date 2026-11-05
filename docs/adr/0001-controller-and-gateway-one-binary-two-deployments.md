@@ -25,3 +25,8 @@ access behind an internet-facing HTTP endpoint.
 - `kubectl get desktops` shows every desktop's state; metrics and the boot screen read the same
   status.
 - One image and one release cycle for both parts.
+
+## Amendment 2026-11-05
+
+The controller no longer holds LDAP credentials or syncs a group (0016). It runs the unseen sweep
+instead and the admin CLI (`desktops`) in the same binary; its role gains `delete` on `desktops` only.

@@ -56,7 +56,7 @@ func TestStartDurationObservedOnce(t *testing.T) {
 	before := startSamples(t)
 	for range 2 {
 		d := stale.DeepCopy()
-		if err := r.finish(context.Background(), d, d.DeepCopy(), []corev1.Pod{*pod}, pod, finishArgs{on: true, want: 1}); err != nil {
+		if err := r.finish(context.Background(), d, d.DeepCopy(), []corev1.Pod{*pod}, pod, finishArgs{want: 1}); err != nil {
 			t.Fatal(err)
 		}
 		if d.Status.Phase != v1alpha1.PhaseRunning {
@@ -121,5 +121,34 @@ func TestLoginNameCondition(t *testing.T) {
 		if tc.err != "" && !strings.Contains(c.Message, tc.err) {
 			t.Errorf("message %q lacks the reason", c.Message)
 		}
+	}
+}
+
+// lastLogout belongs to a pod: a new pod starts without one, so a tab never replays an old logout.
+func TestLastLogoutResetsWithThePod(t *testing.T) {
+	scheme, err := scheme.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Parse([]byte("namespace: ns\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := metav1.Now()
+	d := &v1alpha1.Desktop{
+		ObjectMeta: metav1.ObjectMeta{Name: "a", Namespace: "ns"},
+		Spec:       v1alpha1.DesktopSpec{User: "a", PowerState: v1alpha1.PowerOn},
+		Status:     v1alpha1.DesktopStatus{PodUID: "old", LastLogout: &out},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&v1alpha1.Desktop{}).WithObjects(d.DeepCopy()).Build()
+	r := &Reconciler{Client: c}
+	r.SetConfig(cfg)
+	pod := mkPod(nil)
+	pod.UID = "new"
+	if err := r.finish(context.Background(), d, d.DeepCopy(), []corev1.Pod{*pod}, pod, finishArgs{want: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if d.Status.LastLogout != nil {
+		t.Fatal("lastLogout survived the pod")
 	}
 }

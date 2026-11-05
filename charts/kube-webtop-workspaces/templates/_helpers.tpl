@@ -42,8 +42,6 @@ app.kubernetes.io/component: {{ .component }}
 {{- .Values.powerApi.url | default (printf "http://%s-controller.%s.svc:%d" (include "kwt.fullname" .) .Release.Namespace (include "kwt.port" .Values.powerApi.addr | int)) -}}
 {{- end }}
 
-{{- define "kwt.ldapPasswordPath" -}}/etc/kube-webtop-workspaces-secrets/ldap/password{{- end }}
-{{- define "kwt.ldapCAPath" -}}/etc/kube-webtop-workspaces-secrets/ldap-ca/ca.crt{{- end }}
 
 {{/* Soft anti-affinity across nodes unless affinity is set; call with (dict "ctx" . "component" "x" "affinity" ...). */}}
 {{- define "kwt.affinity" -}}

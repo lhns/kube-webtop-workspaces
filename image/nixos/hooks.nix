@@ -103,6 +103,13 @@ in
     };
   };
 
+  # A session that ends by itself (the user logged out; webtop-nix restarts it) leaves a marker the
+  # agent reports, so the gateway can sign the browser out at the login provider. The agent skips
+  # it when poweroff, reboot or halt is queued: those are shutdowns (power-hook). "+": as root,
+  # because the marker is in /run/webtop; the agent reads only two booleans of the user's
+  # ~/.config/webtop/session.conf. Without gateway.logoutUrl the controller records nothing.
+  systemd.services.webtop-session.serviceConfig.ExecStopPost = [ "+${exe} session-exit" ];
+
   # Saves the Plasma session on a pod deletion or a fallback suspend, where ksmserver does not.
   # Stopped before the session and the user manager (plasma-ksmserver.service runs there). The
   # thaw first ("+": as root) is a no-op unless Sleep left units frozen, which would hang ksmserver.

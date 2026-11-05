@@ -19,13 +19,15 @@ type statusEvent struct {
 	Stage        string `json:"stage"`
 	BootProgress int32  `json:"bootProgress"`
 	Message      string `json:"message"`
-	Authorized   bool   `json:"authorized"`
 	// Asleep tells a tab that watches a running desktop to reload, so the frozen stream is replaced.
 	Asleep bool `json:"asleep,omitempty"`
 	// PodUID tells a tab that watches a running desktop that the pod was replaced.
 	PodUID string `json:"podUID,omitempty"`
 	// SoftwareRestore is true while the software is restored after an image update.
 	SoftwareRestore bool `json:"softwareRestore,omitempty"`
+	// LoggedOut is when the session logged out, for the owner when a logout URL is configured; a
+	// tab acts on a change after it connected, never on the value it first saw.
+	LoggedOut string `json:"loggedOut,omitempty"`
 	// Pull is set while the image is being downloaded.
 	Pull *pullEvent `json:"pull,omitempty"`
 }
@@ -39,14 +41,17 @@ type pullEvent struct {
 	LastDurationSeconds int64 `json:"lastDurationSeconds,omitempty"`
 }
 
-func eventOf(d *v1alpha1.Desktop, now time.Time) statusEvent {
+func eventOf(d *v1alpha1.Desktop, now time.Time, logout bool) statusEvent {
 	if d == nil {
-		return statusEvent{Authorized: true}
+		return statusEvent{}
 	}
 	ev := statusEvent{
 		Phase: string(d.Status.Phase), Stage: stageText(d.Status.Stage), BootProgress: d.Status.BootProgress,
-		Message: d.Status.Message, Authorized: !authorizedFalse(d), PodUID: d.Status.PodUID,
+		Message: d.Status.Message, PodUID: d.Status.PodUID,
 		Asleep: d.Status.Asleep, SoftwareRestore: restoring(d),
+	}
+	if t := d.Status.LastLogout; logout && t != nil {
+		ev.LoggedOut = t.UTC().Format(time.RFC3339)
 	}
 	if ip := d.Status.ImagePull; ip != nil && d.Status.Stage == v1alpha1.StagePullingImage && ip.StartedAt != nil {
 		ev.Pull = &pullEvent{
@@ -102,7 +107,7 @@ func (h *Handler) serveEvents(w http.ResponseWriter, r *http.Request, rt *route,
 	var last string
 	// send writes a status event if it changed, then ready; false ends the stream.
 	send := func(d *v1alpha1.Desktop) bool {
-		b, _ := json.Marshal(eventOf(d, h.now()))
+		b, _ := json.Marshal(eventOf(d, h.now(), rt.owner && h.cfg.LogoutURL != ""))
 		if s := string(b); s != last {
 			last = s
 			if _, err := fmt.Fprintf(w, "event: status\ndata: %s\n\n", b); err != nil {

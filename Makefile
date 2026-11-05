@@ -6,7 +6,7 @@ ENVTEST_K8S_VERSION ?= 1.37.x
 generate:
 	go tool controller-gen object:headerFile=hack/boilerplate.go.txt paths=./api/...
 	go tool controller-gen crd paths=./api/... output:crd:artifacts:config=config/crd
-	go tool controller-gen rbac:roleName=kube-webtop-workspaces-controller paths=./internal/controller/... paths=./internal/powerapi/... paths=./internal/ldap/... output:rbac:artifacts:config=config/rbac/controller
+	go tool controller-gen rbac:roleName=kube-webtop-workspaces-controller paths=./internal/controller/... paths=./internal/powerapi/... output:rbac:artifacts:config=config/rbac/controller
 	go tool controller-gen rbac:roleName=kube-webtop-workspaces-gateway paths=./internal/gateway/... output:rbac:artifacts:config=config/rbac/gateway
 
 build:

@@ -15,9 +15,10 @@ import (
 // when the client count or the sleep state changes (polled every Poll).
 type Steady struct {
 	Sender   Sender
-	Clients  func(ctx context.Context) (int, error) // connected web clients
-	Idle     func() int                             // idle seconds
-	Asleep   func() bool                            // optional: frozen by Sleep
+	Clients  func(ctx context.Context) (int, error)  // connected web clients
+	Idle     func() int                              // idle seconds
+	Asleep   func() bool                             // optional: frozen by Sleep
+	Logout   func() (at string, pref *bool, ok bool) // optional: the session logged out
 	Poll     time.Duration
 	Interval time.Duration
 }
@@ -29,6 +30,7 @@ func (s *Steady) Run(ctx context.Context) {
 		sentOnce bool
 		sentN    int
 		sentZ    bool
+		sentOut  string
 		warnedAt time.Time
 	)
 	t := time.NewTicker(s.Poll)
@@ -43,16 +45,26 @@ func (s *Steady) Run(ctx context.Context) {
 			clients = n
 		}
 		asleep := s.Asleep != nil && s.Asleep()
-		if !sentOnce || clients != sentN || asleep != sentZ || time.Since(sentAt) >= s.Interval {
+		var outAt string
+		var outPref *bool
+		if s.Logout != nil {
+			if at, pref, ok := s.Logout(); ok {
+				outAt, outPref = at, pref
+			}
+		}
+		if !sentOnce || clients != sentN || asleep != sentZ || outAt != sentOut || time.Since(sentAt) >= s.Interval {
 			idle := s.Idle()
 			r := api.Report{ConnectedClients: &clients, IdleSeconds: &idle}
 			if s.Asleep != nil {
 				r.Asleep = &asleep
 			}
+			if outAt != "" {
+				r.LoggedOutAt, r.LogoutPref = &outAt, outPref
+			}
 			if err := s.Sender.Report(ctx, r); err != nil {
 				log.Printf("steady: report: %v", err) // retried on the next poll
 			} else {
-				sentOnce, sentN, sentZ, sentAt = true, clients, asleep, time.Now()
+				sentOnce, sentN, sentZ, sentOut, sentAt = true, clients, asleep, outAt, time.Now()
 			}
 		}
 		select {
