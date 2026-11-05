@@ -93,7 +93,7 @@ for name, args in cases.items():
         fail(f"{name}: chart-only ldap keys leaked into the config")
     if name == "all-on" and cfg["ldap"].get("bindPasswordFile") != "/etc/kube-webtop-workspaces-secrets/ldap/password":
         fail(f"{name}: bindPasswordFile not set from bindSecret")
-    if "nix" in cfg["desktop"] or "softwareCenter" in cfg["desktop"]:
+    if "nix" in cfg["desktop"] or "softwareCenter" in cfg["desktop"] or "timeZone" in cfg["desktop"] or "locale" in cfg["desktop"]:
         fail(f"{name}: chart-only desktop.nix or softwareCenter leaked into the config")
     nsc = [e["value"] for e in cfg["desktop"].get("extraEnv") or [] if e["name"] == "NSC_UNFREE_LISTED_DEFAULT"]
     want_nsc = ["0"] if name == "all-on" else ["1"]
@@ -104,6 +104,10 @@ for name, args in cases.items():
                 "WEBTOP_NIX_EXTRA_TRUSTED_PUBLIC_KEYS": "a:AAAA b:BBBB"} if name == "all-on" else {}
     if nix_env != want_env:
         fail(f"{name}: desktop WEBTOP_NIX_* env {nix_env}, want {want_env}")
+    tz_env = {e["name"]: e["value"] for e in cfg["desktop"].get("extraEnv") or [] if e["name"] in ("WEBTOP_TIME_ZONE", "WEBTOP_LOCALE")}
+    want_tz = {"WEBTOP_TIME_ZONE": "Europe/Berlin", "WEBTOP_LOCALE": "de_DE.UTF-8"} if name == "all-on" else {}
+    if tz_env != want_tz:
+        fail(f"{name}: desktop time zone/locale env {tz_env}, want {want_tz}")
     if name == "all-on" and {"name": "FOO", "value": "bar"} not in cfg["desktop"]["extraEnv"]:
         fail(f"{name}: desktop.nix replaced desktop.extraEnv instead of appending")
 

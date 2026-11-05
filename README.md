@@ -238,6 +238,11 @@ client loads its assets and opens `api/websockets` relative to the page's direct
 prefix setting. Selkies' `SELKIES_SUBFOLDER` must stay empty: it would make the server expect the
 prefix the gateway has already stripped.
 
+**Time zone and locale** (`desktop.timeZone`, `desktop.locale`): pod env `WEBTOP_TIME_ZONE` / `WEBTOP_LOCALE`, read from
+`/run/webtop/env` by webtop-nix's `webtop-locale` before each session start. Precedence: the user's
+`webtop.timeZone` / `webtop.locale` (home-manager, in `~/.config/webtop/session.conf`) > the chart > UTC and
+`en_US.UTF-8`. Invalid values are logged and skipped. No browser input; contract, "Time zone and locale".
+
 **Selkies settings** (`image/nixos/desktop.nix`): plain HTTP; audio sink, cursor path and library
 wrapper come from webtop-nix. Clipboard, file transfer and browser cursors are webtop-nix's defaults.
 Precedence, low to high: the image's defaults < the cluster (`desktop.selkies` and the tab title

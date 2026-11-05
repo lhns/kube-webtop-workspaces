@@ -56,6 +56,7 @@ args=(--privileged --cgroupns=private --shm-size=1g --add-host=host.docker.inter
   -v "$dir/persist:/persist" -v "$dir/token:/token:ro"
   -e WEBTOP_CONTROLLER_URL=http://host.docker.internal:8081 -e WEBTOP_TOKEN_PATH=/token
   -e WEBTOP_HTTP_PORT=8080 -e NSC_UNFREE_LISTED_DEFAULT=0 -e WEBTOP_USER=ci -e WEBTOP_DESKTOP=ci -e WEBTOP_NAMESPACE=ci -e "WEBTOP_DISPLAY_NAME=CI Tester"
+  -e WEBTOP_TIME_ZONE=Asia/Tokyo -e WEBTOP_LOCALE=de_DE.UTF-8
   -e WEBTOP_NIX_EXTRA_SUBSTITUTERS=http://cache.invalid/ci -e "WEBTOP_NIX_EXTRA_TRUSTED_PUBLIC_KEYS=ci:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
   -e "WEBTOP_SELKIES_UI_TITLE=$title" -e "WEBTOP_SELKIES_CI_PROBE=$probe"
   -e "WEBTOP_SELKIES_CI_TAB=$tab" -e "WEBTOP_SELKIES_CI_NL=$nl")
@@ -492,4 +493,39 @@ done
 grep -qF '"softwareRestore":{"active":false,"done":2,"total":2,"failed":false}' "$reports" \
   || fail "the agent did not report the finished restore"
 echo "software installation: ok"
+# Time zone and locale (docs/contract.md): chart env, then the user's ~/.config/webtop/session.conf,
+# each checked against what the system and the session report. A bad value falls back, never blocks.
+sessconf=$dir/persist/home/user/.config/webtop/session.conf
+tzl_check() { # <zone> <locale> <abbreviation>
+  local env
+  [ "$(docker exec desktop-boot readlink /etc/localtime)" = "/etc/zoneinfo/$1" ] || fail "/etc/localtime is not $1: $(docker exec desktop-boot ls -l /etc/localtime)"
+  [ "$(docker exec desktop-boot timedatectl show -P Timezone)" = "$1" ] || fail "timedatectl does not report $1"
+  docker exec desktop-boot localectl status | grep -qF "LANG=$2" || fail "localectl does not report $2"
+  # Past the wrapper (which loads /etc/locale.conf), then startplasma's own environment.
+  for _ in $(seq 1 60); do
+    docker exec desktop-boot sh -c 'grep -aq startplasma /proc/$(systemctl show -P MainPID webtop-session)/cmdline' && break
+    sleep 1
+  done
+  env=$(docker exec desktop-boot sh -c 'tr "\0" "\n" < /proc/$(systemctl show -P MainPID webtop-session)/environ')
+  grep -qx "LANG=$2" <<<"$env" || fail "the session's LANG is not $2: $(grep -E '^(LANG|LC_)' <<<"$env")"
+  ! grep -qE '^(TZ|LC_ALL)=' <<<"$env" || fail "TZ or LC_ALL in the session's environment"
+  [ "$(docker exec desktop-boot sh -c 'env -u TZ date +%Z')" = "$3" ] || fail "date does not show $3"
+  [ "$(docker exec desktop-boot systemctl show -P ActiveState webtop-session)" = active ] || fail "the session is not active"
+}
+tzl_check Asia/Tokyo de_DE.UTF-8 JST
+tzl_set() { # <text>: the user's file, then a session restart (the way a change is applied)
+  sudo rm -f "$sessconf"
+  if [ $# -gt 0 ]; then printf '%b' "$1" | sudo tee "$sessconf" >/dev/null; sudo chown 1000:100 "$sessconf"; fi
+  docker exec desktop-boot systemctl restart webtop-session
+}
+tzl_set '# c\nonLogout=true\nbogus=1\ntimeZone=Asia/Kolkata\nlocale=fr_FR.UTF-8\n'
+tzl_check Asia/Kolkata fr_FR.UTF-8 IST
+for bad in 'timeZone=../../etc/passwd' 'timeZone=/etc/passwd' 'timeZone=Mars/Olympus' 'timeZone=tzdata.zi' \n    'timeZone=$(touch /pwned)' 'locale=xx_XX.UTF-8' 'locale=de_DE.UTF-8;touch /pwned' 'no equals sign' '\001\002\n'; do
+  tzl_set "$bad\n"
+  tzl_check Asia/Tokyo de_DE.UTF-8 JST
+done
+! docker exec desktop-boot test -e /pwned || fail "a value was executed"
+sudo rm -f "$sessconf"; sudo ln -s /etc/hostname "$sessconf"; docker exec desktop-boot systemctl restart webtop-session
+tzl_check Asia/Tokyo de_DE.UTF-8 JST
+echo "time zone and locale: ok"
 echo "boot test passed"

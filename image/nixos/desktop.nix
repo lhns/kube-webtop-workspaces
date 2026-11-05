@@ -36,4 +36,8 @@
   # (docs/contract.md, "Selkies settings"); it wins over extraEnvironment above, and the user's
   # allowlisted ~/.config/webtop/selkies.env (services.webtop.userSettings) wins over it.
   services.webtop.environmentFiles = [ "-/run/webtop/selkies.env" ];
+
+  # WEBTOP_TIME_ZONE / WEBTOP_LOCALE (docs/contract.md, "Time zone and locale") reach the session through
+  # the env webtop-init copies here.
+  services.webtop.localeEnvironmentFiles = [ "-/run/webtop/env" ];
 }
