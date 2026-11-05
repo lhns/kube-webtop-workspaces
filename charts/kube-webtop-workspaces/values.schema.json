@@ -105,6 +105,8 @@
         "extraEnv": {"type": "array"},
         "extraVolumes": {"type": "array"},
         "extraVolumeMounts": {"type": "array"},
+        "timeZone": {"type": "string"},
+        "locale": {"type": "string"},
         "nix": {
           "type": "object",
           "additionalProperties": false,
