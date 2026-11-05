@@ -517,6 +517,8 @@ tzl_check Asia/Tokyo de_DE.UTF-8 JST
 tzl_set() { # <text>: the user's file, then a session restart (the way a change is applied)
   sudo rm -f "$sessconf"
   if [ $# -gt 0 ]; then printf '%b' "$1" | sudo tee "$sessconf" >/dev/null; sudo chown 1000:100 "$sessconf"; fi
+  # A quick series of restarts would hit the unit's start rate limit.
+  docker exec desktop-boot systemctl reset-failed webtop-session
   docker exec desktop-boot systemctl restart webtop-session
 }
 tzl_set '# c\nonLogout=true\nbogus=1\ntimeZone=Asia/Kolkata\nlocale=fr_FR.UTF-8\n'
@@ -526,7 +528,7 @@ for bad in 'timeZone=../../etc/passwd' 'timeZone=/etc/passwd' 'timeZone=Mars/Oly
   tzl_check Asia/Tokyo de_DE.UTF-8 JST
 done
 ! docker exec desktop-boot test -e /pwned || fail "a value was executed"
-sudo rm -f "$sessconf"; sudo ln -s /etc/hostname "$sessconf"; docker exec desktop-boot systemctl restart webtop-session
+sudo rm -f "$sessconf"; sudo ln -s /etc/hostname "$sessconf"; docker exec desktop-boot sh -c "systemctl reset-failed webtop-session; systemctl restart webtop-session"
 tzl_check Asia/Tokyo de_DE.UTF-8 JST
 echo "time zone and locale: ok"
 echo "boot test passed"
