@@ -166,7 +166,7 @@ func TestUnmanagedPodForbidden(t *testing.T) {
 
 func TestPowerBadRequests(t *testing.T) {
 	for _, body := range []string{
-		`{"action":"stop","reason":"ldap"}`, `{"action":"stop","reason":"exit"}`, `{"action":"stop","reason":"admin"}`,
+		`{"action":"stop","reason":"unseen"}`, `{"action":"stop","reason":"exit"}`, `{"action":"stop","reason":"admin"}`,
 		`{"action":"stop","reason":""}`, `{"action":"explode","reason":"user"}`, `not json`,
 	} {
 		e := newEnv(t, desktop(nil), desktopPod("pod-1"))
@@ -417,5 +417,34 @@ func TestReportLoginNameEvents(t *testing.T) {
 	}
 	if strings.Join(got, ",") != "Warning LoginNameFallback,Normal LoginName" {
 		t.Fatalf("events: %q", got)
+	}
+}
+
+func TestReportLoggedOut(t *testing.T) {
+	const at = "2026-01-01T12:30:00Z"
+	for name, tc := range map[string]struct {
+		url, body string
+		defaultOn bool
+		want      bool
+	}{
+		"default on":            {"https://auth.example.org/logout", `{"loggedOutAt":"` + at + `"}`, true, true},
+		"default off":           {"https://auth.example.org/logout", `{"loggedOutAt":"` + at + `"}`, false, false},
+		"user turns it off":     {"https://auth.example.org/logout", `{"loggedOutAt":"` + at + `","logoutPref":false}`, true, false},
+		"user turns it on":      {"https://auth.example.org/logout", `{"loggedOutAt":"` + at + `","logoutPref":true}`, false, true},
+		"no logout URL, no log": {"", `{"loggedOutAt":"` + at + `","logoutPref":true}`, true, false},
+	} {
+		e := newEnv(t, desktop(nil), desktopPod("pod-1"))
+		e.srv.Gateway.LogoutURL, e.srv.Gateway.SSOLogoutDefaults.OnLogout = tc.url, tc.defaultOn
+		if rec := e.do("/api/v1/report", tc.body, "tok"); rec.Code != 204 {
+			t.Fatalf("%s: %d %s", name, rec.Code, rec.Body)
+		}
+		got := e.get(t).Status.LastLogout
+		if (got != nil) != tc.want || (got != nil && got.UTC().Format(time.RFC3339) != at) {
+			t.Errorf("%s: lastLogout = %v, want recorded=%v", name, got, tc.want)
+		}
+	}
+	e := newEnv(t, desktop(nil), desktopPod("pod-1"))
+	if rec := e.do("/api/v1/report", `{"loggedOutAt":"yesterday"}`, "tok"); rec.Code != 400 {
+		t.Fatalf("bad time: %d", rec.Code)
 	}
 }

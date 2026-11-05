@@ -22,7 +22,7 @@ in
   # rename holds until the container stops. usermod also renames the group memberships. The
   # activation PATH has coreutils, grep, shadow and util-linux, not sed.
   system.activationScripts.webtop-identity = lib.stringAfter [ "users" "groups" "etc" ] ''
-    # Read, not sourced: the GECOS comes from LDAP.
+    # Read, not sourced: the GECOS is free text from the login proxy.
     name=$(grep -m1 '^WEBTOP_LOGIN_NAME=' /run/webtop/env | cut -d= -f2-)
     gecos=$(grep -m1 '^WEBTOP_LOGIN_GECOS=' /run/webtop/env | cut -d= -f2-)
     rm -f /run/webtop/identity-error

@@ -12,7 +12,7 @@ access behind an internet-facing HTTP endpoint.
 ## Decision
 
 - One Go binary, run as **two Deployments**: `--mode=gateway` (user-facing, no write access to core
-  resources, no secrets) and `--mode=controller` (reconciler, LDAP sync, power API).
+  resources, no secrets) and `--mode=controller` (reconciler, unseen sweep, power API).
 - A namespaced **`Desktop` CRD** (`webtop.lhns.github.io/v1alpha1`), one per user, is the only
   interface between them: the gateway sets `spec.powerState`, the controller does the rest and
   reports progress in `status`.
@@ -25,3 +25,8 @@ access behind an internet-facing HTTP endpoint.
 - `kubectl get desktops` shows every desktop's state; metrics and the boot screen read the same
   status.
 - One image and one release cycle for both parts.
+
+## Amendment 2026-11-05
+
+The controller no longer holds LDAP credentials or syncs a group (0017). It runs the unseen sweep
+instead and the admin CLI (`desktops`) in the same binary; its role gains `delete` on `desktops` only.

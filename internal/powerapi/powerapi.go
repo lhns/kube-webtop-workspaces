@@ -25,6 +25,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/lhns/kube-webtop-workspaces/api/v1alpha1"
+	"github.com/lhns/kube-webtop-workspaces/internal/config"
 	"github.com/lhns/kube-webtop-workspaces/internal/lifecycle"
 	"github.com/lhns/kube-webtop-workspaces/internal/metrics"
 	"github.com/lhns/kube-webtop-workspaces/internal/names"
@@ -79,6 +80,8 @@ type Server struct {
 	Now            func() time.Time
 	// Recorder emits an Event when the reported login name changes; nil disables it.
 	Recorder record.EventRecorder
+	// Gateway holds the logout URL and the defaults for the user's sign-out choice.
+	Gateway config.Gateway
 }
 
 func (s *Server) now() time.Time {
@@ -333,7 +336,11 @@ type reportRequest struct {
 	LoginName        *string  `json:"loginName"`
 	HomePaths        []string `json:"homePaths"`
 	LoginError       *string  `json:"loginError"`
-	SoftwareRestore  *struct {
+	// LoggedOutAt is when the session logged out without a shutdown (RFC 3339); LogoutPref is
+	// the user's own choice for signing out at the provider, absent when they made none.
+	LoggedOutAt     *string `json:"loggedOutAt"`
+	LogoutPref      *bool   `json:"logoutPref"`
+	SoftwareRestore *struct {
 		Active bool  `json:"active"`
 		Done   int32 `json:"done"`
 		Total  int32 `json:"total"`
@@ -382,6 +389,12 @@ func (s *Server) report(w http.ResponseWriter, r *http.Request) {
 		writeErr(sw, fail(http.StatusBadRequest, "stage longer than %d characters", maxStage))
 		return
 	}
+	if req.LoggedOutAt != nil {
+		if _, err := time.Parse(time.RFC3339, *req.LoggedOutAt); err != nil {
+			writeErr(sw, fail(http.StatusBadRequest, "loggedOutAt is not an RFC 3339 time"))
+			return
+		}
+	}
 	if !req.validIdentity() {
 		writeErr(sw, fail(http.StatusBadRequest, "invalid loginName, homePaths, loginError or softwareRestore"))
 		return
@@ -416,6 +429,19 @@ func (s *Server) report(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Asleep != nil {
 		st.Asleep = *req.Asleep
+	}
+	if req.LoggedOutAt != nil {
+		if t, err := time.Parse(time.RFC3339, *req.LoggedOutAt); err == nil {
+			on := s.Gateway.SSOLogoutDefaults.OnLogout
+			if req.LogoutPref != nil {
+				on = *req.LogoutPref
+			}
+			// Without a logout URL nothing would be redirected, so nothing is recorded.
+			if on && s.Gateway.LogoutURL != "" {
+				mt := metav1.NewTime(t)
+				st.LastLogout = &mt
+			}
+		}
 	}
 	prevLogin := st.LoginName
 	if req.LoginName != nil {

@@ -28,7 +28,7 @@ const (
 )
 
 // StopReason says why a desktop stopped. See docs/contract.md, "Stop reasons".
-// +kubebuilder:validation:Enum=user;idle;suspend;kube-stop;exit;admin;ldap
+// +kubebuilder:validation:Enum=user;idle;suspend;kube-stop;exit;admin;unseen
 type StopReason string
 
 const (
@@ -38,7 +38,7 @@ const (
 	StopKubeStop StopReason = "kube-stop"
 	StopExit     StopReason = "exit"
 	StopAdmin    StopReason = "admin"
-	StopLDAP     StopReason = "ldap"
+	StopUnseen   StopReason = "unseen"
 )
 
 // Stage ids the gateway also reads (docs/contract.md, section 3.4).
@@ -51,15 +51,8 @@ const (
 
 // Condition types and reasons.
 const (
-	ConditionAuthorized = "Authorized"
-	ConditionReady      = "Ready"
-	ConditionLoginName  = "LoginName"
-
-	ReasonMember       = "Member"
-	ReasonLDAPDisabled = "LDAPDisabled"
-	ReasonNotMember    = "NotMember"
-	ReasonLDAPError    = "LDAPError"
-	ReasonInvalidName  = "InvalidName"
+	ConditionReady     = "Ready"
+	ConditionLoginName = "LoginName"
 
 	// LoginName reasons: the desktop user has the desktop's name, or fell back to "user" because
 	// the name is not a valid login name or is an account of the image.
@@ -72,7 +65,7 @@ const (
 
 // DesktopSpec is the desired state of a Desktop.
 type DesktopSpec struct {
-	// User is the user ID exactly as the auth header and LDAP have it.
+	// User is the user ID exactly as the auth header has it.
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="user is immutable"
 	User string `json:"user"`
@@ -86,6 +79,17 @@ type DesktopSpec struct {
 	// A restart also applies a pending update.
 	// +optional
 	RestartRequestedAt *metav1.Time `json:"restartRequestedAt,omitempty"`
+
+	// LastSeen is when the gateway last served the owner, at most hourly. desktop.stopAfterUnseen
+	// stops a desktop older than that. The gateway may not write status, so it lives in spec.
+	// +optional
+	LastSeen *metav1.Time `json:"lastSeen,omitempty"`
+
+	// DisplayName is the owner's name from the login proxy's header, as the gateway last saw it.
+	// A start copies it to status.displayName; a running pod never sees a change.
+	// +kubebuilder:validation:MaxLength=512
+	// +optional
+	DisplayName string `json:"displayName,omitempty"`
 }
 
 // LastStop records the most recent recorded stop. Microsecond precision: compared with LastStart.
@@ -134,7 +138,7 @@ type DesktopStatus struct {
 	// ImagePull records image pulls of the desktop pod; kept while the desktop is off.
 	// +optional
 	ImagePull *ImagePull `json:"imagePull,omitempty"`
-	// Message gives detail for Error or an unauthorized desktop.
+	// Message gives detail for Error or a desktop that cannot start.
 	// +optional
 	Message string `json:"message,omitempty"`
 	// URL is the proxy target of the gateway.
@@ -171,6 +175,10 @@ type DesktopStatus struct {
 	// web client wakes it. Reset with the pod.
 	// +optional
 	Asleep bool `json:"asleep,omitempty"`
+	// LastLogout is when the user logged out of the session without a shutdown, as the agent
+	// reported it. Reset with the pod.
+	// +optional
+	LastLogout *metav1.Time `json:"lastLogout,omitempty"`
 	// LoginName is the desktop user's login name, as the agent reported it: the desktop name, or
 	// "user" when that is not usable (condition LoginName). Kept while off.
 	// +optional
@@ -188,7 +196,7 @@ type DesktopStatus struct {
 	// +kubebuilder:validation:MaxItems=16
 	// +optional
 	HomePaths []string `json:"homePaths,omitempty"`
-	// DisplayName is the LDAP display name the current or last pod was started with.
+	// DisplayName is the display name the current or last pod was started with.
 	// +optional
 	DisplayName string `json:"displayName,omitempty"`
 	// +optional
@@ -208,6 +216,7 @@ type DesktopStatus struct {
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
 // +kubebuilder:printcolumn:name="Stage",type=string,JSONPath=`.status.stage`
 // +kubebuilder:printcolumn:name="Clients",type=integer,JSONPath=`.status.connectedClients`
+// +kubebuilder:printcolumn:name="Last Seen",type=date,JSONPath=`.spec.lastSeen`
 // +kubebuilder:printcolumn:name="Asleep",type=boolean,JSONPath=`.status.asleep`
 // +kubebuilder:printcolumn:name="Update",type=boolean,JSONPath=`.status.updatePending`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`

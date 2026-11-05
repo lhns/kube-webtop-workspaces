@@ -17,7 +17,7 @@ rules:
   - {apiGroups: [""], resources: [services], verbs: [create, get, list, patch, update, watch]}
   - {apiGroups: [apps], resources: [deployments], verbs: [create, get, list, patch, update, watch]}
   - {apiGroups: [coordination.k8s.io], resources: [leases], verbs: [create, get, list, patch, update, watch]}
-  - {apiGroups: [webtop.lhns.github.io], resources: [desktops], verbs: [get, list, patch, update, watch]}
+  - {apiGroups: [webtop.lhns.github.io], resources: [desktops], verbs: [delete, get, list, patch, update, watch]}
   - {apiGroups: [webtop.lhns.github.io], resources: [desktops/status], verbs: [get, patch, update]}
 ---
 apiVersion: rbac.authorization.k8s.io/v1

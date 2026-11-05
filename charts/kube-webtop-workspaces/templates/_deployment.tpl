@@ -91,36 +91,10 @@ spec:
             - name: config
               mountPath: /etc/kube-webtop-workspaces
               readOnly: true
-            {{- if and $isController $ctx.Values.ldap.bindSecret.name }}
-            - name: ldap-password
-              mountPath: {{ include "kwt.ldapPasswordPath" $ctx | dir }}
-              readOnly: true
-            {{- end }}
-            {{- if and $isController $ctx.Values.ldap.caSecret.name }}
-            - name: ldap-ca
-              mountPath: {{ include "kwt.ldapCAPath" $ctx | dir }}
-              readOnly: true
-            {{- end }}
       volumes:
         - name: config
           configMap:
             name: {{ include "kwt.fullname" $ctx }}
-        {{- if and $isController $ctx.Values.ldap.bindSecret.name }}
-        - name: ldap-password
-          secret:
-            secretName: {{ $ctx.Values.ldap.bindSecret.name }}
-            items:
-              - key: {{ $ctx.Values.ldap.bindSecret.key }}
-                path: password
-        {{- end }}
-        {{- if and $isController $ctx.Values.ldap.caSecret.name }}
-        - name: ldap-ca
-          secret:
-            secretName: {{ $ctx.Values.ldap.caSecret.name }}
-            items:
-              - key: {{ $ctx.Values.ldap.caSecret.key }}
-                path: ca.crt
-        {{- end }}
       affinity:
         {{- include "kwt.affinity" (dict "ctx" $ctx "component" $component "affinity" $v.affinity) | nindent 8 }}
       {{- with $v.nodeSelector }}

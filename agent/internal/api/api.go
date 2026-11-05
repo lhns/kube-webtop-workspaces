@@ -56,6 +56,9 @@ type Report struct {
 	ConnectedClients *int   `json:"connectedClients,omitempty"`
 	IdleSeconds      *int   `json:"idleSeconds,omitempty"`
 	Asleep           *bool  `json:"asleep,omitempty"`
+	// LoggedOutAt (RFC 3339) and LogoutPref come from the logout marker.
+	LoggedOutAt *string `json:"loggedOutAt,omitempty"`
+	LogoutPref  *bool   `json:"logoutPref,omitempty"`
 	// Set by Client.Report.
 	LoginName string   `json:"loginName,omitempty"`
 	HomePaths []string `json:"homePaths,omitempty"`

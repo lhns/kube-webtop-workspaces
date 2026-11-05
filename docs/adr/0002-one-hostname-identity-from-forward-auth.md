@@ -30,3 +30,9 @@ rules, and still need something in the path that knows whether a desktop is runn
 
 `trustedProxyCIDRs` is not a second barrier in typical clusters: the ingress pods share the pod CIDR
 with the desktops. The NetworkPolicy is the gate.
+
+## Amendment 2026-11-05
+
+The forward-auth headers are the only identity source (0017): also the display name
+(`gateway.displayNameHeader`), and the group check is the only access control. The gateway records
+the owner as seen (`spec.lastSeen`) from authorized requests only.

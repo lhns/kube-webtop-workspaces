@@ -83,34 +83,12 @@
         "url": {"type": "string"}
       }
     },
-    "ldap": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "url": {"type": "string"},
-        "startTLS": {"type": "boolean"},
-        "insecureSkipVerify": {"type": "boolean"},
-        "bindDN": {"type": "string"},
-        "baseDN": {"type": "string"},
-        "userFilter": {"type": "string"},
-        "userAttribute": {"type": "string"},
-        "groupDN": {"type": "string"},
-        "adminGroupDN": {"type": "string"},
-        "membership": {"enum": ["memberOf", "member"]},
-        "memberAttribute": {"type": "string"},
-        "displayNameAttribute": {"type": "string"},
-        "syncInterval": {"type": "string"},
-        "timeout": {"type": "string"},
-        "errorPolicy": {"enum": ["deny", "allow"]},
-        "bindSecret": {"$ref": "#/definitions/secretRef"},
-        "caSecret": {"$ref": "#/definitions/secretRef"}
-      }
-    },
     "desktop": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
         "image": {"type": "string"},
+        "stopAfterUnseen": {"type": "string"},
         "imagePullPolicy": {"enum": ["Always", "IfNotPresent", "Never"]},
         "imagePullSecrets": {"type": "array"},
         "port": {"type": "integer", "minimum": 1, "maximum": 65535},
@@ -192,7 +170,14 @@
         "adminGroup": {"type": "string"},
         "requiredGroup": {"type": "string"},
         "trustedProxyCIDRs": {"type": "array", "items": {"type": "string"}},
-        "cookieSecure": {"type": "boolean"}
+        "cookieSecure": {"type": "boolean"},
+        "displayNameHeader": {"type": "string"},
+        "logoutUrl": {"type": "string", "pattern": "^(https?://.+)?$"},
+        "ssoLogoutDefaults": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {"onLogout": {"type": "boolean"}}
+        }
       }
     },
     "desktopServiceAccount": {

@@ -10,7 +10,7 @@ Version: `v1alpha1`. Go module: `github.com/lhns/kube-webtop-workspaces`.
 | component | binary | replicas | job |
 | --- | --- | --- | --- |
 | gateway | `kube-webtop-workspaces --mode=gateway` | 2+, stateless | auth-header routing, start on navigation, boot/off pages, reverse proxy |
-| controller | `kube-webtop-workspaces --mode=controller` | 2+, leader election | reconcile `Desktop`s, LDAP sync (leader only); power/report API (every replica) |
+| controller | `kube-webtop-workspaces --mode=controller` | 2+, leader election | reconcile `Desktop`s, unseen sweep (leader only); power/report API (every replica); admin CLI (`desktops`, section 12) |
 | desktop | the desktop image | 0/1 per user | NixOS + systemd; the in-pod agent talks to the power/report API |
 
 Everything lives in **one namespace** (`namespace` in the config, default: the pod's namespace).
@@ -34,9 +34,11 @@ Desktop whose name is not `sanitize(spec.user)`.
 
 | field | type | notes |
 | --- | --- | --- |
-| `user` | string, required, immutable (CEL `self == oldSelf`) | the user ID exactly as the auth header / LDAP has it |
+| `user` | string, required, immutable (CEL `self == oldSelf`) | the user ID exactly as the auth header has it |
 | `powerState` | `On` \| `Off`, default `Off` | desired state |
 | `restartRequestedAt` | RFC 3339 time, optional | set to request a restart ("reboot"); applies pending updates |
+| `lastSeen` | RFC 3339 time, optional | the gateway served the owner, written at most hourly (section 7.1); `desktop.stopAfterUnseen` reads it. In spec because the gateway may not write status |
+| `displayName` | string, up to 512 | the owner's name from the login proxy's header (`gateway.displayNameHeader`), cleaned like `status.displayName`; a start copies it there |
 
 ### status
 
@@ -45,7 +47,7 @@ Desktop whose name is not `sanitize(spec.user)`.
 | `phase` | `Off` \| `Starting` \| `Running` \| `Stopping` \| `Error` | summary; the gateway proxies only in `Running` |
 | `stage` | string | human-readable current step (section 3.4) |
 | `bootProgress` | int 0–100 | 0 when off |
-| `message` | string | detail for `Error` or an unauthorized desktop |
+| `message` | string | detail for `Error` or a desktop that cannot start |
 | `url` | string | proxy target, `http://<svc>.<ns>.svc:<port>`; set by the controller |
 | `podName`, `podUID` | string | the current desktop pod |
 | `agentReady` | bool | the agent of `podUID` reported ready |
@@ -62,15 +64,14 @@ Desktop whose name is not `sanitize(spec.user)`.
 | `homePaths` | []string, ≤ 16 | paths the user's home is mounted at, from the agent; kept while off |
 | `loginNameError` | string, ≤ 512 | why the rename to the desktop name failed, from the agent (section 8.3) |
 | `softwareRestore` | object | `active`, `done`, `total` (steps), `failed`: the software restore after an image update, from the agent (section 8.3); never blocks `Ready`. The boot page says so while `active`. Reset with the pod |
-| `displayName` | string | the LDAP display name the current or last pod started with (section 6) |
+| `displayName` | string | `spec.displayName` as the current or last pod started with it: no control characters, `:` `,` quotes or backslashes, at most 128 characters. Only a start (or applied restart) copies it, so a running pod's template never changes with the header |
+| `lastLogout` | time | the session logged out without a shutdown and the user's choice (default `gateway.ssoLogoutDefaults`) says to sign out at the provider; only set with `gateway.logoutUrl`. Reset with the pod (section 7.8) |
 | `imagePull` | `{image, startedAt?, lastSizeBytes?, lastDurationSeconds?}` | the desktop image's pulls, for the boot page's download estimate (section 3.4); kept while off |
 | `observedGeneration` | int | |
-| `conditions` | `[]metav1.Condition` | `Authorized`, `Ready`, `LoginName` |
+| `conditions` | `[]metav1.Condition` | `Ready`, `LoginName` |
 
 Conditions:
 
-- `Authorized`: `True` (reason `Member` or `LDAPDisabled`), `False` (`NotMember`), `Unknown`
-  (`LDAPError` — no successful lookup yet; `InvalidName` — name ≠ `sanitize(spec.user)`).
 - `Ready`: `True` iff phase `Running`.
 - `LoginName` (once the agent reported `loginName`): `True` (`DesktopName`) when the desktop user has
   the desktop's name; `False` when the image fell back to `user` because the name starts with a digit
@@ -126,9 +127,7 @@ labels/annotations to an adopted PVC; it never changes its spec.
 ### 3.2 Reconcile
 
 1. **Validate:** name = `sanitize(spec.user)`, else `Error`.
-2. **Authorize:** `Authorized` from the LDAP member cache (section 6). On a start (`On` while the
-   Deployment is at 0) of a user not in the cache, query LDAP directly for that user. Not authorized
-   → no start, phase `Off`, `message` set. An LDAP error never stops a running desktop.
+2. *(Authorization is the gateway's: the controller starts whatever is `On`.)*
 3. **PVC** when starting (section 3.1).
 4. **Service** and **Deployment** (always, once valid).
    - Desired pod template rendered from the config (section 5); hash = SHA-256 of the rendered pod
@@ -137,9 +136,9 @@ labels/annotations to an adopted PVC; it never changes its spec.
      `spec.restartRequestedAt > status.observedRestartAt` (rollout; also stamps `restarted-at`).
    - Otherwise only `spec.replicas` is patched; a differing hash sets `status.updatePending=true`.
      **A running desktop is never restarted by an update.**
-5. **Replicas:** 1 iff `powerState=On` and authorized, else 0.
+5. **Replicas:** 1 iff `powerState=On`, else 0.
 6. **Stop recording:** when the controller scales 1→0 and `status.lastStop.time < status.lastStart`
-   (nobody recorded a reason), it records reason `admin`. LDAP removal records `ldap`.
+   (nobody recorded a reason), it records reason `admin`. The unseen sweep records `unseen`.
 7. **Clean exit:** while `powerState=On`, a container termination (current or last state) with an
    exit code in `controller.cleanExitCodes` (default `[0]`) and `finishedAt > status.lastStart` is a
    stop with reason `exit`: `powerState=Off`, Deployment to 0. Not an exit stop if
@@ -159,7 +158,7 @@ Only the leader reconciles. Status is written with merge patches of the fields i
 | `kube-stop` | agent (PID 1 got the stop signal from a pod deletion); never recorded |
 | `exit` | controller (clean exit without a recorded stop) |
 | `admin` | controller (`powerState` set `Off` by someone else) |
-| `ldap` | controller (user left the group) |
+| `unseen` | controller (`desktop.stopAfterUnseen`, section 6) |
 
 ### 3.4 Phase and stage
 
@@ -208,7 +207,7 @@ duration, the numbers of any other Desktop that recorded the same ref are used.
 not an account or group of the image; otherwise `user` (condition `LoginName`, ADR 0011).
 
 **Collision:** if a Desktop `sanitize(user)` exists with a different `spec.user`, the gateway
-refuses (409 page) and never touches it. LDAP IDs are immutable, so the mapping is stable.
+refuses (409 page) and never touches it. User IDs are immutable at the provider, so the mapping is stable.
 
 ## 5. Desktop pod
 
@@ -327,26 +326,23 @@ Optional agent overrides, never set by the controller (the defaults are what shi
 - Re-read the token file on every request (kubelet rotates it).
 - Report the desktop user's login name and home paths (section 8.3).
 
-## 6. LDAP
+## 6. Removed users and unseen desktops
 
-Enabled when `ldap.url` is set; otherwise every user is authorized (`LDAPDisabled`).
+kww has no user directory. Access is the gateway's check of `Remote-Groups` on every request
+(section 7.1); a user removed at the provider is refused from their next request. Their desktop
+keeps running until stopped:
 
-- Membership modes (`ldap.membership`):
-  - `memberOf` (default): members = entries under `ldap.baseDN` matching
-    `(&<userFilter>(<memberAttribute>=<groupDN>))` (`adminGroupDN`, if set, is OR-ed in); `memberAttribute` defaults to `memberOf`.
-  - `member`: read `ldap.groupDN`'s (and `adminGroupDN`'s, if set) `memberAttribute` (default `member`) DNs; each DN's
-    `userAttribute` is the user ID.
-- `userAttribute` (default `uid`) is the user ID compared with `spec.user` (case-sensitive).
-- `displayNameAttribute` (default `displayName`): at each start (or applied restart) the controller
-  reads it from the user's entry under `baseDN` into `status.displayName`, without control
-  characters, `:` `,` quotes or backslashes, at most 128 characters. A failed lookup keeps the last
-  value; no `baseDN` or no value leaves it empty.
-- Sync every `ldap.syncInterval` (default 5m), leader only: users not in the set get
-  `Authorized=False`; if `On`, they are stopped with reason `ldap`. The Desktop and PVC stay; being
-  re-added does not auto-start.
-- **Errors never remove anyone.** A failed sync, or a sync returning **zero** members, changes
-  nothing and is counted as an error. While LDAP fails, new starts follow `ldap.errorPolicy`:
-  `deny` (default) or `allow`.
+- **By hand:** `desktops stop <user>` (reason `admin`) or `desktops remove <user>` (section 12).
+- **Optionally by itself:** `desktop.stopAfterUnseen` (default `0s`, off; otherwise at least `24h`).
+  A leader-only sweep (every 10 minutes) sets `powerState: Off` with reason `unseen` when
+  `spec.lastSeen` is older than that. Connected clients do not exempt a desktop (an open tab of a
+  removed user is the case). Data is kept; a permitted user starts it again. A desktop without
+  `spec.lastSeen` (existing ones after an upgrade) gets it set on the first sweep and is not expired
+  then. The sweep stops nothing while the gateway Deployment (`controller.gatewayDeployment`, set by
+  the chart) has no ready pod, so a gateway outage cannot read as absent users. A login-provider
+  outage longer than the value cannot be told apart: keep it well above any outage.
+
+`spec.displayName` is the owner's name from `gateway.displayNameHeader` (default `Remote-Name`).
 
 ## 7. Gateway
 
@@ -357,6 +353,12 @@ Enabled when `ldap.url` is set; otherwise every user is authorized (`LDAPDisable
   `gateway.groupsSeparator` (default `,`), trimmed.
 - `gateway.requiredGroup` (optional): users not in it get 403 and nothing is created. Members of `adminGroup` pass it.
 - `gateway.adminGroup` (optional): may open any desktop.
+- **Last seen and name.** For a request that passed these checks and belongs to the desktop's own
+  user (not an admin looking at another's), the gateway merge-patches `spec.lastSeen` (at most
+  hourly) and `spec.displayName` when `gateway.displayNameHeader` carries a different name (after
+  cleaning, as for `status.displayName`; header text is untrusted and never rendered in a page).
+  A missing header leaves the stored name. A new Desktop is created with both. Refused requests
+  write nothing. An open tab pings every minute, so a legitimate open tab keeps `lastSeen` fresh.
 - `gateway.trustedProxyCIDRs` (optional): if set, requests whose remote address is outside get 403.
   The gateway does not use `X-Forwarded-For` to decide this.
 
@@ -367,6 +369,7 @@ Enabled when `ldap.url` is set; otherwise every user is authorized (`LDAPDisable
 | `/u/<user>/…` | desktop `sanitize(<user>)`; allowed for that desktop's own user and admins. Unknown → 404; admins never create desktops |
 | everything else | the caller's own desktop |
 | `<base>/.webtop/events` | SSE, never proxied |
+| `<base>/.webtop/logout` | 303 to `gateway.logoutUrl` for the desktop's own user (section 7.8); 404 without a URL, 403 for anyone else or a cross-site request |
 | `<base>/.webtop/reload.js` | the script injected into the desktop's page (section 7.3), never proxied |
 | `<base>/.webtop/ping` | GET/HEAD, `204` `no-store`, same authz as the desktop, never proxied. `reload.js` requests it every 60 s so the forward-auth in front of the gateway sees traffic and keeps its session active while a tab is open |
 | `<base>/.webtop/start` | POST start, never proxied |
@@ -414,7 +417,6 @@ A request is a **navigation** iff:
 | state | navigation | anything else |
 | --- | --- | --- |
 | no Desktop (own path) | create with `powerState: On` → boot page | 503 |
-| `Authorized=False`, not `Running` | 403 page "no access" (a user re-added to the group is let in after the next LDAP sync) | 503 |
 | `Off`, no `status.lastStop` | patch `powerState: On` → boot page | 503 |
 | `Off`, `status.lastStop` set | **off page** "desktop is off — start it?" | 503 |
 | `On`, not `Running` (incl. `Error`) | boot page | 503 |
@@ -429,7 +431,7 @@ gateway error pages send `Cache-Control: no-store`.
 
 ```
 event: status
-data: {"phase":"Starting","stage":"Booting","bootProgress":40,"message":"","authorized":true}
+data: {"phase":"Starting","stage":"Booting","bootProgress":40,"message":""}
 
 event: ready
 data: {}
@@ -552,6 +554,28 @@ ignored.
 
 `GET /healthz` answers `ok`.
 
+### 7.8 Logout
+
+With `gateway.logoutUrl` set, a session that logs out signs the browser out at the login provider.
+Without it nothing is redirected and the session comes back.
+
+1. The image runs `webtop-agent session-exit` as `ExecStopPost` of the session unit. It writes
+   `/run/webtop/logout` (time and the user's choice) when the unit ended with result `success` and
+   no `poweroff`, `reboot` or `halt` job is queued (those are shutdowns, reported by the power hook).
+2. The user's choice is `onLogout=true|false` in `~/.config/webtop/session.conf`, read at that
+   moment by the root agent: only that key, only plain booleans, nothing else; links are resolved and
+   followed only into `/nix/store` (home-manager); any other link, a non-regular file or one over
+   4 KiB counts as no file. No URL can be set there.
+3. The steady report carries `loggedOutAt` and `logoutPref` (section 8.3); the controller stores
+   `status.lastLogout` (reset with the pod) if the choice, or `gateway.ssoLogoutDefaults.onLogout`
+   without one, is true and `logoutUrl` is set.
+4. The SSE status event carries `loggedOut` for the desktop's own user only, and only with a
+   `logoutUrl`. `reload.js` remembers the first value it sees and acts only on a later change, by
+   navigating to `<base>/.webtop/logout`. The URL is never in a page or an event.
+
+The session unit must restart after a logout (webtop-nix); the browser lands in the same Plasma
+session when the user signs in again.
+
 ## 8. Power/report API (controller, every replica)
 
 Listens on `powerApi.addr` (default `:8082`), plain HTTP inside the cluster. All requests:
@@ -575,7 +599,7 @@ Missing/invalid token → 401. Valid token but checks 2–4 fail → 403. TokenR
 {"action": "stop|suspend|reboot", "reason": "user|idle|suspend|kube-stop"}
 ```
 
-`reason` may be omitted for `reboot`. `ldap`, `exit`, `admin` → 400. Effects, **completed before the response**:
+`reason` may be omitted for `reboot`. `unseen`, `exit`, `admin` → 400. Effects, **completed before the response**:
 
 | action / reason | effect |
 | --- | --- |
@@ -597,7 +621,8 @@ All fields optional; absent fields are left unchanged:
 ```json
 {"stage": "Starting Plasma", "bootProgress": 60, "ready": false,
  "connectedClients": 1, "idleSeconds": 12, "asleep": false,
- "loginName": "alice", "homePaths": ["/home/alice", "/home/user"]}
+ "loginName": "alice", "homePaths": ["/home/alice", "/home/user"],
+ "loggedOutAt": "2026-01-01T12:30:00Z", "logoutPref": true}
 ```
 
 `loginName` must be a valid login name (section 4) and `homePaths` at most 16 entries of
@@ -609,6 +634,10 @@ All fields optional; absent fields are left unchanged:
 (webtop-nix's `webtop-restore-progress`, which the agent reads from `/run/webtop/restore/progress.json`, or active
 while `/persist/nix/reinstall/pending` exists); it sets `status.softwareRestore`. The agent also shows it as a
 KDE job (`webtop-restore-job`).
+
+`loggedOutAt` (RFC 3339, else `400`) is the session's logout marker (section 7.8) and `logoutPref` the
+user's own choice, absent if none. The controller sets `status.lastLogout` only when the choice, or
+`gateway.ssoLogoutDefaults.onLogout` without one, is true and `gateway.logoutUrl` is set.
 
 Reports from a pod whose UID ≠ `status.podUID` → `409`, ignored; right after a pod starts the
 controller may not have recorded it yet, so the agent retries a 409 (every few seconds). `ready: true` sets `agentReady`.
@@ -642,34 +671,17 @@ controller:
   leaderElectionID: kube-webtop-workspaces
   requireAgentReady: true
   cleanExitCodes: [0]
-  maxConcurrentReconciles: 4      # Desktops reconciled in parallel; a slow LDAP lookup blocks only one
+  maxConcurrentReconciles: 4      # Desktops reconciled in parallel
+  gatewayDeployment: ""           # the gateway Deployment; required with desktop.stopAfterUnseen (the chart sets it)
 
 powerApi:
   addr: ":8082"
   audience: kube-webtop-workspaces
   url: ""                         # required: http://<controller-svc>.<ns>.svc:8082
 
-ldap:
-  url: ""                         # ldap:// or ldaps://; empty disables LDAP
-  startTLS: false
-  caFile: ""
-  insecureSkipVerify: false
-  bindDN: ""
-  bindPasswordFile: ""            # mounted secret
-  baseDN: ""
-  userFilter: "(objectClass=person)"
-  userAttribute: uid
-  groupDN: ""
-  adminGroupDN: ""               # optional: its members are authorized too
-  membership: memberOf            # memberOf | member
-  memberAttribute: ""             # default memberOf / member by mode
-  displayNameAttribute: displayName
-  syncInterval: 5m
-  timeout: 10s
-  errorPolicy: deny               # deny | allow
-
 desktop:
   image: ""                       # required
+  stopAfterUnseen: 0s             # 0s = never; else at least 24h (section 6)
   imagePullPolicy: IfNotPresent
   imagePullSecrets: []            # [{name: ...}]
   port: 8080
@@ -710,6 +722,9 @@ gateway:
   requiredGroup: ""
   trustedProxyCIDRs: []          # optional; empty = any peer trusted, desktop sees X-Forwarded-Proto: http
   cookieSecure: true
+  displayNameHeader: Remote-Name  # empty header keeps the last name
+  logoutUrl: ""                   # absolute http(s) URL the browser goes to on logout; empty: nowhere
+  ssoLogoutDefaults: {onLogout: true}
 ```
 
 Ports: gateway HTTP `:8080`, controller power API `:8082`, metrics `:9090`, probes `:8081`
@@ -723,22 +738,21 @@ namespaced rules as a Role + RoleBinding in the release namespace and only `toke
 ClusterRole + ClusterRoleBinding.
 
 - **gateway** (Role): `desktops` get/list/watch/create/patch. Nothing else.
-- **controller** (Role): `desktops` get/list/watch/update/patch; `desktops/status` get/update/patch;
+- **controller** (Role): `desktops` get/list/watch/update/patch/delete (delete: CLI `remove` only); `desktops/status` get/update/patch;
   `deployments`, `services` get/list/watch/create/update/patch; `persistentvolumeclaims`
   get/list/watch/create/patch (**no delete**); `pods` get/list/watch; `events` create/patch/list/watch;
   `leases` get/list/watch/create/update/patch.
   (ClusterRole): `tokenreviews` create.
 - **desktop** ServiceAccount: no RBAC at all; its token is used only for the power API audience.
 
-Neither role reads Secrets or ConfigMaps: the config file and `ldap.bindPasswordFile` (and
-`ldap.caFile`) are mounted files.
+Neither role reads Secrets or ConfigMaps: the config file is a mounted file.
 
 Network (besides DNS):
 
 | component | egress | ingress |
 | --- | --- | --- |
 | gateway | API server; desktop Services on `desktop.port` and 8081 (agent) | ingress controller on `gateway.addr` |
-| controller | API server; `ldap.url` when LDAP is enabled | desktop pods on `powerApi.addr` |
+| controller | API server | desktop pods on `powerApi.addr` |
 | desktop | controller on `powerApi.addr` (plus whatever the chart allows) | gateway on `desktop.port` and 8081 (agent) |
 
 Metrics and probes listen on `metricsAddr` and `healthAddr`. Desktop pods must not reach the gateway:
@@ -757,7 +771,7 @@ Controller:
 | `webtop_desktop_info` | gauge (1) | `desktop`, `user`, `phase`, `stage` (section 3.4's stages; an agent's stage is reported as `Booting`) |
 | `webtop_desktop_power_on` | gauge | `desktop` |
 | `webtop_desktop_running` | gauge | `desktop` |
-| `webtop_desktop_authorized` | gauge | `desktop` |
+| `webtop_desktop_last_seen_timestamp_seconds` | gauge | `desktop` |
 | `webtop_desktop_update_pending` | gauge | `desktop` |
 | `webtop_desktop_boot_progress` | gauge | `desktop` |
 | `webtop_desktop_connected_clients` | gauge | `desktop` |
@@ -768,9 +782,6 @@ Controller:
 | `webtop_desktop_start_duration_seconds` | histogram | — (powerState On → Running) |
 | `webtop_power_requests_total` | counter | `action`, `reason`, `code` |
 | `webtop_report_requests_total` | counter | `code` |
-| `webtop_ldap_sync_total` | counter | `result` (`success`, `error`) |
-| `webtop_ldap_last_success_timestamp_seconds` | gauge | — |
-| `webtop_ldap_members` | gauge | — |
 
 Gateway:
 
@@ -781,3 +792,17 @@ Gateway:
 | `webtop_gateway_starts_total` | counter | `trigger` (`create`, `navigate`, `button`) |
 
 Plus the controller-runtime and Go/process defaults.
+
+## 12. Admin CLI
+
+`kubectl -n <ns> exec deploy/<release>-controller -- /kube-webtop-workspaces desktops <command>`; it
+uses the controller's in-cluster credentials, so it adds no authentication surface.
+
+| command | effect |
+| --- | --- |
+| `list` | user, power, phase, last seen, clients, PVC |
+| `stop <user>` | `powerState: Off`, reason `admin`; data kept |
+| `remove <user>` | deletes the Desktop (Deployment and Service follow); the PVC stays and its name is printed. A user who is still permitted gets a new desktop on the next visit, which reuses the PVC |
+
+There is no command that deletes data: the code has no PVC delete (section 3.1), and deleting a
+dynamically provisioned volume may destroy it for good. That stays a deliberate manual step.

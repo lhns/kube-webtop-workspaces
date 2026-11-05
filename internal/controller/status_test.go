@@ -51,7 +51,6 @@ func TestComputeStatus(t *testing.T) {
 		{"error message wins", statusInput{Run: true, ErrMsg: "bad", Pod: readyPod},
 			statusResult{Phase: "Error", Stage: "Error", Message: "bad"}},
 		{"off no pod", statusInput{}, statusResult{Phase: "Off", Stage: "Stopped"}},
-		{"off with note", statusInput{Note: "nope"}, statusResult{Phase: "Off", Stage: "Stopped", Message: "nope"}},
 		{"off pod exists", statusInput{PodExists: true, Pod: readyPod}, statusResult{Phase: "Stopping", Stage: "Stopping"}},
 		{"off only terminating pod", statusInput{PodExists: true}, statusResult{Phase: "Stopping", Stage: "Stopping"}},
 		{"on no pod", statusInput{Run: true}, statusResult{Phase: "Starting", Stage: "Scheduling", Progress: 5}},
