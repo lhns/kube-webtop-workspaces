@@ -44,10 +44,6 @@ in
   # already pulls it in, listed so that stays true. webtop-app-screen comes with the webtop module.
   environment.systemPackages = [ agent pkgs.kdePackages.kde-cli-tools progress notify restoreDesktop ];
 
-  # The restore scripts run as the user and replace their progress file atomically, so it gets a
-  # directory of its own: /run/webtop is root's.
-  systemd.tmpfiles.rules = [ "d /run/webtop/restore 0755 ${uid} - -" ];
-
   # The restore's progress as a job in the tray, from the user's session bus.
   systemd.services.webtop-restore-job = {
     description = "Show the software restore as a job in the tray";

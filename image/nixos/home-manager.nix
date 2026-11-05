@@ -1,6 +1,6 @@
 # Software installation (webtop-nix's services.webtop.nixProfile, ADR 0013), fitted to the pod: the home
 # on the volume, the store restore after an image update, and the agent's view of its progress.
-{ pkgs, ... }:
+{ ... }:
 
 {
   services.webtop.nixProfile = {
@@ -10,7 +10,6 @@
     homeStoragePath = "/persist/home/user";
     # The home's store survives an image update here: webtop-nix-restore, then the reinstall unit (hooks.nix).
     fromImageStore = false;
-    progress = import ../restore-progress.nix { inherit pkgs; };
   };
 
   systemd.services.webtop-home-manager-template = {
