@@ -267,13 +267,14 @@ grep -q 'is declared in the declaration' <<<"$out" || fail "a store path shadowi
 # One command, two backends: when the declaration's hook fails, the profile change is undone too.
 as_user sh -c 'printf "#!/bin/sh\n[ \"\$NIX_PROFILE_BACKEND\" != declaration ]\n" > /tmp/ci-decl-fails && chmod +x /tmp/ci-decl-fails'
 sum=$(as_user sha256sum "$decl")
-plink=$(as_user readlink /home/ci/.local/state/nix/profiles/profile)
+pcontents=$(as_user nix profile list --profile-backend profile --json | jq -S .elements)
 ! as_user nix profile add --profile-hook /tmp/ci-decl-fails "$jqpath" nixpkgs#tree 2>/dev/null \
   || fail "a failing declaration hook did not fail the command"
 [ "$(as_user sha256sum "$decl")" = "$sum" ] || fail "packages.json changed although the command failed"
 ! as_user nix profile list --profile-backend profile --json | jq -e '.elements.jq' >/dev/null \
   || fail "the profile part of a failed command was kept"
-[ "$(as_user readlink /home/ci/.local/state/nix/profiles/profile)" = "$plink" ] || fail "the profile is not back at its generation"
+# A revert is a commit of its own, so the contents come back under a new generation.
+[ "$(as_user nix profile list --profile-backend profile --json | jq -S .elements)" = "$pcontents" ] || fail "the profile's contents did not come back"
 as_user hello >/dev/null || fail "hello went missing in a failed command"
 # Rollback right after a hand edit goes back to the last recorded version; the edit becomes a version.
 as_user sh -c "jq '.elements.handedit = {originalUrl: \"flake:nixpkgs\", attrPath: \"legacyPackages.$nixsys.tree\"}' $decl > /tmp/ci-decl && cat /tmp/ci-decl > $decl"
