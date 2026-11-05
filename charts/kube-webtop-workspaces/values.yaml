@@ -93,6 +93,11 @@ desktop:
   nix:
     extraSubstituters: []       # ["http://cache.example.org/desktops"]
     extraTrustedPublicKeys: []  # ["desktops:<base64>"]
+  # Session time zone (IANA name) and locale for every desktop (chart-only: passed as WEBTOP_TIME_ZONE /
+  # WEBTOP_LOCALE env, docs/contract.md). A user's own webtop.timeZone / webtop.locale wins. Applied when the
+  # desktop session starts. Empty: UTC and en_US.UTF-8.
+  timeZone: ""                  # "Europe/Berlin"
+  locale: ""                    # "de_DE.UTF-8", one built into the image
   # The Nix Software Center's default for listing unfree packages (chart-only: passed as the
   # NSC_UNFREE_LISTED_DEFAULT env, docs/contract.md). A user's own choice in the app overrides it.
   softwareCenter:

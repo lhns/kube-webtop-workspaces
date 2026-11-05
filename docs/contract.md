@@ -292,6 +292,20 @@ as `NSC_UNFREE_LISTED_DEFAULT=<v>` to `/run/webtop/session.env`, which the image
 `webtop-session.service` (so it reaches Plasma and the apps it starts). It only sets the default for
 listing unfree packages: the user's choice in `~/.config/nix-software-center/sources.json` wins.
 
+#### Time zone and locale
+
+The chart's `desktop.timeZone` and `desktop.locale` are the pod env `WEBTOP_TIME_ZONE` (an IANA name) and
+`WEBTOP_LOCALE` (e.g. `de_DE.UTF-8`), set only when non-empty; they reach the image through
+`/run/webtop/env`. Before each start of `webtop-session.service` the image (webtop-nix's `webtop-locale`)
+takes, per setting, the first valid of: `timeZone=` / `locale=` in the user's
+`~/.config/webtop/session.conf` (home-manager `webtop.timeZone` / `webtop.locale`), the env, the default
+(UTC, `en_US.UTF-8`). A zone must be a file under the image's zoneinfo; a locale must be built into the
+image (webtop-nix `services.webtop.locales`). Anything else is logged and the next source used; the file is
+read as the user, only if it is a regular file of at most 64 KiB, and unknown keys (the gateway's
+`onLogout`, `onLock`) are ignored. The result is `/etc/localtime`, `/etc/locale.conf` (`LANG`) and the
+session's `LANG`. A change needs a restart of the desktop session; `/etc` is the image's again after a pod
+restart. A time zone chosen in KDE's settings is written to `/etc/localtime` and lasts until then.
+
 Optional agent overrides, never set by the controller (the defaults are what ships):
 
 | Variable | Default |
