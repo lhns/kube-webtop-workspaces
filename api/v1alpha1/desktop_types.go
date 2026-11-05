@@ -179,6 +179,11 @@ type DesktopStatus struct {
 	// reported it. Reset with the pod.
 	// +optional
 	LastLogout *metav1.Time `json:"lastLogout,omitempty"`
+	// LastLock is when the user used Lock, as the agent reported it, if the user's choice (default
+	// gateway.ssoLogoutDefaults.onLock) says to sign out at the provider, gateway.lockLogsOut is on and
+	// gateway.logoutUrl is set. Lock does not end the session. Reset with the pod.
+	// +optional
+	LastLock *metav1.Time `json:"lastLock,omitempty"`
 	// LoginName is the desktop user's login name, as the agent reported it: the desktop name, or
 	// "user" when that is not usable (condition LoginName). Kept while off.
 	// +optional

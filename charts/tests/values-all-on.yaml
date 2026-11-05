@@ -21,7 +21,8 @@ gateway:
   adminGroup: admins
   logoutUrl: https://auth.example.org/logout
   displayNameHeader: Remote-Name
-  ssoLogoutDefaults: {onLogout: false}
+  ssoLogoutDefaults: {onLogout: false, onLock: true}
+  lockLogsOut: true
   trustedProxyCIDRs: [10.0.0.0/8]
 metrics:
   prometheusAnnotations: true

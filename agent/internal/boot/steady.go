@@ -19,6 +19,7 @@ type Steady struct {
 	Idle     func() int                              // idle seconds
 	Asleep   func() bool                             // optional: frozen by Sleep
 	Logout   func() (at string, pref *bool, ok bool) // optional: the session logged out
+	Lock     func() (at string, pref *bool, ok bool) // optional: the session was locked
 	Poll     time.Duration
 	Interval time.Duration
 }
@@ -31,6 +32,7 @@ func (s *Steady) Run(ctx context.Context) {
 		sentN    int
 		sentZ    bool
 		sentOut  string
+		sentLock string
 		warnedAt time.Time
 	)
 	t := time.NewTicker(s.Poll)
@@ -52,7 +54,14 @@ func (s *Steady) Run(ctx context.Context) {
 				outAt, outPref = at, pref
 			}
 		}
-		if !sentOnce || clients != sentN || asleep != sentZ || outAt != sentOut || time.Since(sentAt) >= s.Interval {
+		var lockAt string
+		var lockPref *bool
+		if s.Lock != nil {
+			if at, pref, ok := s.Lock(); ok {
+				lockAt, lockPref = at, pref
+			}
+		}
+		if !sentOnce || clients != sentN || asleep != sentZ || outAt != sentOut || lockAt != sentLock || time.Since(sentAt) >= s.Interval {
 			idle := s.Idle()
 			r := api.Report{ConnectedClients: &clients, IdleSeconds: &idle}
 			if s.Asleep != nil {
@@ -61,10 +70,13 @@ func (s *Steady) Run(ctx context.Context) {
 			if outAt != "" {
 				r.LoggedOutAt, r.LogoutPref = &outAt, outPref
 			}
+			if lockAt != "" {
+				r.LockedAt, r.LockPref = &lockAt, lockPref
+			}
 			if err := s.Sender.Report(ctx, r); err != nil {
 				log.Printf("steady: report: %v", err) // retried on the next poll
 			} else {
-				sentOnce, sentN, sentZ, sentOut, sentAt = true, clients, asleep, outAt, time.Now()
+				sentOnce, sentN, sentZ, sentOut, sentLock, sentAt = true, clients, asleep, outAt, lockAt, time.Now()
 			}
 		}
 		select {

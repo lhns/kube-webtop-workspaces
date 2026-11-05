@@ -95,6 +95,11 @@ for name, args in cases.items():
         fail(f"{name}: controller.gatewayDeployment is {cfg['controller'].get('gatewayDeployment')!r}")
     if name == "all-on" and cfg["gateway"].get("logoutUrl") != "https://auth.example.org/logout":
         fail(f"{name}: gateway.logoutUrl not rendered")
+    lock_env = [e["value"] for e in cfg["desktop"].get("extraEnv") or [] if e["name"] == "WEBTOP_LOCK_SCREEN"]
+    if lock_env != (["true"] if name == "all-on" else ["false"]):
+        fail(f"{name}: WEBTOP_LOCK_SCREEN {lock_env}")
+    if cfg["gateway"].get("lockLogsOut") != (name == "all-on"):
+        fail(f"{name}: gateway.lockLogsOut {cfg['gateway'].get('lockLogsOut')}")
     if "nix" in cfg["desktop"] or "softwareCenter" in cfg["desktop"] or "timeZone" in cfg["desktop"] or "locale" in cfg["desktop"]:
         fail(f"{name}: chart-only desktop.nix or softwareCenter leaked into the config")
     nsc = [e["value"] for e in cfg["desktop"].get("extraEnv") or [] if e["name"] == "NSC_UNFREE_LISTED_DEFAULT"]
