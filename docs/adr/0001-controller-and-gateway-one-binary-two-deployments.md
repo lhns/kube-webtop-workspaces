@@ -12,7 +12,7 @@ access behind an internet-facing HTTP endpoint.
 ## Decision
 
 - One Go binary, run as **two Deployments**: `--mode=gateway` (user-facing, no write access to core
-  resources, no secrets) and `--mode=controller` (reconciler, LDAP sync, power API).
+  resources, no secrets) and `--mode=controller` (reconciler, unseen sweep, power API).
 - A namespaced **`Desktop` CRD** (`webtop.lhns.github.io/v1alpha1`), one per user, is the only
   interface between them: the gateway sets `spec.powerState`, the controller does the rest and
   reports progress in `status`.
