@@ -135,6 +135,7 @@
             "extraTrustedPublicKeys": {"type": "array", "items": {"type": "string"}}
           }
         },
+        "maxAppScreens": {"type": "integer", "minimum": 1, "maximum": 8},
         "softwareCenter": {
           "type": "object",
           "additionalProperties": false,

@@ -269,6 +269,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			h.serveStart(w, r, rt, d)
+		case focusPath:
+			if r.Method != http.MethodPost {
+				h.methodNotAllowed(w, http.MethodPost)
+				return
+			}
+			h.serveFocus(w, r, d)
 		case wakePath:
 			if r.Method != http.MethodPost {
 				h.methodNotAllowed(w, http.MethodPost)

@@ -14,8 +14,8 @@ const (
 	IdentityError = "identity-error"
 	// FrozenUnits lists the units frozen by Sleep; it exists only while asleep.
 	FrozenUnits = "frozen-units"
-	// PlacedApp is the desktop file id placed on the second screen; empty or missing: none.
-	PlacedApp = "placed-app"
+	// AppScreens is JSON: the display number of each app and the next free one.
+	AppScreens = "app-screens"
 )
 
 // WriteAtomic replaces path via temp file + rename so readers never see a partial write.

@@ -11,6 +11,7 @@ const (
 	outOff         = "off"
 	outStart       = "start"
 	outApp         = "app"
+	outCapped      = "capped"
 	outAsleep      = "asleep"
 	outWake        = "wake"
 	outApps        = "apps"

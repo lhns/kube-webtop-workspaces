@@ -14,9 +14,9 @@ One Go binary (`cmd/kube-webtop-workspaces`), run as two Deployments:
   desktop at `/u/<user>/`.
 - **single apps**: `/apps/<name>` (or `/u/<user>/apps/<name>` for admins) streams one application
   of the desktop instead of the whole desktop, where `<name>` is a desktop file id such as
-  `org.kde.dolphin` or `firefox`. The gateway has the in-pod agent place and start the app on a second
-  screen, then redirects to the desktop page `/#display2-right`. Limits: one app at a time (opening
-  another releases the first, which keeps running on the main desktop), audio plays on the main page
+  `org.kde.dolphin` or `firefox`. The gateway has the in-pod agent place and start the app on its own
+  screen, then redirects to the desktop page `/#display<n>-right-<name>`. Each app gets its own screen
+  and tab, up to `desktop.maxAppScreens` (default 4) at once. Limits: audio plays on the main page
   only, any application installed for the user is allowed, and an unknown id gets a 404 page.
   Reloading the URL does not start a second instance while the app is running. `/apps/` (without a
   name) is an overview page of the desktop's applications with icons and a "running" badge, each

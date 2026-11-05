@@ -93,6 +93,10 @@ desktop:
   nix:
     extraSubstituters: []       # ["http://cache.example.org/desktops"]
     extraTrustedPublicKeys: []  # ["desktops:<base64>"]
+  # How many apps /apps/<id> may show at once, one Selkies screen each (chart-only: passed as the
+  # WEBTOP_MAX_APP_SCREENS env, docs/contract.md). Each visible app screen costs a KWin output plus a
+  # capture and an encoder.
+  maxAppScreens: 4
   # The Nix Software Center's default for listing unfree packages (chart-only: passed as the
   # NSC_UNFREE_LISTED_DEFAULT env, docs/contract.md). A user's own choice in the app overrides it.
   softwareCenter:
