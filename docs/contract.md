@@ -606,7 +606,7 @@ All fields optional; absent fields are left unchanged:
 (`LoginNameFallback` warning / `LoginName`). `loginError` (at most 512 characters, sent with
 `loginName`; empty clears) is why `usermod` failed at activation; it sets `status.loginNameError`.
 `softwareRestore` (`active`, `done`, `total`, `failed`; counts at most 100000) is the restore's progress
-(`image/webtop-restore-progress.sh`, which the agent reads from `/run/webtop/restore/progress.json`, or active
+(webtop-nix's `webtop-restore-progress`, which the agent reads from `/run/webtop/restore/progress.json`, or active
 while `/persist/nix/reinstall/pending` exists); it sets `status.softwareRestore`. The agent also shows it as a
 KDE job (`webtop-restore-job`).
 

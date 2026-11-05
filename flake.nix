@@ -5,7 +5,7 @@
     # webtop-nix's nixpkgs: one Qt tree with its grafted KWin (README, "KWin patch"), and its image
     # builder's skopeo, so a layer compresses to the same blob as in the last build.
     nixpkgs.follows = "webtop-nix/nixpkgs";
-    webtop-nix.url = "github:lhns/webtop-nix/5735678ad23cccdc21d2915fa1e8fd7099ab47c5";
+    webtop-nix.url = "github:lhns/webtop-nix/4bd47b4031137a59fd994faf95d729e65c4c48c7";
   };
 
   outputs = { self, nixpkgs, webtop-nix, ... }:
@@ -24,6 +24,7 @@
           specialArgs = { inherit agent; };
           modules = [
             webtop-nix.nixosModules.webtop
+            webtop-nix.nixosModules.container
             ./image/nixos/container.nix
             ./image/nixos/desktop.nix
             ./image/nixos/hooks.nix

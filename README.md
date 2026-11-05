@@ -52,11 +52,10 @@ for `x86_64-linux` and `aarch64-linux`, each built on its own architecture.
 | path | what |
 | --- | --- |
 | `image/webtop-init` | entrypoint (static busybox): mounts, then `exec /sbin/init` |
-| `image/nixos/container.nix` | NixOS as a container, Nix store settings, journal relay |
+| `image/nixos/container.nix` | webtop-nix's `nixosModules.container` fitted to the pod: kubelet-owned mounts, `storeOverlay`, `journalRelay`, passwordless sudo, Nix settings by group |
 | `image/nixos/desktop.nix` | `services.webtop` (webtop-nix) wired to the pod contract |
 | `image/nixos/hooks.nix` | agent units: power hook, session save, suspend, image-update restore and reinstall |
 | `image/nixos/home-manager.nix` | webtop-nix's `services.webtop.nixProfile` (patched Nix, `packages.json`, starter flake, `webtop-notify`; its ADR 0006) fitted to the pod: home on the volume, restore ordering, progress |
-| `image/webtop-restore-progress.sh`, `image/restore-progress.nix` | progress of the software restore after an image update, for the tray job and the boot page |
 | `image/nixos/identity.nix` | renames the desktop user (uid 1000) to the login name at activation |
 | `image/webtop-nix-lower` | run by webtop-init: the store overlay after an image update (partial invalidation, else reset) |
 | `image/webtop-nix-partial` | invalidates what a new image store breaks in the overlay, rolls back on failure |
@@ -270,6 +269,31 @@ the `desktop-image` job caches it (`packages.<system>.kwin`, keyed by its store 
   Xwayland, apps that support KDE's session restore), not window contents of arbitrary apps.
 - The desktop user has passwordless sudo: root in the pod is unprivileged on the node (user
   namespace).
+
+## Features and third-party changes
+
+A single desktop's features come from [webtop-nix](https://github.com/lhns/webtop-nix) (see its README for the full list and
+[ADR 0016](docs/adr/0016-desktop-features-come-from-webtop-nix-options.md) for the split): the streamed Plasma session, GPU-less
+rendering, software installation, uploads and downloads, several pages and single-app streaming, and the container options
+(`storeOverlay`, `journalRelay`, `adminTools`, `sudo`) with the cursor, 30 fps and DrKonqi defaults. This repo adds what needs
+Kubernetes or the agent:
+
+- Controller and gateway: desktops created on first use, membership from LDAP, one hostname with identity from forward-auth, the
+  Desktop CRD and its status, power actions and updates on the next start.
+- The in-pod agent: boot progress, activity and power reports, the session save on an external stop (`webtop-session-save`), sleep that
+  freezes the session, the apps API for single-app streaming.
+- The pod's entrypoint (`webtop-init`): the overlay mounts for `storeOverlay`, the login-name home, the image-update restore
+  (`webtop-nix-lower`, `-partial`, `-restore`) and its tray job and progress on the boot page.
+
+Third-party changes: none are made in this repo. The desktop image carries webtop-nix's, each with its reason in the webtop-nix README
+(["Features and third-party changes"](https://github.com/lhns/webtop-nix#features-and-third-party-changes)):
+
+| what | change |
+| --- | --- |
+| KWin 6.8 / 6.7 | software presentation, frame finishing, output device globals (GPU-less rendering) |
+| Selkies | second display without primary, upload path, latest page owns the display, touch and touchpad edits in the web client |
+| Nix 2.34 | `nix profile` backends (the `packages.json` declaration), cacheable `path:` inputs |
+| Nix Software Center | the `lhns` fork, pinned |
 
 ## Development
 
