@@ -523,12 +523,19 @@ tzl_set() { # <text>: the user's file, then a session restart (the way a change 
 }
 tzl_set '# c\nonLogout=true\nbogus=1\ntimeZone=Asia/Kolkata\nlocale=fr_FR.UTF-8\n'
 tzl_check Asia/Kolkata fr_FR.UTF-8 IST
-for bad in 'timeZone=../../etc/passwd' 'timeZone=/etc/passwd' 'timeZone=Mars/Olympus' 'timeZone=tzdata.zi' \n    'timeZone=$(touch /pwned)' 'locale=xx_XX.UTF-8' 'locale=de_DE.UTF-8;touch /pwned' 'no equals sign' '\001\002\n'; do
+for bad in 'timeZone=../../etc/passwd' 'timeZone=/etc/passwd' 'timeZone=Mars/Olympus' 'timeZone=tzdata.zi' \
+    'timeZone=$(touch /pwned)' 'locale=xx_XX.UTF-8' 'locale=de_DE.UTF-8;touch /pwned' 'no equals sign' '\001\002\n'; do
   tzl_set "$bad\n"
   tzl_check Asia/Tokyo de_DE.UTF-8 JST
 done
 ! docker exec desktop-boot test -e /pwned || fail "a value was executed"
-sudo rm -f "$sessconf"; sudo ln -s /etc/hostname "$sessconf"; docker exec desktop-boot sh -c "systemctl reset-failed webtop-session; systemctl restart webtop-session"
-tzl_check Asia/Tokyo de_DE.UTF-8 JST
+# A link is followed as the user (home-manager's file is one into the store); what the user cannot read is not.
+for mode in 644:Asia/Kolkata:IST 600:Asia/Tokyo:JST; do
+  IFS=: read -r m zone abbr <<<"$mode"
+  docker exec desktop-boot sh -c "echo timeZone=Asia/Kolkata > /etc/tzl-link && chmod $m /etc/tzl-link"
+  sudo rm -f "$sessconf"; sudo ln -s /etc/tzl-link "$sessconf"
+  docker exec desktop-boot sh -c "systemctl reset-failed webtop-session; systemctl restart webtop-session"
+  tzl_check "$zone" de_DE.UTF-8 "$abbr"
+done
 echo "time zone and locale: ok"
 echo "boot test passed"
