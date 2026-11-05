@@ -1,5 +1,5 @@
 // Package restore reads the progress of the software restore after an image update, which the
-// restore scripts write (image/webtop-restore-progress.sh), and shows it as a KDE job.
+// restore scripts write (webtop-nix's `webtop-restore-progress`), and shows it as a KDE job.
 package restore
 
 import (
