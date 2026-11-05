@@ -22,26 +22,35 @@ const (
 	maxConf  = 4096
 )
 
+// storeRoot is where Nix keeps its immutable, root-owned files; a variable for tests.
+var storeRoot = "/nix/store/"
+
 // Pref returns the user's onLogout choice, or nil if they made none. Everything else about the
-// file is ignored: unknown keys, malformed lines, other values than true and false. A symlink
-// (the file or a directory above it), a non-regular file or one over 4 KiB counts as no file.
+// file is ignored: unknown keys, malformed lines, other values than true and false. A missing
+// file, a non-regular one or one over 4 KiB counts as no file. Home-manager links the file into
+// the Nix store, so links are resolved, and the result is read only if it is the file itself
+// (the user's own, as before) or lies in the store, which the user cannot write. A link to
+// anywhere else (the agent is root) counts as no file.
 func Pref(home string) *bool {
-	p := home
-	for _, part := range strings.Split(ConfFile, "/") {
-		p = filepath.Join(p, part)
-		fi, err := os.Lstat(p)
-		if err != nil || fi.Mode()&os.ModeSymlink != 0 {
-			return nil
-		}
-		if p == filepath.Join(home, ConfFile) && (!fi.Mode().IsRegular() || fi.Size() > maxConf) {
-			return nil
-		}
+	rh, err := filepath.EvalSymlinks(home)
+	if err != nil {
+		return nil
+	}
+	p, err := filepath.EvalSymlinks(filepath.Join(rh, ConfFile))
+	if err != nil {
+		return nil
+	}
+	if p != filepath.Join(rh, ConfFile) && !strings.HasPrefix(p, storeRoot) {
+		return nil
 	}
 	f, err := os.Open(p)
 	if err != nil {
 		return nil
 	}
 	defer f.Close()
+	if fi, err := f.Stat(); err != nil || !fi.Mode().IsRegular() || fi.Size() > maxConf {
+		return nil
+	}
 	var pref *bool
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {

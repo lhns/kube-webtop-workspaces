@@ -1,6 +1,6 @@
 # 0003 — Desktops created on first use, membership from an LDAP group
 
-- Status: Superseded by 0016 (the LDAP membership; creation on first use and navigation-only starts stand)
+- Status: Superseded by 0017 (the LDAP membership; creation on first use and navigation-only starts stand)
 - Date: 2026-10-28
 
 ## Context

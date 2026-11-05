@@ -549,8 +549,9 @@ Without it nothing is redirected and the session comes back.
    `/run/webtop/logout` (time and the user's choice) when the unit ended with result `success` and
    no `poweroff`, `reboot` or `halt` job is queued (those are shutdowns, reported by the power hook).
 2. The user's choice is `onLogout=true|false` in `~/.config/webtop/session.conf`, read at that
-   moment by the root agent: only that key, only plain booleans, nothing else; a symlink (file or
-   directory), a non-regular file or one over 4 KiB counts as no file. No URL can be set there.
+   moment by the root agent: only that key, only plain booleans, nothing else; links are resolved and
+   followed only into `/nix/store` (home-manager); any other link, a non-regular file or one over
+   4 KiB counts as no file. No URL can be set there.
 3. The steady report carries `loggedOutAt` and `logoutPref` (section 8.3); the controller stores
    `status.lastLogout` (reset with the pod) if the choice, or `gateway.ssoLogoutDefaults.onLogout`
    without one, is true and `logoutUrl` is set.

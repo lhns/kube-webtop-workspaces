@@ -49,7 +49,7 @@ func TestPref(t *testing.T) {
 	}
 }
 
-func TestPrefRefusesBigFilesAndSymlinks(t *testing.T) {
+func TestPrefRefusesBigFilesAndLinks(t *testing.T) {
 	home := t.TempDir()
 	writeConf(t, home, "onLogout=true\n"+strings.Repeat("#", maxConf))
 	if Pref(home) != nil {
@@ -84,6 +84,72 @@ func TestPrefRefusesBigFilesAndSymlinks(t *testing.T) {
 	}
 	if Pref(home) != nil {
 		t.Error("symlinked directory was followed")
+	}
+}
+
+// storeLink makes a store-like dir and points storeRoot at it for the test.
+func storeLink(t *testing.T) string {
+	t.Helper()
+	store := t.TempDir()
+	old := storeRoot
+	storeRoot = store + string(filepath.Separator)
+	t.Cleanup(func() { storeRoot = old })
+	return store
+}
+
+func TestPrefFollowsLinksIntoTheStore(t *testing.T) {
+	store := storeLink(t)
+	// Home-manager: the file is a link to a store file; the other keys must be tolerated.
+	target := filepath.Join(store, "hm-session.conf")
+	if err := os.WriteFile(target, []byte("timeZone=Europe/Berlin\nlocale=de_DE.UTF-8\nonLogout=true\n"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".config/webtop"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(home, ConfFile)); err != nil {
+		t.Skip("no symlinks here:", err)
+	}
+	if got := str(Pref(home)); got != "true" {
+		t.Errorf("link into the store: %s, want true", got)
+	}
+
+	// A parent directory linked into the store.
+	dir := filepath.Join(store, "webtop-dir")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "session.conf"), []byte("onLogout=false\n"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	home = t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".config"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(dir, filepath.Join(home, ".config/webtop")); err != nil {
+		t.Skip(err)
+	}
+	if got := str(Pref(home)); got != "false" {
+		t.Errorf("directory link into the store: %s, want false", got)
+	}
+}
+
+func TestPrefRefusesLinksOutsideTheStore(t *testing.T) {
+	storeLink(t)
+	secret := filepath.Join(t.TempDir(), "shadow") // stands for /etc/shadow
+	if err := os.WriteFile(secret, []byte("onLogout=true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".config/webtop"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, filepath.Join(home, ConfFile)); err != nil {
+		t.Skip("no symlinks here:", err)
+	}
+	if Pref(home) != nil {
+		t.Error("link to a file outside the store was read")
 	}
 }
 

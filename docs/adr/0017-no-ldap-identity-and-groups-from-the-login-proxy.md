@@ -1,4 +1,4 @@
-# 0016 — LDAP removal: identity and groups come only from the login proxy
+# 0017 — LDAP removal: identity and groups come only from the login proxy
 
 - Status: Accepted
 - Date: 2026-11-05

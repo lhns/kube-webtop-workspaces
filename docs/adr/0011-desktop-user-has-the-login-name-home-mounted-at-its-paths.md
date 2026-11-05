@@ -55,4 +55,4 @@ directory breaks existing data, and a user's name may change.
 
 ## Amendment 2026-11-05
 
-The display name comes from `gateway.displayNameHeader`, not LDAP (0016).
+The display name comes from `gateway.displayNameHeader`, not LDAP (0017).
