@@ -24,6 +24,7 @@
           specialArgs = { inherit agent; };
           modules = [
             webtop-nix.nixosModules.webtop
+            webtop-nix.nixosModules.container
             ./image/nixos/container.nix
             ./image/nixos/desktop.nix
             ./image/nixos/hooks.nix

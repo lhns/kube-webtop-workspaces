@@ -14,21 +14,11 @@
     extraEnvironment = {
       # TLS ends at the ingress; the gateway speaks plain HTTP to the pod (contract section 5).
       SELKIES_ENABLE_HTTPS = "false";
-      XCURSOR_THEME = "breeze_cursors";
-      XCURSOR_SIZE = "24";
-      # Start at 30 fps: software x264 on shared CPUs keeps up; the client may still raise it.
-      SELKIES_FRAMERATE = "30,8-240";
     };
   };
 
   services.webtop.softwareCenter.enable = true;
 
-  # With no crashes to hand off this unit only watches the journal, and its 30-minute limit then counts as a
-  # failure: every session goes degraded half an hour after login.
-  systemd.user.services.drkonqi-coredump-pickup = {
-    overrideStrategy = "asDropin";
-    serviceConfig.RuntimeMaxSec = "infinity";
-  };
   # The session (Plasma and its apps) gets webtop-init's session.env, e.g. the software center's default.
   systemd.services.webtop-session.serviceConfig.EnvironmentFile = [ "-/run/webtop/session.env" ];
 
