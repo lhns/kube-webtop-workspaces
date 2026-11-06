@@ -1,4 +1,4 @@
-# 0017 — Each app gets its own screen; the agent allocates the numbers and the cap
+# 0018 — Each app gets its own screen; the agent allocates the numbers and the cap
 
 - Status: Accepted
 - Date: 2026-11-05

@@ -59,8 +59,8 @@ func stopWording(r v1alpha1.StopReason) string {
 		return "It exited."
 	case v1alpha1.StopAdmin:
 		return "An administrator stopped it."
-	case v1alpha1.StopLDAP:
-		return "Your account is no longer allowed to use it."
+	case v1alpha1.StopUnseen:
+		return "It was stopped because it had not been used for a long time."
 	default:
 		return "It was stopped."
 	}

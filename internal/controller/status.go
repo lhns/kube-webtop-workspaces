@@ -53,8 +53,6 @@ type statusInput struct {
 	Run bool
 	// ErrMsg is set for an invalid name or a foreign PVC.
 	ErrMsg string
-	// Note is shown with an Off desktop that is On but not allowed to run (unauthorized).
-	Note string
 	// PodExists is true when any pod of the desktop exists, terminating ones included.
 	PodExists bool
 	// Pod is the newest non-terminating pod, or nil.
@@ -83,9 +81,9 @@ func computeStatus(in statusInput) statusResult {
 	}
 	if !in.Run {
 		if in.PodExists {
-			return statusResult{Phase: v1alpha1.PhaseStopping, Stage: stageStopping, Message: in.Note}
+			return statusResult{Phase: v1alpha1.PhaseStopping, Stage: stageStopping}
 		}
-		return statusResult{Phase: v1alpha1.PhaseOff, Stage: stageStopped, Message: in.Note}
+		return statusResult{Phase: v1alpha1.PhaseOff, Stage: stageStopped}
 	}
 	starting := func(stage string, progress int32, msg string) statusResult {
 		return statusResult{Phase: v1alpha1.PhaseStarting, Stage: stage, Progress: progress, Message: msg}

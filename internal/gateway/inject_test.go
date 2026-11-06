@@ -339,22 +339,22 @@ func TestEventOfPull(t *testing.T) {
 		d.Status.Stage = "PullingImage"
 		d.Status.ImagePull = &v1alpha1.ImagePull{Image: "i", StartedAt: &started, LastSizeBytes: 3745009478, LastDurationSeconds: 553}
 	})
-	ev := eventOf(d, now)
+	ev := eventOf(d, now, false)
 	if ev.Stage != "Downloading image" || ev.Pull == nil || ev.Pull.ElapsedSeconds != 130 || ev.Pull.SizeBytes != 3745009478 || ev.Pull.LastDurationSeconds != 553 {
 		t.Fatalf("%+v %+v", ev, ev.Pull)
 	}
 	// Only while pulling, and only with a start time.
 	d.Status.Stage = "CreatingContainer"
-	if eventOf(d, now).Pull != nil {
+	if eventOf(d, now, false).Pull != nil {
 		t.Error("pull shown outside PullingImage")
 	}
 	d.Status.Stage, d.Status.ImagePull.StartedAt = "PullingImage", nil
-	if eventOf(d, now).Pull != nil {
+	if eventOf(d, now, false).Pull != nil {
 		t.Error("pull shown without startedAt")
 	}
 	// A clock behind the event never shows a negative time.
 	d.Status.ImagePull.StartedAt = &started
-	if p := eventOf(d, now.Add(-time.Hour)).Pull; p == nil || p.ElapsedSeconds != 0 {
+	if p := eventOf(d, now.Add(-time.Hour), false).Pull; p == nil || p.ElapsedSeconds != 0 {
 		t.Errorf("negative elapsed: %+v", p)
 	}
 }

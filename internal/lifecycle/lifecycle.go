@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// Package lifecycle records desktop stops; the reconciler, the LDAP sync and the power API share it.
+// Package lifecycle records desktop stops; the reconciler, the unseen sweep, the CLI and the power API share it.
 package lifecycle
 
 import (

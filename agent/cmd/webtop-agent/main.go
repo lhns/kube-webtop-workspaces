@@ -4,6 +4,7 @@
 //	webtop-agent power-hook          at shutdown: report the queued target (poweroff|reboot|halt)
 //	webtop-agent suspend             Sleep: freeze the session until the next client (or, with
 //	                                 WEBTOP_SUSPEND_MODE=poweroff or on failure, mark + poweroff)
+//	webtop-agent session-exit        ExecStopPost of the session unit: record a logout (no shutdown queued)
 //	webtop-agent thaw                thaw whatever Sleep froze (idempotent)
 //	webtop-agent save-session        save the Plasma session on kube stop/suspend
 package main
@@ -28,6 +29,7 @@ import (
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/freeze"
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/identity"
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/idle"
+	"github.com/lhns/kube-webtop-workspaces/agent/internal/logout"
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/powerhook"
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/restore"
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/session"
@@ -50,6 +52,8 @@ func main() {
 		powerHook(cfg)
 	case "suspend":
 		os.Exit(suspend(cfg))
+	case "session-exit":
+		sessionExit(cfg)
 	case "thaw":
 		thaw(cfg)
 	case "restore-job":
@@ -62,7 +66,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: webtop-agent run | power-hook | suspend | thaw | restore-job | save-session")
+	fmt.Fprintln(os.Stderr, "usage: webtop-agent run | power-hook | suspend | thaw | restore-job | save-session | session-exit")
 	os.Exit(2)
 }
 
@@ -125,6 +129,15 @@ func notifyAsleep(cfg config.Config) func(bool) {
 			log.Printf("suspend: report asleep=%v: %v", asleep, err)
 		}
 	}
+}
+
+// sessionExit never fails the unit: ExecStopPost errors would mark the session failed.
+func sessionExit(cfg config.Config) {
+	marked, err := logout.SessionExit(cfg.StateDir, usersession.LookupUser(cfg.User).Home, os.Getenv, sysd.ListJobs, time.Now())
+	if err != nil {
+		log.Printf("session-exit: %v", err)
+	}
+	log.Printf("session-exit: logout recorded=%v", marked)
 }
 
 func thaw(cfg config.Config) {
@@ -225,6 +238,7 @@ func run(cfg config.Config) {
 		Clients:  boot.SelkiesClients(cfg.HTTPPort),
 		Idle:     tracker.Seconds,
 		Asleep:   func() bool { return freeze.Asleep(cfg.StateDir) },
+		Logout:   func() (string, *bool, bool) { return logout.Read(cfg.StateDir) },
 		Poll:     5 * time.Second,
 		Interval: 30 * time.Second,
 	}).Run(ctx)

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"maps"
 	"os"
 	"os/exec"
 	"path"
@@ -202,11 +203,7 @@ func (l *Launcher) Focus(ctx context.Context, screen string) error {
 		l.mu.Lock()
 		st := readScreens(filepath.Join(l.StateDir, state.AppScreens))
 		l.mu.Unlock()
-		known := false
-		for _, v := range st.Apps {
-			known = known || v == n
-		}
-		if !known {
+		if !slices.Contains(slices.Collect(maps.Values(st.Apps)), n) {
 			return ErrUnknownScreen
 		}
 		target = "SELKIES-" + strconv.Itoa(n)

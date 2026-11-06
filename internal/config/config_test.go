@@ -12,7 +12,7 @@ func TestDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Names.Prefix != "desktop-" || c.Desktop.Port != 8080 || c.LDAP.MemberAttribute != "memberOf" ||
+	if c.Names.Prefix != "desktop-" || c.Desktop.Port != 8080 ||
 		!*c.Controller.RequireAgentReady || len(c.Controller.CleanExitCodes) != 1 || c.Storage.MountPath != "/persist" ||
 		c.Controller.MaxConcurrentReconciles != 4 {
 		t.Fatalf("unexpected defaults: %+v", c)
@@ -26,8 +26,11 @@ func TestRejects(t *testing.T) {
 	for _, in := range []string{
 		"namespace: ws\nnames: {prefix: 1x}\n",
 		"namespace: ws\nunknownField: 1\n",
-		"namespace: ws\nldap: {url: 'ldap://x', groupDN: cn=g}\n",
-		"namespace: ws\nldap: {errorPolicy: maybe}\n",
+		"namespace: ws\nldap: {url: 'ldap://x'}\n", // LDAP is gone; a leftover key is an error
+		"namespace: ws\ndesktop: {stopAfterUnseen: 1h}\ncontroller: {gatewayDeployment: gw}\n",
+		"namespace: ws\ndesktop: {stopAfterUnseen: 48h}\n",
+		"namespace: ws\ngateway: {logoutUrl: /logout}\n",
+		"namespace: ws\ngateway: {logoutUrl: 'javascript:alert(1)'}\n",
 	} {
 		if _, err := Parse([]byte(in)); err == nil {
 			t.Errorf("Parse(%q) succeeded", in)
@@ -59,5 +62,17 @@ func TestSelkiesValidation(t *testing.T) {
 		if (err == nil) != tc.ok {
 			t.Errorf("%s: err = %v, want ok=%v", name, err, tc.ok)
 		}
+	}
+}
+
+func TestGatewayDefaultsAndLogoutURL(t *testing.T) {
+	in := "namespace: ws\ngateway: {logoutUrl: 'https://auth.example.org/logout?rd=https%3A%2F%2Fx'}\n" +
+		"desktop: {stopAfterUnseen: 72h}\ncontroller: {gatewayDeployment: gw}\n"
+	c, err := Parse([]byte(in))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Gateway.DisplayNameHeader != "Remote-Name" || c.Desktop.StopAfterUnseen.Duration.Hours() != 72 {
+		t.Fatalf("unexpected: %+v", c.Gateway)
 	}
 }

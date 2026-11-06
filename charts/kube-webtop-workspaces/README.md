@@ -1,7 +1,7 @@
 # kube-webtop-workspaces
 
 Per-user browser desktops: a gateway (auth-header routing, start on navigation, reverse proxy), a
-controller (reconciles `Desktop` objects, LDAP sync, power/report API) and the `Desktop` CRD.
+controller (reconciles `Desktop` objects, optional unseen sweep, power/report API) and the `Desktop` CRD.
 Interface details: [docs/contract.md](../../docs/contract.md). Cluster prerequisites:
 [docs/cluster-requirements.md](../../docs/cluster-requirements.md).
 
@@ -27,13 +27,13 @@ upgrades that change the CRD.
 - A key in `desktop.nix.extraTrustedPublicKeys` is trusted by every desktop's store: whoever can
   push to that cache can put code on every desktop. Give desktops read access only, unless that
   shared trust is what you want.
-- The LDAP bind password comes from an existing Secret (`ldap.bindSecret`); there is no literal value.
+- There is no directory client: access is the gateway's check of the login proxy's group headers.
 - The controller can never delete PersistentVolumeClaims (no `delete` verb; checked by
-  `charts/tests/check.py`). The only cluster-scoped permission is `tokenreviews/create`.
+  `charts/tests/check.py`); it may delete `desktops` only, for the `desktops remove` CLI. The only cluster-scoped permission is `tokenreviews/create`.
 
 ## Values
 
-The sections `names`, `controller`, `powerApi`, `ldap`, `desktop`, `storage`, `gateway`, `metricsAddr`
+The sections `names`, `controller`, `powerApi`, `desktop`, `storage`, `gateway`, `metricsAddr`
 and `healthAddr` map 1:1 onto the config file (contract section 9); `values.schema.json` rejects
 unknown keys. Defaults are in `values.yaml`.
 
@@ -48,17 +48,18 @@ unknown keys. Defaults are in `values.yaml`.
 | `controller.maxConcurrentReconciles` | `4` | desktops reconciled in parallel |
 | `powerApi.addr` / `audience` | `:8082` / `kube-webtop-workspaces` | power/report API |
 | `powerApi.url` | `""` | URL the desktop agent uses; empty: the controller Service |
-| `ldap.url` | `""` | empty disables LDAP (everyone authorized) |
-| `ldap.baseDN`, `groupDN`, `adminGroupDN`, `bindDN`, `userFilter`, `userAttribute`, `membership`, `memberAttribute`, `displayNameAttribute`, `syncInterval`, `timeout`, `errorPolicy`, `startTLS`, `insecureSkipVerify` | see values.yaml | LDAP sync |
-| `ldap.bindSecret.name` / `key` | `""` / `password` | existing Secret with the bind password |
-| `ldap.caSecret.name` / `key` | `""` / `ca.crt` | existing Secret with a CA bundle |
 | `desktop.image` | `""` (required) | desktop image |
+| `desktop.stopAfterUnseen` | `0s` | stop (data kept) a desktop whose owner the gateway has not served for this long; `0s` = never, else at least `24h` (contract section 6) |
+| `gateway.displayNameHeader` | `Remote-Name` | header with the user's display name (desktop account name) |
+| `gateway.logoutUrl` | `""` | absolute http(s) URL the browser goes to when the desktop session logs out; empty: nowhere |
+| `gateway.ssoLogoutDefaults.onLogout` | `true` | sign out at the provider on logout, unless the user set `onLogout` in `~/.config/webtop/session.conf` |
 | `desktop.runtimeClassName` | `""` | RuntimeClass with writable cgroups (not created by the chart) |
 | `desktop.hostUsers` | `false` | user namespace |
 | `desktop.port`, `resources`, `nodeSelector`, `tolerations`, `affinity`, `priorityClassName`, `podLabels`, `podAnnotations` | see values.yaml | desktop pod scheduling |
 | `desktop.extraEnv`, `extraVolumes`, `extraVolumeMounts`, `securityContext` | | extra pod config; `securityContext` replaces the default container one |
 | `desktop.nix.extraSubstituters` / `extraTrustedPublicKeys` | `[]` / `[]` | extra binary caches in the desktops' `nix.conf`, after cache.nixos.org (passed as `WEBTOP_NIX_*` env) |
 | `desktop.maxAppScreens` | `4` | apps `/apps/<id>` may show at once (1-8), one Selkies screen each; each costs a KWin output plus a capture and an encoder (passed as `WEBTOP_MAX_APP_SCREENS` env) |
+| `desktop.timeZone` / `desktop.locale` | `""` / `""` | session time zone (IANA name) and locale (e.g. `de_DE.UTF-8`, one built into the image) of every desktop; empty means UTC and `en_US.UTF-8`. A user's `webtop.timeZone` / `webtop.locale` (home-manager) wins; an invalid value is logged and skipped. Passed as `WEBTOP_TIME_ZONE` / `WEBTOP_LOCALE` env and applied when the session starts, so a restart of the desktop session applies a change of the user's file, a new pod (after `helm upgrade`) a change of the chart value |
 | `desktop.softwareCenter.unfreeListedDefault` | `true` | whether the Nix Software Center lists unfree packages until the user chooses otherwise in the app (passed as `NSC_UNFREE_LISTED_DEFAULT` env) |
 | `desktop.prePull.enabled` / `pauseImage` / `priorityClassName` / `resources` | `false` / pinned `registry.k8s.io/pause` / `""` / tiny | DaemonSet that keeps `desktop.image` pulled on every node desktops can run on, so a start after an image update does not wait for the pull. Its container runs `pauseImage`; the desktop image is attached as a read-only image volume (Kubernetes 1.36 GA), so nothing from it runs and kubelet image GC counts it as in use. Uses the desktop's `nodeSelector`, `tolerations`, `affinity` and pull settings, none of its privileges. Disk: each node keeps the current image (about 2-3 GiB compressed plus 6-8 GiB unpacked) and, during a rollover, the previous one until kubelet image GC removes it. A failed pull of a new pin shows on the pod. Recommended where desktop start latency matters |
 | `desktop.selkies` | `{}` | `SELKIES_*` settings (strings, one line, at most 256 characters) for every desktop; override the image defaults, are overridden by the user's allowlisted file. Not a security boundary: the user can edit their own units |
@@ -88,3 +89,24 @@ unknown keys. Defaults are in `values.yaml`.
 `charts/tests/check.py`: CRD copy in sync with `config/crd` (`make chart-crd` refreshes it), Role
 rules identical to `config/rbac`, no PVC `delete`, only `tokenreviews` cluster-wide, policies keep
 desktop pods away from the gateway.
+
+## Removing a user
+
+Remove them at the login provider: they are refused from their next request. Their running desktop
+stays up until stopped. In the controller pod:
+
+```sh
+kubectl -n <ns> exec deploy/<release>-controller -- /kube-webtop-workspaces desktops list
+kubectl -n <ns> exec deploy/<release>-controller -- /kube-webtop-workspaces desktops stop <user>
+kubectl -n <ns> exec deploy/<release>-controller -- /kube-webtop-workspaces desktops remove <user>
+```
+
+`remove` deletes the Desktop and keeps the PVC (its name is printed); deleting the PVC and volume is
+a manual step. `desktop.stopAfterUnseen` does the stopping by itself.
+
+## Logout
+
+With `gateway.logoutUrl` set, logging out of the desktop session also signs the browser out at the
+login provider: the value is any absolute http(s) URL, such as the provider's logout endpoint with a return address; kww does not interpret it. Empty: nothing
+is redirected and the session comes back. The URL is read from the gateway config only, never put in
+a page.

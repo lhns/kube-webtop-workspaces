@@ -23,8 +23,8 @@ One Go binary (`cmd/kube-webtop-workspaces`), run as two Deployments:
   linking to its `/apps/<name>`. Contract:
   [section 7.6](docs/contract.md#76-single-app-baseappsname), ADR 0010.
 - **controller** (`--mode=controller`): reconciles `Desktop` resources
-  (`webtop.lhns.github.io/v1alpha1`) into a PVC, Service and Deployment, and checks LDAP group
-  membership. It also serves the power/report API that the in-pod agent uses to report shutdowns,
+  (`webtop.lhns.github.io/v1alpha1`) into a PVC, Service and Deployment, and stops desktops of long-unseen
+  users when configured. It also serves the power/report API that the in-pod agent uses to report shutdowns,
   reboots, boot progress and session activity. PVCs are never deleted by the controller.
 
 Also:
@@ -102,7 +102,7 @@ declared), with desktop notifications. Packages built locally without a flake re
 if they cannot be restored.
 
 **User identity** (ADR 0011). The desktop user (uid 1000) is named after the desktop
-(`WEBTOP_DESKTOP`), with home `/home/<name>` and the LDAP display name (`WEBTOP_DISPLAY_NAME`) as
+(`WEBTOP_DESKTOP`), with home `/home/<name>` and the login proxy's display name header (`WEBTOP_DISPLAY_NAME`) as
 GECOS. A name that starts with a digit or is an account or group of the image (`root`, `nixbld1`,
 `wheel`, …) falls back to `user`, and the Desktop gets condition `LoginName=False`. The image declares
 the account as `user` and an activation snippet renames it; units, polkit and Nix refer to uid 1000
@@ -236,6 +236,11 @@ client count or sleep state changes.
 client loads its assets and opens `api/websockets` relative to the page's directory, so it needs no
 prefix setting. Selkies' `SELKIES_SUBFOLDER` must stay empty: it would make the server expect the
 prefix the gateway has already stripped.
+
+**Time zone and locale** (`desktop.timeZone`, `desktop.locale`): pod env `WEBTOP_TIME_ZONE` / `WEBTOP_LOCALE`, read from
+`/run/webtop/env` by webtop-nix's `webtop-locale` before each session start. Precedence: the user's
+`webtop.timeZone` / `webtop.locale` (home-manager, in `~/.config/webtop/session.conf`) > the chart > UTC and
+`en_US.UTF-8`. Invalid values are logged and skipped. No browser input; contract, "Time zone and locale".
 
 **Selkies settings** (`image/nixos/desktop.nix`): plain HTTP; audio sink, cursor path and library
 wrapper come from webtop-nix. Clipboard, file transfer and browser cursors are webtop-nix's defaults.

@@ -32,6 +32,9 @@ spec:
     - jsonPath: .status.connectedClients
       name: Clients
       type: integer
+    - jsonPath: .spec.lastSeen
+      name: Last Seen
+      type: date
     - jsonPath: .status.asleep
       name: Asleep
       type: boolean
@@ -66,6 +69,18 @@ spec:
           spec:
             description: DesktopSpec is the desired state of a Desktop.
             properties:
+              displayName:
+                description: |-
+                  DisplayName is the owner's name from the login proxy's header, as the gateway last saw it.
+                  A start copies it to status.displayName; a running pod never sees a change.
+                maxLength: 512
+                type: string
+              lastSeen:
+                description: |-
+                  LastSeen is when the gateway last served the owner, at most hourly. desktop.stopAfterUnseen
+                  stops a desktop older than that. The gateway may not write status, so it lives in spec.
+                format: date-time
+                type: string
               powerState:
                 default: "Off"
                 description: PowerState is the desired power state.
@@ -80,8 +95,7 @@ spec:
                 format: date-time
                 type: string
               user:
-                description: User is the user ID exactly as the auth header and LDAP
-                  have it.
+                description: User is the user ID exactly as the auth header has it.
                 minLength: 1
                 type: string
                 x-kubernetes-validations:
@@ -173,8 +187,8 @@ spec:
                 format: int32
                 type: integer
               displayName:
-                description: DisplayName is the LDAP display name the current or last
-                  pod was started with.
+                description: DisplayName is the display name the current or last pod
+                  was started with.
                 type: string
               homePaths:
                 description: HomePaths are the paths the user's home is mounted at,
@@ -211,6 +225,12 @@ spec:
                 required:
                 - image
                 type: object
+              lastLogout:
+                description: |-
+                  LastLogout is when the user logged out of the session without a shutdown, as the agent
+                  reported it. Reset with the pod.
+                format: date-time
+                type: string
               lastReportTime:
                 format: date-time
                 type: string
@@ -233,7 +253,7 @@ spec:
                     - kube-stop
                     - exit
                     - admin
-                    - ldap
+                    - unseen
                     type: string
                   time:
                     format: date-time
@@ -254,7 +274,8 @@ spec:
                 maxLength: 512
                 type: string
               message:
-                description: Message gives detail for Error or an unauthorized desktop.
+                description: Message gives detail for Error or a desktop that cannot
+                  start.
                 type: string
               observedGeneration:
                 format: int64

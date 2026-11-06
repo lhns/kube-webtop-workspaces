@@ -82,7 +82,7 @@ func ValidLogin(name string) bool {
 // MaxDisplayName is the longest display name passed to the desktop, in characters.
 const MaxDisplayName = 128
 
-// DisplayName makes an LDAP display name safe for the passwd GECOS field and the pod's env file:
+// DisplayName makes a display name (untrusted header text) safe for the passwd GECOS field and the pod's env file:
 // no control characters, field separators (':' ',') or quotes and backslashes, trimmed, at most
 // MaxDisplayName characters.
 func DisplayName(s string) string {

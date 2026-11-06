@@ -68,3 +68,25 @@ func TestRBACReadsEvents(t *testing.T) {
 		}
 	}
 }
+
+// Only the CLI's "remove" needs delete, and only on Desktops (the PVC stays).
+func TestRBACDeletesOnlyDesktops(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "config", "rbac", "controller", "role.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var role rbacv1.ClusterRole
+	if err := yaml.Unmarshal(data, &role); err != nil {
+		t.Fatal(err)
+	}
+	for _, rule := range role.Rules {
+		for _, v := range rule.Verbs {
+			if v != "delete" {
+				continue
+			}
+			if !slices.Equal(rule.Resources, []string{"desktops"}) || !slices.Equal(rule.APIGroups, []string{"webtop.lhns.github.io"}) {
+				t.Errorf("rule %+v lets the controller delete more than Desktops", rule)
+			}
+		}
+	}
+}

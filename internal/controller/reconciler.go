@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -29,14 +28,13 @@ import (
 
 	"github.com/lhns/kube-webtop-workspaces/api/v1alpha1"
 	"github.com/lhns/kube-webtop-workspaces/internal/config"
-	"github.com/lhns/kube-webtop-workspaces/internal/ldap"
 	"github.com/lhns/kube-webtop-workspaces/internal/lifecycle"
 	"github.com/lhns/kube-webtop-workspaces/internal/metrics"
 	"github.com/lhns/kube-webtop-workspaces/internal/names"
 	"github.com/lhns/kube-webtop-workspaces/internal/render"
 )
 
-// +kubebuilder:rbac:groups=webtop.lhns.github.io,resources=desktops,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=webtop.lhns.github.io,resources=desktops,verbs=get;list;watch;update;patch;delete
 // +kubebuilder:rbac:groups=webtop.lhns.github.io,resources=desktops/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch
@@ -52,11 +50,8 @@ type Reconciler struct {
 	// may be written, so a stale cache entry must not be trusted.
 	APIReader client.Reader
 	cfg       atomic.Pointer[config.Config]
-	// Dir is nil when LDAP is disabled.
-	Dir     ldap.Directory
-	Members *MemberCache
-	Now     func() time.Time
-	// Notify delivers events that make the reconciler look at a Desktop again (LDAP sync).
+	Now       func() time.Time
+	// Notify delivers events that make the reconciler look at a Desktop again.
 	Notify chan event.GenericEvent
 	// startObserved is the lastStart (per desktop) whose start duration was observed, so a
 	// reconcile on a cache that has not seen our Running write yet does not observe it again.
@@ -124,65 +119,10 @@ func podToDesktopRequests(pod client.Object) []reconcile.Request {
 	return []reconcile.Request{{NamespacedName: types.NamespacedName{Namespace: pod.GetNamespace(), Name: d}}}
 }
 
-// authResult is the outcome of the authorization step.
-type authResult struct {
-	Status  metav1.ConditionStatus
-	Reason  string
-	Message string
-	// AllowStart is true when a new start may go ahead (an LDAP error follows errorPolicy).
-	AllowStart bool
-}
-
-func (r *Reconciler) authorize(ctx context.Context, d *v1alpha1.Desktop, starting bool) authResult {
-	if !r.Config().LDAP.Enabled() || r.Dir == nil {
-		return authResult{Status: metav1.ConditionTrue, Reason: v1alpha1.ReasonLDAPDisabled, AllowStart: true}
-	}
-	member, known := r.Members.Contains(d.Spec.User)
-	if member {
-		return authResult{Status: metav1.ConditionTrue, Reason: v1alpha1.ReasonMember, AllowStart: true}
-	}
-	if known && !starting {
-		return notMember()
-	}
-	if !known && !starting {
-		return r.ldapError("no successful LDAP lookup yet")
-	}
-	// A start of a user the cache does not list: ask the directory. This blocks this worker for up
-	// to ldap.timeout; controller.maxConcurrentReconciles keeps other desktops reconciling meanwhile.
-	ok, err := r.Dir.IsMember(ctx, d.Spec.User)
-	if err != nil {
-		slog.Warn("ldap lookup failed", "desktop", d.Name, "err", err)
-		return r.ldapError("LDAP lookup failed")
-	}
-	if !ok {
-		return notMember()
-	}
-	r.Members.Add(d.Spec.User)
-	return authResult{Status: metav1.ConditionTrue, Reason: v1alpha1.ReasonMember, AllowStart: true}
-}
-
-// refreshDisplayName sets the display name a starting pod gets. Only starts ask the directory, so
-// the template of a running desktop stays the same; a failed lookup keeps the last one.
-func (r *Reconciler) refreshDisplayName(ctx context.Context, d *v1alpha1.Desktop) {
-	if !r.Config().LDAP.Enabled() || r.Dir == nil {
-		d.Status.DisplayName = ""
-		return
-	}
-	name, err := r.Dir.DisplayName(ctx, d.Spec.User)
-	if err != nil {
-		slog.Warn("ldap display name lookup failed", "desktop", d.Name, "err", err)
-		return
-	}
-	d.Status.DisplayName = names.DisplayName(name)
-}
-
-func notMember() authResult {
-	return authResult{Status: metav1.ConditionFalse, Reason: v1alpha1.ReasonNotMember, Message: "user is not a member of the desktop group"}
-}
-
-func (r *Reconciler) ldapError(msg string) authResult {
-	return authResult{Status: metav1.ConditionUnknown, Reason: v1alpha1.ReasonLDAPError, Message: msg,
-		AllowStart: r.Config().LDAP.ErrorPolicy == config.ErrorPolicyAllow}
+// refreshDisplayName sets the display name a starting pod gets, from the one the gateway stored.
+// Only starts call it, so the template of a running desktop never changes with the header.
+func refreshDisplayName(d *v1alpha1.Desktop) {
+	d.Status.DisplayName = names.DisplayName(d.Spec.DisplayName)
 }
 
 // patchStatus writes the status fields that changed since base, then moves base forward.
@@ -233,7 +173,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 			errMsg = "user ID has no usable characters"
 		}
 		return reconcile.Result{}, r.finish(ctx, d, base, pods.Items, nil, finishArgs{
-			errMsg: errMsg, auth: authResult{Status: metav1.ConditionUnknown, Reason: v1alpha1.ReasonInvalidName, Message: errMsg},
+			errMsg: errMsg,
 		})
 	}
 
@@ -260,20 +200,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		on = false
 	}
 
-	// 2. Authorize. Only a start asks the directory.
-	starting := on && cur == 0
-	auth := r.authorize(ctx, d, starting)
-	if on && cur > 0 && auth.Status == metav1.ConditionFalse {
-		if err := lifecycle.Stop(ctx, r.Client, d, v1alpha1.StopLDAP, r.now()); err != nil {
-			return reconcile.Result{}, err
-		}
-		*base = *d.DeepCopy()
-		on = false
-	}
-
 	// 5. Replicas.
 	var want int32
-	if on && (cur > 0 || auth.AllowStart) {
+	if on {
 		want = 1
 	}
 
@@ -308,7 +237,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		(d.Status.ObservedRestartAt == nil || d.Spec.RestartRequestedAt.After(d.Status.ObservedRestartAt.Time))
 	plan := planDeploy(depExists, cur, want, restartPending)
 	if plan.SetLastStart {
-		r.refreshDisplayName(ctx, d)
+		refreshDisplayName(d)
 	}
 	desired := render.Deployment(cfg, d, want)
 	desiredHash := desired.Annotations[names.AnnotationTemplateHash]
@@ -333,14 +262,12 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 	}
 
 	return result, r.finish(ctx, d, base, pods.Items, pod, finishArgs{
-		on: on, want: want, auth: auth, errMsg: pvcErr, appliedHash: applied, desiredHash: desiredHash, events: ev,
+		want: want, errMsg: pvcErr, appliedHash: applied, desiredHash: desiredHash, events: ev,
 	})
 }
 
 type finishArgs struct {
-	on          bool
 	want        int32
-	auth        authResult
 	errMsg      string
 	appliedHash string
 	desiredHash string
@@ -355,10 +282,10 @@ func (r *Reconciler) finish(ctx context.Context, d, base *v1alpha1.Desktop, pods
 	// Pod identity; a new pod starts with nothing reported.
 	if pod == nil {
 		st.PodName, st.PodUID = "", ""
-		st.AgentReady, st.LastReportTime, st.BootProgress, st.Asleep, st.SoftwareRestore = false, nil, 0, false, nil
+		st.AgentReady, st.LastReportTime, st.BootProgress, st.Asleep, st.SoftwareRestore, st.LastLogout = false, nil, 0, false, nil, nil
 	} else if string(pod.UID) != st.PodUID {
 		st.PodName, st.PodUID = pod.Name, string(pod.UID)
-		st.AgentReady, st.LastReportTime, st.BootProgress, st.Asleep, st.SoftwareRestore = false, nil, 0, false, nil
+		st.AgentReady, st.LastReportTime, st.BootProgress, st.Asleep, st.SoftwareRestore, st.LastLogout = false, nil, 0, false, nil, nil
 	}
 
 	in := statusInput{
@@ -373,9 +300,6 @@ func (r *Reconciler) finish(ctx context.Context, d, base *v1alpha1.Desktop, pods
 		AgentProgress:     st.BootProgress,
 		AttachFailing:     a.events.AttachFailing,
 		Pulling:           a.events.Pulling,
-	}
-	if a.on && a.want == 0 && a.errMsg == "" {
-		in.Note = a.auth.Message
 	}
 	res := computeStatus(in)
 	st.Phase, st.Stage, st.Message, st.BootProgress = res.Phase, res.Stage, res.Message, res.Progress
@@ -393,10 +317,6 @@ func (r *Reconciler) finish(ctx context.Context, d, base *v1alpha1.Desktop, pods
 	}
 	st.ObservedGeneration = d.Generation
 
-	meta.SetStatusCondition(&st.Conditions, metav1.Condition{
-		Type: v1alpha1.ConditionAuthorized, Status: a.auth.Status, Reason: a.auth.Reason,
-		Message: a.auth.Message, ObservedGeneration: d.Generation,
-	})
 	if c, ok := loginNameCondition(d); ok {
 		meta.SetStatusCondition(&st.Conditions, c)
 	}

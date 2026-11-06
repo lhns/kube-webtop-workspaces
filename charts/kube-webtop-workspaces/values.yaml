@@ -1,4 +1,4 @@
-# Values for kube-webtop-workspaces. The sections names, controller, powerApi, ldap, desktop,
+# Values for kube-webtop-workspaces. The sections names, controller, powerApi, desktop,
 # storage and gateway (plus metricsAddr/healthAddr) are rendered 1:1 into the shared config file
 # (docs/contract.md, "Configuration"); keys the binary does not know make it refuse to start.
 # Everything lives in the release namespace.
@@ -28,7 +28,7 @@ controller:
   # Container exit codes that count as a clean poweroff from inside the desktop.
   # Must match what PID 1 of the desktop image exits with.
   cleanExitCodes: [0]
-  # Desktops reconciled in parallel; a slow LDAP lookup holds only one worker.
+  # Desktops reconciled in parallel; one slow desktop holds only one worker.
   maxConcurrentReconciles: 4
 
 powerApi:
@@ -37,38 +37,12 @@ powerApi:
   # URL the desktop agent uses; empty: http://<release>-controller.<namespace>.svc:<port>.
   url: ""
 
-ldap:
-  # Empty url disables LDAP: every user is authorized.
-  url: ""
-  startTLS: false
-  insecureSkipVerify: false
-  bindDN: ""
-  baseDN: ""
-  userFilter: "(objectClass=person)"
-  userAttribute: uid
-  groupDN: ""
-  # Optional second group whose members may also use a desktop (the gateway admin group).
-  adminGroupDN: ""
-  membership: memberOf        # memberOf | member
-  memberAttribute: ""         # default: memberOf / member by mode
-  # The desktop user's display name (GECOS, shown by Plasma), read from the user's entry under
-  # baseDN at each start. Missing or empty: the login name.
-  displayNameAttribute: displayName
-  syncInterval: 5m
-  timeout: 10s
-  errorPolicy: deny           # deny | allow, applies to new starts while LDAP is failing
-  # Bind password from an existing Secret; never a literal value. Sets bindPasswordFile.
-  bindSecret:
-    name: ""
-    key: password
-  # Optional CA bundle from an existing Secret. Sets caFile.
-  caSecret:
-    name: ""
-    key: ca.crt
-
 # Desktop pods created by the controller.
 desktop:
   image: ""                   # required, the desktop image
+  # Stop (data kept) a desktop whose owner the gateway has not served for this long, e.g. 720h.
+  # "0s" never stops one. At least 24h, so a login or gateway outage cannot read as absent users.
+  stopAfterUnseen: 0s
   imagePullPolicy: IfNotPresent
   imagePullSecrets: []        # [{name: ...}]
   port: 8080                  # the web client listens here (plain HTTP)
@@ -97,6 +71,11 @@ desktop:
   # WEBTOP_MAX_APP_SCREENS env, docs/contract.md). Each visible app screen costs a KWin output plus a
   # capture and an encoder.
   maxAppScreens: 4
+  # Session time zone (IANA name) and locale for every desktop (chart-only: passed as WEBTOP_TIME_ZONE /
+  # WEBTOP_LOCALE env, docs/contract.md). A user's own webtop.timeZone / webtop.locale wins. Applied when the
+  # desktop session starts. Empty: UTC and en_US.UTF-8.
+  timeZone: ""                  # "Europe/Berlin"
+  locale: ""                    # "de_DE.UTF-8", one built into the image
   # The Nix Software Center's default for listing unfree packages (chart-only: passed as the
   # NSC_UNFREE_LISTED_DEFAULT env, docs/contract.md). A user's own choice in the app overrides it.
   softwareCenter:
@@ -151,6 +130,14 @@ gateway:
   # any peer is trusted and the desktop sees X-Forwarded-Proto: http.
   trustedProxyCIDRs: []
   cookieSecure: true          # false only when serving plain HTTP
+  # The user's display name (desktop account name, shown by Plasma); empty header keeps the last one.
+  displayNameHeader: Remote-Name
+  # Where the browser goes when the desktop session logs out (any absolute http(s) URL, e.g. the
+  # login provider's logout endpoint with a return address). Empty: logging out redirects nowhere.
+  logoutUrl: ""
+  # Which session events sign out at the provider, unless the user chose otherwise in
+  # ~/.config/webtop/session.conf. Needs logoutUrl.
+  ssoLogoutDefaults: {onLogout: true}
 
 desktopServiceAccount:
   create: true

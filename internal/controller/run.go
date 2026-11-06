@@ -14,13 +14,11 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	crmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	"github.com/lhns/kube-webtop-workspaces/internal/config"
-	"github.com/lhns/kube-webtop-workspaces/internal/ldap"
 	"github.com/lhns/kube-webtop-workspaces/internal/names"
 	"github.com/lhns/kube-webtop-workspaces/internal/powerapi"
 	"github.com/lhns/kube-webtop-workspaces/internal/scheme"
@@ -38,24 +36,19 @@ func CacheOptions(cfg *config.Config) cache.Options {
 	}
 }
 
-// Setup adds the reconciler and, when dir is not nil, the LDAP sync to mgr.
-func Setup(mgr ctrl.Manager, cfg *config.Config, dir ldap.Directory) (*Reconciler, *LDAPSync, error) {
-	notify := make(chan event.GenericEvent, 256)
-	members := &MemberCache{}
-	r := &Reconciler{
-		Client: mgr.GetClient(), APIReader: mgr.GetAPIReader(),
-		Dir: dir, Members: members, Notify: notify,
-	}
+// Setup adds the reconciler and, when desktop.stopAfterUnseen is set, the unseen sweep to mgr.
+func Setup(mgr ctrl.Manager, cfg *config.Config) (*Reconciler, *UnseenSweep, error) {
+	r := &Reconciler{Client: mgr.GetClient(), APIReader: mgr.GetAPIReader()}
 	r.SetConfig(cfg)
 	if err := r.SetupWithManager(mgr); err != nil {
 		return nil, nil, err
 	}
-	if dir == nil {
+	if cfg.Desktop.StopAfterUnseen.Duration == 0 {
 		return r, nil, nil
 	}
-	s := &LDAPSync{
-		Client: mgr.GetClient(), Dir: dir, Cache: members, Namespace: cfg.Namespace,
-		Interval: cfg.LDAP.SyncInterval.Duration, Notify: notify,
+	s := &UnseenSweep{
+		Client: mgr.GetClient(), Namespace: cfg.Namespace, Gateway: cfg.Controller.GatewayDeployment,
+		After: cfg.Desktop.StopAfterUnseen.Duration, Interval: UnseenSweepInterval,
 	}
 	if err := mgr.Add(s); err != nil {
 		return nil, nil, err
@@ -63,7 +56,7 @@ func Setup(mgr ctrl.Manager, cfg *config.Config, dir ldap.Directory) (*Reconcile
 	return r, s, nil
 }
 
-// Run starts the controller manager: reconciler and LDAP sync (leader only) and the
+// Run starts the controller manager: reconciler and unseen sweep (leader only) and the
 // power/report API (every replica). It blocks until ctx is done.
 func Run(ctx context.Context, restCfg *rest.Config, cfg *config.Config) error {
 	scheme, err := scheme.New()
@@ -90,11 +83,7 @@ func Run(ctx context.Context, restCfg *rest.Config, cfg *config.Config) error {
 		return err
 	}
 
-	var dir ldap.Directory
-	if cfg.LDAP.Enabled() {
-		dir = ldap.New(cfg.LDAP)
-	}
-	if _, _, err := Setup(mgr, cfg, dir); err != nil {
+	if _, _, err := Setup(mgr, cfg); err != nil {
 		return err
 	}
 
@@ -102,6 +91,7 @@ func Run(ctx context.Context, restCfg *rest.Config, cfg *config.Config) error {
 		Client: mgr.GetClient(), Reader: mgr.GetAPIReader(),
 		Auth:      &powerapi.TokenReviewer{Client: mgr.GetClient(), Audience: cfg.PowerAPI.Audience},
 		Namespace: cfg.Namespace, ServiceAccount: cfg.Desktop.ServiceAccountName, Audience: cfg.PowerAPI.Audience,
+		Gateway: cfg.Gateway,
 		// Core v1 Events, which the controller role may create.
 		Recorder: mgr.GetEventRecorderFor("kube-webtop-workspaces"), //nolint:staticcheck
 	}

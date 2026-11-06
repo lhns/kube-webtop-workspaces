@@ -15,6 +15,7 @@
   if (app) document.title = app;
   var seen = null; // pod of the Running state this tab has observed
   var awake = false; // this tab has seen the desktop Running and not asleep
+  var loggedOut = null; // lastLogout as first seen; only a later change counts
   var delay = 1000;
   var es;
 
@@ -24,6 +25,10 @@
       var s;
       try { s = JSON.parse(e.data); } catch (_) { return; }
       delay = 1000;
+      // The session logged out while this tab was open (the gateway sends it to the owner only,
+      // and only with a logout URL): visit the gateway path that redirects to the provider.
+      if (loggedOut === null) loggedOut = s.loggedOut || "";
+      else if (s.loggedOut && s.loggedOut !== loggedOut) { logout(); return; }
       if (s.phase === "Running") {
         if (seen === null) seen = s.podUID || "";
         else if (seen !== (s.podUID || "")) reload();
@@ -40,6 +45,12 @@
       setTimeout(connect, delay);
       delay = Math.min(delay * 2, 30000);
     };
+  }
+
+  function logout() {
+    if (es) es.close();
+    stopPing();
+    location.assign(new URL("logout", script.src).href);
   }
 
   function reload() {

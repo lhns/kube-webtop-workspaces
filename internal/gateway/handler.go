@@ -12,11 +12,11 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-logr/logr"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/lhns/kube-webtop-workspaces/api/v1alpha1"
@@ -29,6 +29,7 @@ import (
 const (
 	reservedPrefix = "/.webtop"
 	wakePath       = reservedPrefix + "/wake"
+	logoutPath     = reservedPrefix + "/logout"
 	pingInterval   = 15 * time.Second
 	// wakeCookie marks "the user clicked Wake" for a minute; it is path-scoped to the desktop.
 	wakeCookie       = "webtop_wake"
@@ -65,6 +66,9 @@ type Handler struct {
 	now     func() time.Time // time.Now; tests replace it
 	proxy   *httputil.ReverseProxy
 	agent   AppOpener
+	// touched is when a Touch was last attempted per desktop, so a cache that lags behind
+	// the patch does not repeat it on every request.
+	touched sync.Map
 }
 
 type ctxKey struct{}
@@ -87,6 +91,7 @@ type route struct {
 	rest     string // decoded path below base, "/"-rooted
 	restEsc  string
 	prefixed bool
+	owner    bool // the caller owns the desktop (not an admin looking at another's)
 }
 
 func NewHandler(o Options) (*Handler, error) {
@@ -239,6 +244,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// resolve only lets a non-admin reach their own desktop; an admin may be looking at another's.
+	rt.owner = !rt.prefixed || (d != nil && d.Spec.User == user)
+	if d != nil && d.Spec.User == user {
+		h.touch(r.Context(), d, h.displayName(r))
+	}
 
 	// Cleaned, so "/x/../.webtop/start" cannot reach a desktop's own path space either.
 	if cleaned := path.Clean("/" + rt.rest); cleaned == reservedPrefix || strings.HasPrefix(cleaned, reservedPrefix+"/") {
@@ -255,6 +265,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			h.serveReloadScript(w, r)
+		case logoutPath:
+			if r.Method != http.MethodGet {
+				h.methodNotAllowed(w, http.MethodGet)
+				return
+			}
+			h.serveLogout(w, r, rt)
 		case pingPath:
 			if r.Method != http.MethodGet && r.Method != http.MethodHead {
 				h.methodNotAllowed(w, http.MethodGet)
@@ -455,11 +471,6 @@ func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, rt *route, 
 	}
 }
 
-func authorizedFalse(d *v1alpha1.Desktop) bool {
-	c := meta.FindStatusCondition(d.Status.Conditions, v1alpha1.ConditionAuthorized)
-	return c != nil && c.Status == metav1.ConditionFalse
-}
-
 func (h *Handler) unavailable(w http.ResponseWriter) {
 	h.count(outUnavailable)
 	hd := w.Header()
@@ -487,8 +498,10 @@ func (h *Handler) notRunning(w http.ResponseWriter, r *http.Request, rt *route, 
 	if d == nil {
 		d = &v1alpha1.Desktop{
 			ObjectMeta: metav1.ObjectMeta{Name: rt.name, Namespace: h.ns},
-			Spec:       v1alpha1.DesktopSpec{User: user, PowerState: v1alpha1.PowerOn},
+			Spec:       v1alpha1.DesktopSpec{User: user, PowerState: v1alpha1.PowerOn, DisplayName: h.displayName(r)},
 		}
+		seen := metav1.NewTime(h.now())
+		d.Spec.LastSeen = &seen
 		err := h.store.Create(ctx, d)
 		switch {
 		case err == nil:
@@ -514,10 +527,6 @@ func (h *Handler) notRunning(w http.ResponseWriter, r *http.Request, rt *route, 
 		return
 	}
 
-	if authorizedFalse(d) {
-		h.errorPage(w, http.StatusForbidden, "No access", "Your account is not allowed to use a desktop.", outDenied)
-		return
-	}
 	if d.Spec.PowerState != v1alpha1.PowerOn {
 		if d.Status.LastStop != nil {
 			h.offPage(w, rt, d, app)
@@ -566,10 +575,6 @@ func (h *Handler) serveStart(w http.ResponseWriter, r *http.Request, rt *route, 
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
 	if err := r.ParseForm(); err != nil || !checkCSRF(r) {
 		h.errorPage(w, http.StatusForbidden, "Forbidden", "The request could not be verified. Reload the page and try again.", outDenied)
-		return
-	}
-	if authorizedFalse(d) {
-		h.errorPage(w, http.StatusForbidden, "No access", "Your account is not allowed to use a desktop.", outDenied)
 		return
 	}
 	if d.Spec.PowerState != v1alpha1.PowerOn {

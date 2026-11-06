@@ -117,14 +117,6 @@ func lastStop(r v1alpha1.StopReason) dopt {
 		d.Status.LastStop = &v1alpha1.LastStop{Time: metav1.NowMicro(), Reason: r}
 	}
 }
-func unauthorized() dopt {
-	return func(d *v1alpha1.Desktop) {
-		d.Status.Conditions = []metav1.Condition{{
-			Type: v1alpha1.ConditionAuthorized, Status: metav1.ConditionFalse, Reason: v1alpha1.ReasonNotMember,
-			LastTransitionTime: metav1.Now(),
-		}}
-	}
-}
 
 var navHeaders = map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document"}
 
@@ -359,10 +351,6 @@ func TestStateTable(t *testing.T) {
 			hdr: navHeaders, wantCode: 200, wantBody: "stopped because it was idle", wantCookie: true, wantNoStore: true, wantOutcome: outOff},
 		{name: "xhr, off with lastStop: 503 no patch", obj: desktop("alice", "alice", lastStop(v1alpha1.StopUser)), hdr: xhr,
 			wantCode: 503, wantRetry: true, wantOutcome: outUnavailable},
-		{name: "nav, unauthorized: 403", obj: desktop("alice", "alice", unauthorized()), hdr: navHeaders,
-			wantCode: 403, wantNoStore: true, wantOutcome: outDenied},
-		{name: "xhr, unauthorized: 503", obj: desktop("alice", "alice", unauthorized()), hdr: xhr,
-			wantCode: 503, wantRetry: true, wantOutcome: outUnavailable},
 		{name: "nav, on and starting: boot", obj: desktop("alice", "alice", powered(v1alpha1.PowerOn), phase(v1alpha1.PhaseStarting),
 			func(d *v1alpha1.Desktop) { d.Status.Stage = "Booting"; d.Status.BootProgress = 40 }),
 			hdr: navHeaders, wantCode: 200, wantBody: "Booting", wantOn: true, wantNoStore: true, wantOutcome: outBoot},
@@ -479,12 +467,6 @@ func TestStartPost(t *testing.T) {
 			if rec.Code != 403 || len(e.st.powerOns) != 0 {
 				t.Errorf("%s: code %d, patches %v", name, rec.Code, e.st.powerOns)
 			}
-		}
-	})
-	t.Run("unauthorized", func(t *testing.T) {
-		e := newEnv(t, nil, desktop("alice", "alice", lastStop(v1alpha1.StopIdle), unauthorized()))
-		if rec := post(e, "/.webtop/start", tok, same); rec.Code != 403 || len(e.st.powerOns) != 0 {
-			t.Fatalf("code %d patches %v", rec.Code, e.st.powerOns)
 		}
 	})
 	t.Run("someone else's desktop", func(t *testing.T) {
@@ -740,7 +722,7 @@ func TestSSE(t *testing.T) {
 	br := bufio.NewReader(resp.Body)
 
 	ev, data, err := readEvent(t, br)
-	if err != nil || ev != "status" || data != `{"phase":"Starting","stage":"Booting","bootProgress":40,"message":"","authorized":true}` {
+	if err != nil || ev != "status" || data != `{"phase":"Starting","stage":"Booting","bootProgress":40,"message":""}` {
 		t.Fatalf("first event = %q %q %v", ev, data, err)
 	}
 	// Idle: keep-alive pings arrive (interval is 50ms in tests).
@@ -877,11 +859,11 @@ func TestBootPageSoftwareRestoreLine(t *testing.T) {
 			t.Errorf("active=%v: line shown = %v", active, got)
 		}
 		d := e.desktop(t, "alice")
-		if ev := eventOf(d, time.Now()); ev.SoftwareRestore != active {
+		if ev := eventOf(d, time.Now(), false); ev.SoftwareRestore != active {
 			t.Errorf("active=%v: event %+v", active, ev)
 		}
 	}
-	if ev := eventOf(desktop("alice", "alice"), time.Now()); ev.SoftwareRestore {
+	if ev := eventOf(desktop("alice", "alice"), time.Now(), false); ev.SoftwareRestore {
 		t.Error("restore event without status")
 	}
 }

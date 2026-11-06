@@ -6,9 +6,7 @@ package controller
 
 import (
 	"context"
-	"errors"
 	"os"
-	"sync"
 	"testing"
 	"time"
 
@@ -31,55 +29,10 @@ import (
 
 const testNS = "default"
 
-// fakeDir is a settable ldap.Directory.
-type fakeDir struct {
-	mu           sync.Mutex
-	members      map[string]struct{}
-	displayNames map[string]string
-	err          error
-}
-
-func (f *fakeDir) Members(context.Context) (map[string]struct{}, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.err != nil {
-		return nil, f.err
-	}
-	out := map[string]struct{}{}
-	for k := range f.members {
-		out[k] = struct{}{}
-	}
-	return out, nil
-}
-
-func (f *fakeDir) IsMember(_ context.Context, u string) (bool, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.err != nil {
-		return false, f.err
-	}
-	_, ok := f.members[u]
-	return ok, nil
-}
-
-func (f *fakeDir) DisplayName(_ context.Context, u string) (string, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.err != nil {
-		return "", f.err
-	}
-	return f.displayNames[u], nil
-}
-
-func (f *fakeDir) setErr(err error) { f.mu.Lock(); f.err = err; f.mu.Unlock() }
-func (f *fakeDir) remove(u string)  { f.mu.Lock(); delete(f.members, u); f.mu.Unlock() }
-
 var suite struct {
-	c    client.Client
-	cfg  *config.Config
-	dir  *fakeDir
-	sync *LDAPSync
-	rec  *Reconciler
+	c   client.Client
+	cfg *config.Config
+	rec *Reconciler
 }
 
 func TestMain(m *testing.M) {
@@ -96,7 +49,6 @@ func TestMain(m *testing.M) {
 namespace: ` + testNS + `
 desktop: {image: "img:1"}
 powerApi: {url: "http://ctl.default.svc:8082"}
-ldap: {url: "ldap://fake", baseDN: "dc=x", groupDN: "cn=g,dc=x"}
 `))
 	if err != nil {
 		panic(err)
@@ -111,11 +63,7 @@ ldap: {url: "ldap://fake", baseDN: "dc=x", groupDN: "cn=g,dc=x"}
 	if err != nil {
 		panic(err)
 	}
-	dir := &fakeDir{members: map[string]struct{}{}, displayNames: map[string]string{"alice": "Alice, Example"}}
-	for _, u := range []string{"alice", "bob", "carol", "dave", "erin", "frank", "grace", "heidi", "gina"} {
-		dir.members[u] = struct{}{}
-	}
-	rec, syncer, err := Setup(mgr, cfg, dir)
+	rec, _, err := Setup(mgr, cfg)
 	if err != nil {
 		panic(err)
 	}
@@ -123,7 +71,7 @@ ldap: {url: "ldap://fake", baseDN: "dc=x", groupDN: "cn=g,dc=x"}
 	if err != nil {
 		panic(err)
 	}
-	suite.c, suite.cfg, suite.dir, suite.sync, suite.rec = direct, cfg, dir, syncer, rec
+	suite.c, suite.cfg, suite.rec = direct, cfg, rec
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -201,6 +149,9 @@ func createDesktop(t *testing.T, name string, on bool) *v1alpha1.Desktop {
 	d := &v1alpha1.Desktop{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNS},
 		Spec:       v1alpha1.DesktopSpec{User: name, PowerState: v1alpha1.PowerOff},
+	}
+	if name == "alice" {
+		d.Spec.DisplayName = "Alice, Example"
 	}
 	if on {
 		d.Spec.PowerState = v1alpha1.PowerOn
@@ -288,14 +239,6 @@ func TestStartCreatesObjects(t *testing.T) {
 		d := getDesktop(t, "alice")
 		return d.Status.Phase == v1alpha1.PhaseStarting && d.Status.Stage == "Scheduling"
 	})
-	eventually(t, "Authorized condition", func() bool {
-		for _, c := range getDesktop(t, "alice").Status.Conditions {
-			if c.Type == v1alpha1.ConditionAuthorized && c.Status == metav1.ConditionTrue {
-				return true
-			}
-		}
-		return false
-	})
 
 	// Deleting the Desktop leaves the PVC alone (garbage collection is not part of envtest).
 	if err := suite.c.Delete(context.Background(), d); err != nil {
@@ -310,69 +253,29 @@ func TestStartCreatesObjects(t *testing.T) {
 	})
 }
 
-func TestLDAPRemovalStopsDesktop(t *testing.T) {
+// The gateway patches spec.displayName and spec.lastSeen all the time; a running pod must not notice.
+func TestNameAndLastSeenChangesDoNotRestart(t *testing.T) {
 	needEnv(t)
-	createDesktop(t, "bob", true)
-	waitRunning(t, "bob")
+	createDesktop(t, "ivan", true)
+	waitRunning(t, "ivan")
+	hash := getDesktop(t, "ivan").Status.AppliedTemplateHash
+	gen := tryDeployment("ivan").Generation
 
-	suite.dir.remove("bob")
-	if err := suite.sync.SyncOnce(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	eventually(t, "bob stopped by ldap", func() bool {
-		d := getDesktop(t, "bob")
-		return d.Spec.PowerState == v1alpha1.PowerOff && d.Status.LastStop != nil &&
-			d.Status.LastStop.Reason == v1alpha1.StopLDAP && replicas(tryDeployment("bob")) == 0
+	patchSpec(t, "ivan", func(d *v1alpha1.Desktop) {
+		now := metav1.Now()
+		d.Spec.DisplayName, d.Spec.LastSeen = "Someone Else", &now
 	})
-	eventually(t, "Authorized=False", func() bool {
-		for _, c := range getDesktop(t, "bob").Status.Conditions {
-			if c.Type == v1alpha1.ConditionAuthorized && c.Status == metav1.ConditionFalse && c.Reason == v1alpha1.ReasonNotMember {
-				return true
-			}
-		}
-		return false
+	poke(t, "ivan")
+	consistently(t, "template untouched", 2*time.Second, func() bool {
+		d := getDesktop(t, "ivan")
+		return d.Status.AppliedTemplateHash == hash && !d.Status.UpdatePending && tryDeployment("ivan").Generation == gen
 	})
-	pvc := pvcExists(t, "bob")
-	if !pvc.DeletionTimestamp.IsZero() {
-		t.Fatal("PVC must stay")
-	}
-	// Being re-added does not start it.
-	suite.dir.mu.Lock()
-	suite.dir.members["bob"] = struct{}{}
-	suite.dir.mu.Unlock()
-	if err := suite.sync.SyncOnce(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	consistently(t, "bob stays off", time.Second, func() bool {
-		return getDesktop(t, "bob").Spec.PowerState == v1alpha1.PowerOff && replicas(tryDeployment("bob")) == 0
-	})
-}
-
-func TestLDAPErrorChangesNothing(t *testing.T) {
-	needEnv(t)
-	createDesktop(t, "carol", true)
-	waitRunning(t, "carol")
-
-	suite.dir.setErr(errors.New("ldap down"))
-	defer suite.dir.setErr(nil)
-	if err := suite.sync.SyncOnce(context.Background()); err == nil {
-		t.Fatal("sync must report the error")
-	}
-	// An empty group is an error too and removes nobody.
-	suite.dir.setErr(nil)
-	saved := suite.dir.members
-	suite.dir.mu.Lock()
-	suite.dir.members = map[string]struct{}{}
-	suite.dir.mu.Unlock()
-	if err := suite.sync.SyncOnce(context.Background()); err == nil {
-		t.Fatal("empty group must be an error")
-	}
-	suite.dir.mu.Lock()
-	suite.dir.members = saved
-	suite.dir.mu.Unlock()
-
-	consistently(t, "carol keeps running", 2*time.Second, func() bool {
-		return getDesktop(t, "carol").Spec.PowerState == v1alpha1.PowerOn && replicas(tryDeployment("carol")) == 1
+	// A new start picks the name up.
+	patchSpec(t, "ivan", func(d *v1alpha1.Desktop) { d.Spec.PowerState = v1alpha1.PowerOff })
+	eventually(t, "stopped", func() bool { return replicas(tryDeployment("ivan")) == 0 })
+	patchSpec(t, "ivan", func(d *v1alpha1.Desktop) { d.Spec.PowerState = v1alpha1.PowerOn })
+	eventually(t, "restarted with the new name", func() bool {
+		return getDesktop(t, "ivan").Status.DisplayName == "Someone Else"
 	})
 }
 

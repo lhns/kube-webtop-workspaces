@@ -12,18 +12,17 @@ desktop:
   resources: {requests: {cpu: "1", memory: 2Gi}}
   maxAppScreens: 2
   softwareCenter: {unfreeListedDefault: false}
+  timeZone: Europe/Berlin
+  locale: de_DE.UTF-8
   prePull: {enabled: true}
 storage: {storageClassName: fast, size: 10Gi}
 controller: {cleanExitCodes: [0, 143]}
-ldap:
-  url: ldaps://ldap.example.org
-  bindDN: cn=bind,dc=example,dc=org
-  baseDN: dc=example,dc=org
-  groupDN: cn=desktop,ou=groups,dc=example,dc=org
-  bindSecret: {name: ldap-bind, key: pw}
-  caSecret: {name: ldap-ca}
+
 gateway:
   adminGroup: admins
+  logoutUrl: https://auth.example.org/logout
+  displayNameHeader: Remote-Name
+  ssoLogoutDefaults: {onLogout: false}
   trustedProxyCIDRs: [10.0.0.0/8]
 metrics:
   prometheusAnnotations: true

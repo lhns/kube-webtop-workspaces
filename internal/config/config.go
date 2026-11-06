@@ -6,6 +6,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -27,7 +28,6 @@ type Config struct {
 	HealthAddr  string     `json:"healthAddr"`
 	Controller  Controller `json:"controller"`
 	PowerAPI    PowerAPI   `json:"powerApi"`
-	LDAP        LDAP       `json:"ldap"`
 	Desktop     Desktop    `json:"desktop"`
 	Storage     Storage    `json:"storage"`
 	Gateway     Gateway    `json:"gateway"`
@@ -44,52 +44,16 @@ type Controller struct {
 	LeaderElectionID  string  `json:"leaderElectionID"`
 	RequireAgentReady *bool   `json:"requireAgentReady"`
 	CleanExitCodes    []int32 `json:"cleanExitCodes"`
-	// MaxConcurrentReconciles > 1 keeps a slow direct LDAP lookup from stalling other desktops.
+	// MaxConcurrentReconciles > 1 keeps one slow desktop from stalling the others.
 	MaxConcurrentReconciles int `json:"maxConcurrentReconciles"`
+	// GatewayDeployment is the gateway's Deployment; the unseen sweep waits while it has no ready pod.
+	GatewayDeployment string `json:"gatewayDeployment"`
 }
 
 type PowerAPI struct {
 	Addr     string `json:"addr"`
 	Audience string `json:"audience"`
 	URL      string `json:"url"`
-}
-
-type LDAP struct {
-	URL                string `json:"url"`
-	StartTLS           bool   `json:"startTLS"`
-	CAFile             string `json:"caFile"`
-	InsecureSkipVerify bool   `json:"insecureSkipVerify"`
-	BindDN             string `json:"bindDN"`
-	BindPasswordFile   string `json:"bindPasswordFile"`
-	BaseDN             string `json:"baseDN"`
-	UserFilter         string `json:"userFilter"`
-	UserAttribute      string `json:"userAttribute"`
-	GroupDN            string `json:"groupDN"`
-	AdminGroupDN       string `json:"adminGroupDN"`
-	Membership         string `json:"membership"`
-	MemberAttribute    string `json:"memberAttribute"`
-	// DisplayNameAttribute names the desktop user (GECOS, shown by Plasma); needs baseDN.
-	DisplayNameAttribute string          `json:"displayNameAttribute"`
-	SyncInterval         metav1.Duration `json:"syncInterval"`
-	Timeout              metav1.Duration `json:"timeout"`
-	ErrorPolicy          string          `json:"errorPolicy"`
-}
-
-const (
-	MembershipMemberOf = "memberOf"
-	MembershipMember   = "member"
-	ErrorPolicyDeny    = "deny"
-	ErrorPolicyAllow   = "allow"
-)
-
-func (l LDAP) Enabled() bool { return l.URL != "" }
-
-// GroupDNs lists the groups whose members may use a desktop: the desktop group and, if set, the admin group.
-func (l LDAP) GroupDNs() []string {
-	if l.AdminGroupDN == "" {
-		return []string{l.GroupDN}
-	}
-	return []string{l.GroupDN, l.AdminGroupDN}
 }
 
 type Desktop struct {
@@ -118,7 +82,13 @@ type Desktop struct {
 	Selkies map[string]string `json:"selkies"`
 	// Title is a text/template for the browser tab title; see TitleData. Empty: Selkies' own.
 	Title string `json:"title"`
+	// StopAfterUnseen stops a desktop whose owner the gateway has not served for this long.
+	// 0 (the default) never stops one; otherwise at least MinStopAfterUnseen.
+	StopAfterUnseen metav1.Duration `json:"stopAfterUnseen"`
 }
+
+// MinStopAfterUnseen keeps a login or gateway outage from reading as absent users.
+const MinStopAfterUnseen = 24 * time.Hour
 
 type Storage struct {
 	StorageClassName string                              `json:"storageClassName"`
@@ -138,6 +108,18 @@ type Gateway struct {
 	RequiredGroup     string   `json:"requiredGroup"`
 	TrustedProxyCIDRs []string `json:"trustedProxyCIDRs"`
 	CookieSecure      *bool    `json:"cookieSecure"`
+	// DisplayNameHeader carries the user's display name; empty keeps the last one.
+	DisplayNameHeader string `json:"displayNameHeader"`
+	// LogoutURL is where the browser goes when the session logs out; empty: nowhere.
+	// It never appears in a page: the browser only visits a gateway path that redirects.
+	LogoutURL string `json:"logoutUrl"`
+	// SSOLogoutDefaults are the events that log out at the provider when the user has not chosen.
+	SSOLogoutDefaults SSOLogout `json:"ssoLogoutDefaults"`
+}
+
+// SSOLogout says which session events sign the browser out at the login provider.
+type SSOLogout struct {
+	OnLogout bool `json:"onLogout"`
 }
 
 // Load reads, defaults and validates the config file.
@@ -201,22 +183,6 @@ func (c *Config) Default() {
 	def(&c.PowerAPI.Audience, "kube-webtop-workspaces")
 	c.PowerAPI.URL = strings.TrimRight(c.PowerAPI.URL, "/")
 
-	l := &c.LDAP
-	def(&l.UserFilter, "(objectClass=person)")
-	def(&l.UserAttribute, "uid")
-	def(&l.DisplayNameAttribute, "displayName")
-	def(&l.Membership, MembershipMemberOf)
-	if l.MemberAttribute == "" {
-		if l.Membership == MembershipMember {
-			l.MemberAttribute = "member"
-		} else {
-			l.MemberAttribute = "memberOf"
-		}
-	}
-	def(&l.SyncInterval.Duration, 5*time.Minute)
-	def(&l.Timeout.Duration, 10*time.Second)
-	def(&l.ErrorPolicy, ErrorPolicyDeny)
-
 	d := &c.Desktop
 	def(&d.ImagePullPolicy, corev1.PullIfNotPresent)
 	def(&d.Port, 8080)
@@ -248,6 +214,7 @@ func (c *Config) Default() {
 	def(&g.UserHeader, "Remote-User")
 	def(&g.GroupsHeader, "Remote-Groups")
 	def(&g.GroupsSeparator, ",")
+	def(&g.DisplayNameHeader, "Remote-Name")
 	if g.CookieSecure == nil {
 		g.CookieSecure = ptr(true)
 	}
@@ -266,22 +233,17 @@ func (c *Config) validate() error {
 	if c.Controller.MaxConcurrentReconciles < 1 {
 		errs = append(errs, fmt.Errorf("controller.maxConcurrentReconciles %d: must be at least 1", c.Controller.MaxConcurrentReconciles))
 	}
-	switch c.LDAP.Membership {
-	case MembershipMemberOf, MembershipMember:
-	default:
-		errs = append(errs, fmt.Errorf("ldap.membership %q: must be memberOf or member", c.LDAP.Membership))
-	}
-	switch c.LDAP.ErrorPolicy {
-	case ErrorPolicyDeny, ErrorPolicyAllow:
-	default:
-		errs = append(errs, fmt.Errorf("ldap.errorPolicy %q: must be deny or allow", c.LDAP.ErrorPolicy))
-	}
-	if c.LDAP.Enabled() {
-		if c.LDAP.GroupDN == "" {
-			errs = append(errs, errors.New("ldap.groupDN: required"))
+	if d := c.Desktop.StopAfterUnseen.Duration; d != 0 {
+		if d < MinStopAfterUnseen {
+			errs = append(errs, fmt.Errorf("desktop.stopAfterUnseen %s: must be 0 or at least %s", d, MinStopAfterUnseen))
 		}
-		if c.LDAP.BaseDN == "" && c.LDAP.Membership == MembershipMemberOf {
-			errs = append(errs, errors.New("ldap.baseDN: required for membership memberOf"))
+		if c.Controller.GatewayDeployment == "" {
+			errs = append(errs, errors.New("controller.gatewayDeployment: required with desktop.stopAfterUnseen"))
+		}
+	}
+	if u := c.Gateway.LogoutURL; u != "" {
+		if p, err := url.Parse(u); err != nil || (p.Scheme != "http" && p.Scheme != "https") || p.Host == "" {
+			errs = append(errs, errors.New("gateway.logoutUrl: must be an absolute http(s) URL"))
 		}
 	}
 	errs = append(errs, c.validateSelkies())

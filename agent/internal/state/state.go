@@ -16,6 +16,8 @@ const (
 	FrozenUnits = "frozen-units"
 	// AppScreens is JSON: the display number of each app and the next free one.
 	AppScreens = "app-screens"
+	// Logout is written when the session ends by itself: a time, then the user's sign-out choice.
+	Logout = "logout"
 )
 
 // WriteAtomic replaces path via temp file + rename so readers never see a partial write.
