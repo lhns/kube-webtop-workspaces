@@ -44,8 +44,9 @@ cp "$hm/flake.nix" "$hm/home.nix" "$dir/"
 sudo chown -R 1000:100 "$dir/persist/home"
 
 python3 "$(dirname "$0")/fake-controller.py" 8081 "$reports" &
+controller=$!
 cleanup() {
-  kill $! 2>/dev/null || true
+  kill $controller 2>/dev/null || true
   # Unreadable otherwise once the step has failed.
   if [ -s "$reports" ]; then echo "reports received:"; sed 's/^/  /' "$reports"; fi
 }
