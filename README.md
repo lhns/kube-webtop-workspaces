@@ -21,7 +21,7 @@ One Go binary (`cmd/kube-webtop-workspaces`), run as two Deployments:
   Reloading the URL does not start a second instance while the app is running. `/apps/` (without a
   name) is an overview page of the desktop's applications with icons and a "running" badge, each
   linking to its `/apps/<name>`. Contract:
-  [section 7.6](docs/contract.md#76-single-app-baseappsname), ADR 0010.
+  [section 7.6](docs/contract.md#76-single-app-baseappsname), ADRs 0010 and [0018](docs/adr/0018-each-app-gets-its-own-screen.md).
 - **controller** (`--mode=controller`): reconciles `Desktop` resources
   (`webtop.lhns.github.io/v1alpha1`) into a PVC, Service and Deployment, and stops desktops of long-unseen
   users when configured. It also serves the power/report API that the in-pod agent uses to report shutdowns,
