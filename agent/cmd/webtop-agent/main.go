@@ -240,9 +240,11 @@ func run(cfg config.Config) {
 		Asleep:  func() bool { return freeze.Asleep(cfg.StateDir) },
 		Logout:  func() (string, *bool, bool) { return logout.Read(cfg.StateDir) },
 		Lock: func() (string, *bool, bool) {
-			u := usersession.LookupUser(cfg.User)
-			at, ok := logout.ReadLock(fmt.Sprintf("/run/user/%d", u.UID))
-			return at, logout.LockPref(u.Home), ok
+			at, ok := logout.ReadLock(fmt.Sprintf("/run/user/%d", du.UID))
+			if !ok {
+				return "", nil, false
+			}
+			return at, logout.LockPref(du.Home), true
 		},
 		Poll:     5 * time.Second,
 		Interval: 30 * time.Second,
