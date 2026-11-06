@@ -66,6 +66,7 @@ Desktop whose name is not `sanitize(spec.user)`.
 | `softwareRestore` | object | `active`, `done`, `total` (steps), `failed`: the software restore after an image update, from the agent (section 8.3); never blocks `Ready`. The boot page says so while `active`. Reset with the pod |
 | `displayName` | string | `spec.displayName` as the current or last pod started with it: no control characters, `:` `,` quotes or backslashes, at most 128 characters. Only a start (or applied restart) copies it, so a running pod's template never changes with the header |
 | `lastLogout` | time | the session logged out without a shutdown and the user's choice (default `gateway.ssoLogoutDefaults`) says to sign out at the provider; only set with `gateway.logoutUrl`. Reset with the pod (section 7.8) |
+| `lastLock` | time | the user used Lock and their choice (default `gateway.ssoLogoutDefaults.onLock`) says to sign out at the provider; only set with `gateway.lockLogsOut` and `gateway.logoutUrl`. Reset with the pod (section 7.9) |
 | `imagePull` | `{image, startedAt?, lastSizeBytes?, lastDurationSeconds?}` | the desktop image's pulls, for the boot page's download estimate (section 3.4); kept while off |
 | `observedGeneration` | int | |
 | `conditions` | `[]metav1.Condition` | `Ready`, `LoginName` |
@@ -601,6 +602,28 @@ Without it nothing is redirected and the session comes back.
 The session unit must restart after a logout (webtop-nix); the browser lands in the same Plasma
 session when the user signs in again.
 
+### 7.9 Lock
+
+Lock does not lock or end the session: it signs the browser out at the login provider, like a logout
+that leaves the session running. It needs `gateway.lockLogsOut` and `gateway.logoutUrl`; off, Lock is
+hidden and blocked.
+
+1. The chart passes `WEBTOP_LOCK_SCREEN=true|false` (from `gateway.lockLogsOut`) in the pod env; before
+   each start of the session unit the image (webtop-nix's `webtop-lock-config`, reading `/run/webtop/env`)
+   writes `/etc/xdg/kdeglobals`, so Plasma shows Lock or not. Autolock and lock on resume stay off.
+2. A lock, whichever way it started, is seen by the user's `webtop-lock-guard` (D-Bus
+   `org.freedesktop.ScreenSaver` `ActiveChanged`), which writes the time to
+   `/run/user/<uid>/webtop/lock` and clears the lock through logind at once: there is never a greeter, and
+   the session and its processes are untouched.
+3. The agent reads the marker (a regular file of at most 64 bytes, no link followed, only an RFC 3339
+   time) and `onLock=true|false` of `~/.config/webtop/session.conf` (read as in 7.8), and reports
+   `lockedAt` and `lockPref` (section 8.3). The controller stores `status.lastLock` (reset with the pod)
+   if the choice, or `gateway.ssoLogoutDefaults.onLock` without one, is true, `gateway.lockLogsOut` is on
+   and `logoutUrl` is set. So for a user with `onLock=false`, Lock clears itself and nothing else happens.
+4. The SSE status event carries `locked` for the desktop's own user only, and only with a `logoutUrl`.
+   `reload.js` acts on a change after it connected, never on the first value, by navigating to
+   `<base>/.webtop/logout`, as for a logout.
+
 ## 8. Power/report API (controller, every replica)
 
 Listens on `powerApi.addr` (default `:8082`), plain HTTP inside the cluster. All requests:
@@ -647,7 +670,8 @@ All fields optional; absent fields are left unchanged:
 {"stage": "Starting Plasma", "bootProgress": 60, "ready": false,
  "connectedClients": 1, "idleSeconds": 12, "asleep": false,
  "loginName": "alice", "homePaths": ["/home/alice", "/home/user"],
- "loggedOutAt": "2026-01-01T12:30:00Z", "logoutPref": true}
+ "loggedOutAt": "2026-01-01T12:30:00Z", "logoutPref": true,
+ "lockedAt": "2026-01-01T12:31:00Z", "lockPref": true}
 ```
 
 `loginName` must be a valid login name (section 4) and `homePaths` at most 16 entries of
@@ -663,6 +687,8 @@ KDE job (`webtop-restore-job`).
 `loggedOutAt` (RFC 3339, else `400`) is the session's logout marker (section 7.8) and `logoutPref` the
 user's own choice, absent if none. The controller sets `status.lastLogout` only when the choice, or
 `gateway.ssoLogoutDefaults.onLogout` without one, is true and `gateway.logoutUrl` is set.
+`lockedAt` (RFC 3339, else `400`) and `lockPref` work the same for `status.lastLock` (section 7.9), which
+also needs `gateway.lockLogsOut`.
 
 Reports from a pod whose UID ≠ `status.podUID` → `409`, ignored; right after a pod starts the
 controller may not have recorded it yet, so the agent retries a 409 (every few seconds). `ready: true` sets `agentReady`.
@@ -749,7 +775,8 @@ gateway:
   cookieSecure: true
   displayNameHeader: Remote-Name  # empty header keeps the last name
   logoutUrl: ""                   # absolute http(s) URL the browser goes to on logout; empty: nowhere
-  ssoLogoutDefaults: {onLogout: true}
+  ssoLogoutDefaults: {onLogout: true, onLock: true}
+  lockLogsOut: false              # offer Lock; it signs out at the provider, the session keeps running; needs logoutUrl
 ```
 
 Ports: gateway HTTP `:8080`, controller power API `:8082`, metrics `:9090`, probes `:8081`

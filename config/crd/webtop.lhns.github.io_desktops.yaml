@@ -225,6 +225,13 @@ spec:
                 required:
                 - image
                 type: object
+              lastLock:
+                description: |-
+                  LastLock is when the user used Lock, as the agent reported it, if the user's choice (default
+                  gateway.ssoLogoutDefaults.onLock) says to sign out at the provider, gateway.lockLogsOut is on and
+                  gateway.logoutUrl is set. Lock does not end the session. Reset with the pod.
+                format: date-time
+                type: string
               lastLogout:
                 description: |-
                   LastLogout is when the user logged out of the session without a shutdown, as the agent

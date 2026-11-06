@@ -338,8 +338,11 @@ type reportRequest struct {
 	LoginError       *string  `json:"loginError"`
 	// LoggedOutAt is when the session logged out without a shutdown (RFC 3339); LogoutPref is
 	// the user's own choice for signing out at the provider, absent when they made none.
-	LoggedOutAt     *string `json:"loggedOutAt"`
-	LogoutPref      *bool   `json:"logoutPref"`
+	LoggedOutAt *string `json:"loggedOutAt"`
+	LogoutPref  *bool   `json:"logoutPref"`
+	// LockedAt is when Lock was used (RFC 3339); LockPref is the user's own onLock choice.
+	LockedAt        *string `json:"lockedAt"`
+	LockPref        *bool   `json:"lockPref"`
 	SoftwareRestore *struct {
 		Active bool  `json:"active"`
 		Done   int32 `json:"done"`
@@ -395,6 +398,12 @@ func (s *Server) report(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if req.LockedAt != nil {
+		if _, err := time.Parse(time.RFC3339, *req.LockedAt); err != nil {
+			writeErr(sw, fail(http.StatusBadRequest, "lockedAt is not an RFC 3339 time"))
+			return
+		}
+	}
 	if !req.validIdentity() {
 		writeErr(sw, fail(http.StatusBadRequest, "invalid loginName, homePaths, loginError or softwareRestore"))
 		return
@@ -440,6 +449,19 @@ func (s *Server) report(w http.ResponseWriter, r *http.Request) {
 			if on && s.Gateway.LogoutURL != "" {
 				mt := metav1.NewTime(t)
 				st.LastLogout = &mt
+			}
+		}
+	}
+	if req.LockedAt != nil {
+		if t, err := time.Parse(time.RFC3339, *req.LockedAt); err == nil {
+			on := s.Gateway.SSOLogoutDefaults.OnLock
+			if req.LockPref != nil {
+				on = *req.LockPref
+			}
+			// Lock is hidden without lockLogsOut; one that happens anyway has nothing to sign out of.
+			if on && s.Gateway.LockLogsOut && s.Gateway.LogoutURL != "" {
+				mt := metav1.NewTime(t)
+				st.LastLock = &mt
 			}
 		}
 	}

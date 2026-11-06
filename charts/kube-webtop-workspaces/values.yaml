@@ -136,8 +136,11 @@ gateway:
   # login provider's logout endpoint with a return address). Empty: logging out redirects nowhere.
   logoutUrl: ""
   # Which session events sign out at the provider, unless the user chose otherwise in
-  # ~/.config/webtop/session.conf. Needs logoutUrl.
-  ssoLogoutDefaults: {onLogout: true}
+  # ~/.config/webtop/session.conf. Needs logoutUrl. onLock only counts with lockLogsOut.
+  ssoLogoutDefaults: {onLogout: true, onLock: true}
+  # Offer Lock in the desktop; using it signs the browser out at the provider and the session keeps
+  # running. Needs logoutUrl. false: Lock is hidden and blocked.
+  lockLogsOut: false
 
 desktopServiceAccount:
   create: true

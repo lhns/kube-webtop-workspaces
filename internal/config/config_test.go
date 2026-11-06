@@ -76,3 +76,13 @@ func TestGatewayDefaultsAndLogoutURL(t *testing.T) {
 		t.Fatalf("unexpected: %+v", c.Gateway)
 	}
 }
+
+func TestLockLogsOutNeedsLogoutURL(t *testing.T) {
+	base := "namespace: ws\ngateway: {lockLogsOut: true%s}\n"
+	if _, err := Parse([]byte(strings.Replace(base, "%s", "", 1))); err == nil || !strings.Contains(err.Error(), "lockLogsOut") {
+		t.Fatalf("lockLogsOut without URL: %v", err)
+	}
+	if _, err := Parse([]byte(strings.Replace(base, "%s", ", logoutUrl: 'https://auth.example.org/logout'", 1))); err != nil {
+		t.Fatal(err)
+	}
+}

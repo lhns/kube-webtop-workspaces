@@ -189,3 +189,48 @@ func TestSessionExit(t *testing.T) {
 		}
 	}
 }
+
+func TestLockPref(t *testing.T) {
+	home := t.TempDir()
+	writeConf(t, home, "onLogout=true\nonLock=false\n")
+	if got := str(LockPref(home)); got != "false" {
+		t.Errorf("onLock = %s, want false", got)
+	}
+	if got := str(Pref(home)); got != "true" {
+		t.Errorf("onLogout = %s, want true", got)
+	}
+	writeConf(t, home, "onLogout=false\n")
+	if LockPref(home) != nil {
+		t.Error("onLock set by a file without it")
+	}
+}
+
+func TestReadLock(t *testing.T) {
+	write := func(body string) string {
+		dir := t.TempDir()
+		p := filepath.Join(dir, LockFile)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return dir
+	}
+	if at, ok := ReadLock(write("2026-01-02T03:04:05Z\n")); !ok || at != "2026-01-02T03:04:05Z" {
+		t.Errorf("valid marker: %q %v", at, ok)
+	}
+	for name, body := range map[string]string{
+		"not a time": "yesterday\n",
+		"empty":      "",
+		"too long":   "2026-01-02T03:04:05Z" + strings.Repeat(" ", maxLock),
+		"more text":  "2026-01-02T03:04:05Z\nrm -rf /\n",
+	} {
+		if at, ok := ReadLock(write(body)); ok {
+			t.Errorf("%s accepted: %q", name, at)
+		}
+	}
+	if _, ok := ReadLock(t.TempDir()); ok {
+		t.Error("no marker must be none")
+	}
+}

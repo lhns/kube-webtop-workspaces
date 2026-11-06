@@ -122,6 +122,10 @@ func (in *DesktopStatus) DeepCopyInto(out *DesktopStatus) {
 		in, out := &in.LastLogout, &out.LastLogout
 		*out = (*in).DeepCopy()
 	}
+	if in.LastLock != nil {
+		in, out := &in.LastLock, &out.LastLock
+		*out = (*in).DeepCopy()
+	}
 	if in.SoftwareRestore != nil {
 		in, out := &in.SoftwareRestore, &out.SoftwareRestore
 		*out = new(SoftwareRestore)

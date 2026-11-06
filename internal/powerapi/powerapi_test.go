@@ -448,3 +448,38 @@ func TestReportLoggedOut(t *testing.T) {
 		t.Fatalf("bad time: %d", rec.Code)
 	}
 }
+
+func TestReportLocked(t *testing.T) {
+	const at = "2026-01-01T12:30:00Z"
+	const url = "https://auth.example.org/logout"
+	for name, tc := range map[string]struct {
+		url       string
+		lockLogs  bool
+		defaultOn bool
+		body      string
+		want      bool
+	}{
+		"default on":           {url, true, true, `{"lockedAt":"` + at + `"}`, true},
+		"default off":          {url, true, false, `{"lockedAt":"` + at + `"}`, false},
+		"user turns it off":    {url, true, true, `{"lockedAt":"` + at + `","lockPref":false}`, false},
+		"user turns it on":     {url, true, false, `{"lockedAt":"` + at + `","lockPref":true}`, true},
+		"lockLogsOut is off":   {url, false, true, `{"lockedAt":"` + at + `","lockPref":true}`, false},
+		"no logout URL":        {"", true, true, `{"lockedAt":"` + at + `","lockPref":true}`, false},
+		"logout is not a lock": {url, true, true, `{"loggedOutAt":"` + at + `"}`, false},
+	} {
+		e := newEnv(t, desktop(nil), desktopPod("pod-1"))
+		g := &e.srv.Gateway
+		g.LogoutURL, g.LockLogsOut, g.SSOLogoutDefaults.OnLock = tc.url, tc.lockLogs, tc.defaultOn
+		if rec := e.do("/api/v1/report", tc.body, "tok"); rec.Code != 204 {
+			t.Fatalf("%s: %d %s", name, rec.Code, rec.Body)
+		}
+		got := e.get(t).Status.LastLock
+		if (got != nil) != tc.want || (got != nil && got.UTC().Format(time.RFC3339) != at) {
+			t.Errorf("%s: lastLock = %v, want recorded=%v", name, got, tc.want)
+		}
+	}
+	e := newEnv(t, desktop(nil), desktopPod("pod-1"))
+	if rec := e.do("/api/v1/report", `{"lockedAt":"yesterday"}`, "tok"); rec.Code != 400 {
+		t.Fatalf("bad time: %d", rec.Code)
+	}
+}

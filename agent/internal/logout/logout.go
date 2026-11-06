@@ -31,7 +31,12 @@ var storeRoot = "/nix/store/"
 // the Nix store, so links are resolved, and the result is read only if it is the file itself
 // (the user's own, as before) or lies in the store, which the user cannot write. A link to
 // anywhere else (the agent is root) counts as no file.
-func Pref(home string) *bool {
+func Pref(home string) *bool { return pref(home, "onLogout") }
+
+// LockPref is the user's onLock choice, read like Pref.
+func LockPref(home string) *bool { return pref(home, "onLock") }
+
+func pref(home, key string) *bool {
 	rh, err := filepath.EvalSymlinks(home)
 	if err != nil {
 		return nil
@@ -55,7 +60,7 @@ func Pref(home string) *bool {
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		k, v, ok := strings.Cut(strings.TrimSpace(sc.Text()), "=")
-		if !ok || strings.TrimSpace(k) != "onLogout" {
+		if !ok || strings.TrimSpace(k) != key {
 			continue
 		}
 		switch strings.TrimSpace(v) {
@@ -68,6 +73,32 @@ func Pref(home string) *bool {
 		}
 	}
 	return pref
+}
+
+// LockFile is the time of the user's last lock, below the user's runtime directory, as the
+// session's lock guard (webtop-nix) writes it. The user owns it and the agent runs as root, so it
+// is read as a bounded regular file, never followed through a link, and only a time is taken.
+const (
+	LockFile = "webtop/lock"
+	maxLock  = 64
+)
+
+// ReadLock returns the lock marker's time (RFC 3339), ok false if there is no valid one.
+func ReadLock(runtimeDir string) (at string, ok bool) {
+	p := filepath.Join(runtimeDir, LockFile)
+	fi, err := os.Lstat(p)
+	if err != nil || !fi.Mode().IsRegular() || fi.Size() > maxLock {
+		return "", false
+	}
+	b, err := os.ReadFile(p)
+	if err != nil || len(b) > maxLock {
+		return "", false
+	}
+	at = strings.TrimSpace(string(b))
+	if _, err := time.Parse(time.RFC3339, at); err != nil {
+		return "", false
+	}
+	return at, true
 }
 
 // SessionExit runs from ExecStopPost of the session unit. It records a logout when the session
