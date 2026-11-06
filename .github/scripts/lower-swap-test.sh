@@ -106,7 +106,7 @@ echo "store overlay across an image update: ok"
 # ------ Installed software across an image update, on a new volume: a home-manager generation, a
 # declared package and an undeclared profile package, through the restore and through the reinstall.
 as_user() { x runuser -u ci -- env HOME=/home/ci PATH=/home/ci/.nix-profile/bin:/home/ci/.local/state/nix/profiles/profile/bin:/run/current-system/sw/bin "$@"; }
-journal() { x journalctl -u "$1" --no-pager -o cat | tail -n 40; }
+journal() { x journalctl -u "$1" --no-pager -o cat | tail -n 400; }
 wait_setup() {
   for _ in $(seq 1 $((timeout / 3))); do
     [ "$(x systemctl show -P ActiveState webtop-home-manager)" = active ] || [ "$(x systemctl show -P ExecMainExitTimestampMonotonic webtop-home-manager)" = 0 ] || return 0
