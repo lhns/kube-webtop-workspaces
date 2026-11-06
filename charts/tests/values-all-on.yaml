@@ -10,6 +10,7 @@ desktop:
     extraSubstituters: [http://cache.example.org/a, http://cache.example.org/b]
     extraTrustedPublicKeys: ["a:AAAA", "b:BBBB"]
   resources: {requests: {cpu: "1", memory: 2Gi}}
+  maxAppScreens: 2
   softwareCenter: {unfreeListedDefault: false}
   timeZone: Europe/Berlin
   locale: de_DE.UTF-8

@@ -255,7 +255,7 @@ func run(cfg config.Config) {
 // of the controller API.
 func serveApps(ctx context.Context, cfg config.Config) {
 	u := usersession.LookupUser(cfg.User)
-	l := &apps.Launcher{Session: u, StateDir: cfg.StateDir, Home: u.Home}
+	l := &apps.Launcher{Session: u, StateDir: cfg.StateDir, Home: u.Home, MaxScreens: cfg.MaxAppScreens}
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", apps.Port),
 		Handler:           apps.Handler(l),

@@ -100,12 +100,16 @@ for name, args in cases.items():
         fail(f"{name}: WEBTOP_LOCK_SCREEN {lock_env}")
     if cfg["gateway"].get("lockLogsOut") != (name == "all-on"):
         fail(f"{name}: gateway.lockLogsOut {cfg['gateway'].get('lockLogsOut')}")
-    if "nix" in cfg["desktop"] or "softwareCenter" in cfg["desktop"] or "timeZone" in cfg["desktop"] or "locale" in cfg["desktop"]:
-        fail(f"{name}: chart-only desktop.nix or softwareCenter leaked into the config")
+    if "nix" in cfg["desktop"] or "softwareCenter" in cfg["desktop"] or "timeZone" in cfg["desktop"] or "locale" in cfg["desktop"] or "maxAppScreens" in cfg["desktop"]:
+        fail(f"{name}: chart-only desktop key leaked into the config")
     nsc = [e["value"] for e in cfg["desktop"].get("extraEnv") or [] if e["name"] == "NSC_UNFREE_LISTED_DEFAULT"]
     want_nsc = ["0"] if name == "all-on" else ["1"]
     if nsc != want_nsc:
         fail(f"{name}: NSC_UNFREE_LISTED_DEFAULT {nsc}, want {want_nsc}")
+    cap = [e["value"] for e in cfg["desktop"].get("extraEnv") or [] if e["name"] == "WEBTOP_MAX_APP_SCREENS"]
+    want_cap = ["2"] if name == "all-on" else ["4"]
+    if cap != want_cap:
+        fail(f"{name}: WEBTOP_MAX_APP_SCREENS {cap}, want {want_cap}")
     nix_env = {e["name"]: e["value"] for e in cfg["desktop"].get("extraEnv") or [] if e["name"].startswith("WEBTOP_NIX_")}
     want_env = {"WEBTOP_NIX_EXTRA_SUBSTITUTERS": "http://cache.example.org/a http://cache.example.org/b",
                 "WEBTOP_NIX_EXTRA_TRUSTED_PUBLIC_KEYS": "a:AAAA b:BBBB"} if name == "all-on" else {}

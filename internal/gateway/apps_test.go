@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -21,6 +22,9 @@ import (
 type fakeAgent struct {
 	calls []string // "<base host> <app>"
 	err   error
+	// display is what Open answers; 0 means 3.
+	display  int
+	focusErr error
 
 	list    []AppInfo
 	listErr error
@@ -38,9 +42,17 @@ func (f *fakeAgent) Icon(_ context.Context, base *url.URL, app string) (*AppIcon
 	return f.icon, f.iconErr
 }
 
-func (f *fakeAgent) Open(_ context.Context, base *url.URL, app string) error {
+func (f *fakeAgent) Open(_ context.Context, base *url.URL, app string) (int, error) {
 	f.calls = append(f.calls, base.Host+" "+app)
-	return f.err
+	if f.display == 0 {
+		return 3, f.err
+	}
+	return f.display, f.err
+}
+
+func (f *fakeAgent) Focus(_ context.Context, base *url.URL, screen string) error {
+	f.calls = append(f.calls, base.Host+" focus "+screen)
+	return f.focusErr
 }
 
 func TestAppName(t *testing.T) {
@@ -73,12 +85,12 @@ func TestAppRoute(t *testing.T) {
 	adminHdr := map[string]string{"Remote-Groups": "admins"}
 	nav := func(h ...map[string]string) []map[string]string { return append([]map[string]string{navHeaders}, h...) }
 
-	t.Run("own desktop redirects to the display2 page", func(t *testing.T) {
+	t.Run("own desktop redirects to the display page of the app", func(t *testing.T) {
 		e := newEnv(t, nil, desktop("alice", "alice", running(backend.URL)))
 		ag := &fakeAgent{}
 		e.h.agent = ag
 		rec := e.do("GET", "/apps/org.kde.dolphin", nav()...)
-		if rec.Code != 303 || rec.Header().Get("Location") != "/#display2-right" {
+		if rec.Code != 303 || rec.Header().Get("Location") != "/#display3-right-org.kde.dolphin" {
 			t.Fatalf("code %d loc %q", rec.Code, rec.Header().Get("Location"))
 		}
 		if len(ag.calls) != 1 || ag.calls[0] != strings.TrimPrefix(backend.URL, "http://")+" org.kde.dolphin" {
@@ -96,7 +108,7 @@ func TestAppRoute(t *testing.T) {
 		ag := &fakeAgent{}
 		e.h.agent = ag
 		rec := e.do("GET", "/u/bob/apps/firefox", nav(adminHdr)...)
-		if rec.Code != 303 || rec.Header().Get("Location") != "/u/bob/#display2-right" {
+		if rec.Code != 303 || rec.Header().Get("Location") != "/u/bob/#display3-right-firefox" {
 			t.Fatalf("code %d loc %q", rec.Code, rec.Header().Get("Location"))
 		}
 		if len(ag.calls) != 1 {
@@ -151,6 +163,28 @@ func TestAppRoute(t *testing.T) {
 		rec := e.do("GET", "/apps/nope", nav()...)
 		if rec.Code != 404 || !strings.Contains(rec.Body.String(), "App not found") {
 			t.Fatalf("code %d body %s", rec.Code, rec.Body)
+		}
+	})
+	t.Run("over the cap", func(t *testing.T) {
+		e := newEnv(t, nil, desktop("alice", "alice", running(backend.URL)))
+		e.h.agent = &fakeAgent{err: &AppCapError{Max: 2, Open: []string{"a.b", "c"}}}
+		rec := e.do("GET", "/apps/firefox", nav()...)
+		body := rec.Body.String()
+		if rec.Code != 409 || rec.Header().Get("Cache-Control") != "no-store" ||
+			!strings.Contains(body, "Too many apps open") || !strings.Contains(body, "at most 2 apps") ||
+			!strings.Contains(body, "a.b, c") || !strings.Contains(body, `href="/apps/"`) {
+			t.Fatalf("code %d body %s", rec.Code, body)
+		}
+		if counter(t, e.reg, "webtop_gateway_requests_total", map[string]string{"outcome": outCapped}) != 1 {
+			t.Error("cap not counted")
+		}
+	})
+	t.Run("cap page escapes ids", func(t *testing.T) {
+		e := newEnv(t, nil, desktop("alice", "alice", running(backend.URL)))
+		e.h.agent = &fakeAgent{err: &AppCapError{Max: 1, Open: []string{`<script>alert(1)</script>`, `"><img src=x>`}}}
+		rec := e.do("GET", "/apps/firefox", nav()...)
+		if body := rec.Body.String(); strings.Contains(body, "<script>alert") || strings.Contains(body, "<img src=x>") {
+			t.Fatalf("unescaped: %s", body)
 		}
 	})
 	t.Run("agent unreachable", func(t *testing.T) {
@@ -260,7 +294,7 @@ func TestAppsOverview(t *testing.T) {
 		}
 		for _, want := range []string{
 			`href="/apps/org.kde.dolphin"`, `src="/.webtop/apps/org.kde.dolphin/icon"`, ">Dolphin<", `class="badge"`,
-			`href="/apps/zed"`, `&lt;b&gt;Zed&lt;/b&gt;`, `class="ph"`,
+			`href="/apps/zed"`, `target="webtop-app-org.kde.dolphin"`, `&lt;b&gt;Zed&lt;/b&gt;`, `class="ph"`,
 		} {
 			if !strings.Contains(body, want) {
 				t.Errorf("page lacks %q:\n%s", want, body)
@@ -429,9 +463,11 @@ func TestAppIconRoute(t *testing.T) {
 func TestAgentClient(t *testing.T) {
 	var gotPath, gotMethod string
 	status := http.StatusNoContent
+	reply := ""
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath, gotMethod = r.URL.Path, r.Method
 		w.WriteHeader(status)
+		_, _ = w.Write([]byte(reply))
 	}))
 	defer srv.Close()
 	u, _ := url.Parse(srv.URL)
@@ -441,24 +477,45 @@ func TestAgentClient(t *testing.T) {
 	c := newAgentClient(http.DefaultTransport)
 	c.port = port
 
-	if err := c.Open(context.Background(), base, "org.kde.dolphin"); err != nil {
+	if n, err := c.Open(context.Background(), base, "org.kde.dolphin"); err != nil || n != 2 {
+		t.Fatalf("old agent's 204: %d, %v", n, err)
+	}
+	status, reply = http.StatusOK, `{"display":5}`
+	if n, err := c.Open(context.Background(), base, "org.kde.dolphin"); err != nil || n != 5 {
+		t.Fatalf("200: %d, %v", n, err)
+	}
+	status, reply = http.StatusConflict, `{"max":2,"open":["a","<b>","c.d"]}`
+	var ce *AppCapError
+	if _, err := c.Open(context.Background(), base, "x"); !errors.As(err, &ce) || ce.Max != 2 || !reflect.DeepEqual(ce.Open, []string{"a", "c.d"}) {
+		t.Fatalf("409: %v", err)
+	}
+	status, reply = http.StatusNoContent, ""
+	if err := c.Focus(context.Background(), base, "main"); err != nil || gotPath != "/api/v1/focus/main" {
+		t.Fatalf("focus: %v %s", err, gotPath)
+	}
+	status = http.StatusNotFound
+	if err := c.Focus(context.Background(), base, "9"); !errors.Is(err, ErrAppNotFound) {
+		t.Fatalf("focus 404: %v", err)
+	}
+	status = http.StatusNoContent
+	if _, err := c.Open(context.Background(), base, "org.kde.dolphin"); err != nil {
 		t.Fatal(err)
 	}
 	if gotMethod != "POST" || gotPath != "/api/v1/apps/org.kde.dolphin" {
 		t.Fatalf("%s %s", gotMethod, gotPath)
 	}
 	status = http.StatusNotFound
-	if err := c.Open(context.Background(), base, "x"); !errors.Is(err, ErrAppNotFound) {
+	if _, err := c.Open(context.Background(), base, "x"); !errors.Is(err, ErrAppNotFound) {
 		t.Fatalf("404: %v", err)
 	}
 	for _, s := range []int{http.StatusBadGateway, http.StatusInternalServerError} {
 		status = s
-		if err := c.Open(context.Background(), base, "x"); err == nil || errors.Is(err, ErrAppNotFound) {
+		if _, err := c.Open(context.Background(), base, "x"); err == nil || errors.Is(err, ErrAppNotFound) {
 			t.Fatalf("%d: %v", s, err)
 		}
 	}
 	srv.Close()
-	if err := c.Open(context.Background(), base, "x"); err == nil {
+	if _, err := c.Open(context.Background(), base, "x"); err == nil {
 		t.Fatal("closed agent: no error")
 	}
 }
@@ -533,4 +590,78 @@ func TestAppsWithoutSlashRedirects(t *testing.T) {
 	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/apps/" {
 		t.Fatalf("code %d location %q", rec.Code, rec.Header().Get("Location"))
 	}
+}
+
+func TestFocusRoute(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer backend.Close()
+	same := map[string]string{"Sec-Fetch-Site": "same-origin"}
+	host := strings.TrimPrefix(backend.URL, "http://")
+
+	t.Run("relays", func(t *testing.T) {
+		e := newEnv(t, nil, desktop("alice", "alice", running(backend.URL)))
+		ag := &fakeAgent{}
+		e.h.agent = ag
+		for _, scr := range []string{"main", "3"} {
+			rec := e.do("POST", "/.webtop/focus?screen="+scr, same)
+			if rec.Code != 204 || rec.Header().Get("Cache-Control") != "no-store" {
+				t.Fatalf("%s: code %d", scr, rec.Code)
+			}
+		}
+		if !reflect.DeepEqual(ag.calls, []string{host + " focus main", host + " focus 3"}) {
+			t.Fatalf("calls %v", ag.calls)
+		}
+	})
+	t.Run("same origin only", func(t *testing.T) {
+		e := newEnv(t, nil, desktop("alice", "alice", running(backend.URL)))
+		ag := &fakeAgent{}
+		e.h.agent = ag
+		for name, hdr := range map[string]map[string]string{
+			"none":       nil,
+			"cross-site": {"Sec-Fetch-Site": "cross-site"},
+			"origin":     {"Origin": "https://evil.example"},
+		} {
+			if rec := e.do("POST", "/.webtop/focus?screen=main", hdr); rec.Code != 403 {
+				t.Errorf("%s: code %d", name, rec.Code)
+			}
+		}
+		if rec := e.do("POST", "/.webtop/focus?screen=main", map[string]string{"Origin": "http://example.com"}); rec.Code != 204 {
+			t.Errorf("origin = host: code %d", rec.Code)
+		}
+		if len(ag.calls) != 1 {
+			t.Fatalf("calls %v", ag.calls)
+		}
+	})
+	t.Run("validation and errors", func(t *testing.T) {
+		e := newEnv(t, nil, desktop("alice", "alice", running(backend.URL)))
+		ag := &fakeAgent{focusErr: ErrAppNotFound}
+		e.h.agent = ag
+		for _, q := range []string{"", "?screen=", "?screen=x", "?screen=1a", "?screen=1234567890", "?screen=-1"} {
+			if rec := e.do("POST", "/.webtop/focus"+q, same); rec.Code != 400 {
+				t.Errorf("%q: code %d", q, rec.Code)
+			}
+		}
+		if rec := e.do("POST", "/.webtop/focus?screen=9", same); rec.Code != 404 {
+			t.Errorf("agent 404: code %d", rec.Code)
+		}
+		ag.focusErr = errors.New("boom")
+		if rec := e.do("POST", "/.webtop/focus?screen=9", same); rec.Code != 502 {
+			t.Errorf("agent failure: code %d", rec.Code)
+		}
+		if rec := e.do("GET", "/.webtop/focus?screen=main", same); rec.Code != 405 {
+			t.Errorf("GET: code %d", rec.Code)
+		}
+	})
+	t.Run("never wakes a stopped desktop", func(t *testing.T) {
+		e := newEnv(t, nil, desktop("alice", "alice", running(backend.URL)))
+		ag := &fakeAgent{}
+		e.h.agent = ag
+		d := desktop("alice", "alice", running(backend.URL))
+		d.Status.Phase = v1alpha1.PhaseStarting
+		e = newEnv(t, nil, d)
+		e.h.agent = ag
+		if rec := e.do("POST", "/.webtop/focus?screen=main", same); rec.Code != 503 || len(ag.calls) != 0 {
+			t.Fatalf("code %d calls %v", rec.Code, ag.calls)
+		}
+	})
 }

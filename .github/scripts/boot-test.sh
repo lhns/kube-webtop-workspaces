@@ -44,8 +44,9 @@ cp "$hm/flake.nix" "$hm/home.nix" "$dir/"
 sudo chown -R 1000:100 "$dir/persist/home"
 
 python3 "$(dirname "$0")/fake-controller.py" 8081 "$reports" &
+controller=$!
 cleanup() {
-  kill $! 2>/dev/null || true
+  kill $controller 2>/dev/null || true
   # Unreadable otherwise once the step has failed.
   if [ -s "$reports" ]; then echo "reports received:"; sed 's/^/  /' "$reports"; fi
 }
@@ -55,7 +56,7 @@ docker rm -f desktop-boot >/dev/null 2>&1 || true
 args=(--privileged --cgroupns=private --shm-size=1g --add-host=host.docker.internal:host-gateway -p 8080:8080 -p 8083:8081
   -v "$dir/persist:/persist" -v "$dir/token:/token:ro"
   -e WEBTOP_CONTROLLER_URL=http://host.docker.internal:8081 -e WEBTOP_TOKEN_PATH=/token
-  -e WEBTOP_HTTP_PORT=8080 -e NSC_UNFREE_LISTED_DEFAULT=0 -e WEBTOP_USER=ci -e WEBTOP_DESKTOP=ci -e WEBTOP_NAMESPACE=ci -e "WEBTOP_DISPLAY_NAME=CI Tester"
+  -e WEBTOP_HTTP_PORT=8080 -e WEBTOP_MAX_APP_SCREENS=2 -e NSC_UNFREE_LISTED_DEFAULT=0 -e WEBTOP_USER=ci -e WEBTOP_DESKTOP=ci -e WEBTOP_NAMESPACE=ci -e "WEBTOP_DISPLAY_NAME=CI Tester"
   -e WEBTOP_TIME_ZONE=Asia/Tokyo -e WEBTOP_LOCALE=de_DE.UTF-8
   -e WEBTOP_NIX_EXTRA_SUBSTITUTERS=http://cache.invalid/ci -e "WEBTOP_NIX_EXTRA_TRUSTED_PUBLIC_KEYS=ci:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
   -e "WEBTOP_SELKIES_UI_TITLE=$title" -e "WEBTOP_SELKIES_CI_PROBE=$probe"
@@ -126,10 +127,25 @@ in_session sh -c 'command -v webtop-app-screen && command -v kioclient' >/dev/nu
   || { echo "::error::webtop-app-screen or kioclient is not on the user's PATH"; exit 1; }
 code=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:8083/api/v1/apps/no-such-app.invalid || true)
 [ "$code" = 404 ] || { echo "::error::the agent's apps API answers HTTP $code, want 404"; exit 1; }
-# The agent itself must find the helper: the user's PATH above is not the one it looks in.
-if curl -s -X POST http://localhost:8083/api/v1/apps/org.kde.dolphin | grep -q 'not found in'; then
-  echo "::error::the agent cannot find a command to place an app"; exit 1
-fi
+# Each app gets its own screen (cap 2 here). The agent itself must find the helper: the user's PATH
+# above is not the one it looks in. Nothing has connected a page, so the open apps count as reserved.
+in_session webtop-app-screen screens >/dev/null || { echo "::error::webtop-app-screen screens failed"; exit 1; }
+api=http://localhost:8083/api/v1
+app_display() { curl -fsS -X POST "$api/apps/$1" | python3 -c 'import json,sys; print(json.load(sys.stdin)["display"])'; }
+read -r app2 app3 < <(curl -fsS "$api/apps" | python3 -c 'import json,sys; print(*[a["id"] for a in json.load(sys.stdin) if a["id"] != "org.kde.dolphin"][:2])')
+[ -n "${app3:-}" ] || { echo "::error::the image has fewer than three applications"; exit 1; }
+d1=$(app_display org.kde.dolphin) || { echo "::error::the agent cannot open org.kde.dolphin"; exit 1; }
+d2=$(app_display "$app2") || { echo "::error::the agent cannot open $app2"; exit 1; }
+[ "$d1" -ge 3 ] && [ "$d2" -ge 3 ] && [ "$d1" != "$d2" ] || { echo "::error::app displays '$d1' '$d2', want distinct numbers >= 3"; exit 1; }
+[ "$(app_display org.kde.dolphin)" = "$d1" ] || { echo "::error::a second open of dolphin got another display"; exit 1; }
+code=$(curl -s -o "$dir/cap.json" -w '%{http_code}' -X POST "$api/apps/$app3" || true)
+[ "$code" = 409 ] || { echo "::error::a third app answers HTTP $code, want 409"; exit 1; }
+python3 -c 'import json,sys; c=json.load(open(sys.argv[1])); assert c["max"]==2 and sorted(c["open"])==sorted(sys.argv[2:]), c' "$dir/cap.json" org.kde.dolphin "$app2"   || { echo "::error::the 409 does not name the open apps:"; cat "$dir/cap.json"; exit 1; }
+! in_session systemctl --user list-units --no-legend 'app-*' | grep -qF "$app3" || { echo "::error::$app3 started although over the cap"; exit 1; }
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$api/focus/main" || true)
+[ "$code" = 204 ] || { echo "::error::focus main answers HTTP $code, want 204"; exit 1; }
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$api/focus/9999" || true)
+[ "$code" = 404 ] || { echo "::error::focus of an unknown screen answers HTTP $code, want 404"; exit 1; }
 # The overview's source: the application list is a non-empty JSON array of entries with an id.
 curl -fsS http://localhost:8083/api/v1/apps | python3 -c 'import json,sys; a=json.load(sys.stdin); assert a and all(x["id"] and x["name"] for x in a), a' \
   || { echo "::error::the agent's app list is not a non-empty JSON array of apps"; exit 1; }

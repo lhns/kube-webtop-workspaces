@@ -38,12 +38,13 @@ main.wide{max-width:56rem}
 {{define "error"}}{{template "head" .}}
 <h1>{{.Title}}</h1>
 <p class="lead">{{.Message}}</p>
+{{if .Back}}<p><a href="{{.Back}}">Back to apps</a></p>{{end}}
 {{template "foot" .}}{{end}}
 
 {{define "apps"}}{{template "head" .}}
 <h1>Apps</h1>
 {{if .Apps}}<ul class="apps">
-{{range .Apps}}<li><a class="app" href="{{.Href}}">{{if .IconURL}}<img src="{{.IconURL}}" alt="" width="48" height="48" loading="lazy">{{else}}<span class="ph" aria-hidden="true">{{.Initial}}</span>{{end}}<span class="n">{{.Name}}</span>{{if .Running}}<span class="badge">running</span>{{end}}</a></li>
+{{range .Apps}}<li><a class="app" href="{{.Href}}" target="webtop-app-{{.ID}}">{{if .IconURL}}<img src="{{.IconURL}}" alt="" width="48" height="48" loading="lazy">{{else}}<span class="ph" aria-hidden="true">{{.Initial}}</span>{{end}}<span class="n">{{.Name}}</span>{{if .Running}}<span class="badge">running</span>{{end}}</a></li>
 {{end}}</ul>{{else}}<p class="lead">This desktop has no applications.</p>{{end}}
 {{template "foot" .}}{{end}}
 

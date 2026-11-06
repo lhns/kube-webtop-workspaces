@@ -67,6 +67,10 @@ desktop:
   nix:
     extraSubstituters: []       # ["http://cache.example.org/desktops"]
     extraTrustedPublicKeys: []  # ["desktops:<base64>"]
+  # How many apps /apps/<id> may show at once, one Selkies screen each (chart-only: passed as the
+  # WEBTOP_MAX_APP_SCREENS env, docs/contract.md). Each visible app screen costs a KWin output plus a
+  # capture and an encoder.
+  maxAppScreens: 4
   # Session time zone (IANA name) and locale for every desktop (chart-only: passed as WEBTOP_TIME_ZONE /
   # WEBTOP_LOCALE env, docs/contract.md). A user's own webtop.timeZone / webtop.locale wins. Applied when the
   # desktop session starts. Empty: UTC and en_US.UTF-8.

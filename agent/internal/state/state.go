@@ -14,10 +14,10 @@ const (
 	IdentityError = "identity-error"
 	// FrozenUnits lists the units frozen by Sleep; it exists only while asleep.
 	FrozenUnits = "frozen-units"
+	// AppScreens is JSON: the display number of each app and the next free one.
+	AppScreens = "app-screens"
 	// Logout is written when the session ends by itself: a time, then the user's sign-out choice.
 	Logout = "logout"
-	// PlacedApp is the desktop file id placed on the second screen; empty or missing: none.
-	PlacedApp = "placed-app"
 )
 
 // WriteAtomic replaces path via temp file + rename so readers never see a partial write.

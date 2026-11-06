@@ -20,6 +20,7 @@ type Config struct {
 	IdleThreshold     time.Duration
 	CompositorTimeout time.Duration
 	SuspendMode       string // "freeze" (default) or "poweroff"
+	MaxAppScreens     int    // WEBTOP_MAX_APP_SCREENS; 0 when unset or invalid
 }
 
 // FromEnv builds a Config; getenv is os.Getenv in production.
@@ -40,7 +41,12 @@ func FromEnv(getenv func(string) string) Config {
 	if p, err := strconv.Atoi(str("WEBTOP_HTTP_PORT", "")); err == nil && p > 0 {
 		port = p
 	}
+	maxScreens := 0
+	if n, err := strconv.Atoi(str("WEBTOP_MAX_APP_SCREENS", "")); err == nil && n > 0 {
+		maxScreens = n
+	}
 	return Config{
+		MaxAppScreens:     maxScreens,
 		ControllerURL:     strings.TrimRight(str("WEBTOP_CONTROLLER_URL", ""), "/"),
 		TokenPath:         str("WEBTOP_TOKEN_PATH", "/run/webtop/sa/token"),
 		HTTPPort:          port,

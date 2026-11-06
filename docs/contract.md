@@ -292,6 +292,10 @@ as `NSC_UNFREE_LISTED_DEFAULT=<v>` to `/run/webtop/session.env`, which the image
 `webtop-session.service` (so it reaches Plasma and the apps it starts). It only sets the default for
 listing unfree packages: the user's choice in `~/.config/nix-software-center/sources.json` wins.
 
+The cap on app screens (chart: `desktop.maxAppScreens`, default 4, 1 to 8) is the pod env
+`WEBTOP_MAX_APP_SCREENS`, read by the agent (section 7.7). Each visible app screen costs a KWin output
+plus a capture and an encoder.
+
 #### Time zone and locale
 
 The chart's `desktop.timeZone` and `desktop.locale` are the pod env `WEBTOP_TIME_ZONE` (an IANA name) and
@@ -374,6 +378,7 @@ keeps running until stopped:
 | `<base>/.webtop/reload.js` | the script injected into the desktop's page (section 7.3), never proxied |
 | `<base>/.webtop/ping` | GET/HEAD, `204` `no-store`, same authz as the desktop, never proxied. `reload.js` requests it every 60 s so the forward-auth in front of the gateway sees traffic and keeps its session active while a tab is open |
 | `<base>/.webtop/start` | POST start, never proxied |
+| `<base>/.webtop/focus?screen=<n\|main>` | POST, `204` `no-store`, same authz as the desktop, same-origin like start (section 7.5), never proxied, never starts or wakes: `503` unless `Running`, `400` unless `screen` matches `^[0-9]{1,9}$\|^main$`. Relays to the agent's `POST /api/v1/focus/<screen>` (section 7.7); the agent's `404` (no app on that screen) is passed on, other failures are `502`. `reload.js` calls it |
 | `<base>/.webtop/wake` | POST wake from the sleep page (section 7.5), never proxied |
 | `<base>/.webtop/apps/<id>/icon` | GET/HEAD, same authz as the desktop, never proxied: the app's icon from the agent (section 7.6) |
 | `<base>/apps/` | top-level `GET` only: the apps overview (section 7.6). Any other request to it is proxied |
@@ -461,6 +466,12 @@ does not). A navigation (section 7.4) `GET` to a `Running` desktop with `status.
 **sleep page** "Your desktop is asleep" instead of being proxied; it has the off page's CSRF cookie,
 and a form `POST <base>/.webtop/wake` with fields `csrf` and optionally `app` (as for start). Any other
 request (websocket, XHR, a frame) is proxied as usual. `/apps/<name>` and `/apps/` navigations get the same page (the form carries `app`, `*` for the overview).
+
+**Reload and app pages:** a tab on an app page (fragment `#display<n>-right-<app>`, section 7.6) goes
+back through `<base>/apps/<app>` (`location.replace`) instead of reloading in place wherever
+`reload.js` would reload, so the app is placed again after a desktop restart. The same happens when
+the focus call answers `404`. It also sets the tab's title to the app id.
+
 Wake checks CSRF like start, sets cookie `webtop_wake=1` (`HttpOnly`, `SameSite=Lax`, `Path=<base>/`,
 `Max-Age=60`, `Secure` as above) and answers `303` to `<base>/` or `<base>/apps/<app>`. A navigation
 with that cookie is proxied while the desktop is asleep: it opens a new Selkies session, which makes
@@ -476,7 +487,8 @@ navigation (section 7.4) `GET`, is not this route and is handled as any other pa
 | desktop | result |
 | --- | --- |
 | not `Running` | the table of section 7.5; the boot page reloads the same URL, and the off page's start form carries `app=<name>` (validated against the name rule) so the `303` goes to `<base>/apps/<name>` instead of `<base>/` |
-| `Running` | the gateway calls the agent (section 7.7); on success `303` to `<base>/#display2-right` (`no-store`) |
+| `Running` | the gateway calls the agent (section 7.7); on success `303` to `<base>/#display<n>-right-<name>` (`no-store`), `<n>` being the agent's display number |
+| agent: too many app screens (`409`) | 409 page "Too many apps open": the desktop shows at most `max` apps at once, close one of their tabs and try again, with the open app ids (validated against the name rule, dropped otherwise) and a link to `<base>/apps/`; counted as outcome `capped` |
 | agent: unknown application | 404 page "App not found" |
 | agent unreachable or failed | 503 page with `Retry-After: 5` |
 
@@ -485,7 +497,7 @@ navigation (section 7.4) `GET`, is not this route and is handled as any other pa
 | desktop | result |
 | --- | --- |
 | not `Running` | the table of section 7.5; the off page's start form carries `app=*` (a value that is no app name) so the `303` goes to `<base>/apps/` |
-| `Running` | the gateway lists the apps through the agent (section 7.7) and renders a page: a grid of icon and name, a "running" badge, each linking to `<base>/apps/<id>`; `no-store`, counted as outcome `apps` |
+| `Running` | the gateway lists the apps through the agent (section 7.7) and renders a page: a grid of icon and name, a "running" badge, each linking to `<base>/apps/<id>` with `target="webtop-app-<id>"` (one named tab per app); `no-store`, counted as outcome `apps` |
 | agent unreachable or failed | 503 page with `Retry-After: 5` |
 
 The icons are `<img>` of `<base>/.webtop/apps/<id>/icon`, which relays `GET /api/v1/apps/<id>/icon`
@@ -495,12 +507,15 @@ come from the agent, and every answer has `X-Content-Type-Options: nosniff`. An 
 A desktop that is not `Running` answers 503, a missing icon 404. An app without an icon shows its
 initial.
 
-The target is the Selkies page with the fragment `#display2-right`: it makes KWin grow the screen
-`SELKIES-2` and streams only that screen, with the app fullscreen on it ([webtop-nix, "One app per
-screen"](https://github.com/lhns/webtop-nix#one-app-per-screen)). It is the normal page, so the reload
-script (section 7.3) is injected as usual. Limits: one app at a time (only `display2` exists in
-Selkies' web client), audio plays on the main page only, and placement does not survive a desktop
-restart (opening the URL again places it again).
+The target is the Selkies page with the fragment `#display<n>-right`: it makes KWin grow the screen
+`SELKIES-<n>` and streams only that screen, with the app fullscreen on it ([webtop-nix, "One app per
+screen"](https://github.com/lhns/webtop-nix#one-app-per-screen)). The `-<name>` suffix is ignored by
+Selkies and tells `reload.js` which app the tab shows. It is the normal page, so the reload script
+(section 7.3) is injected as usual. Every app has its own screen and tab. Limits: the cap (section
+7.7) is enforced only where the agent is asked, so a reload or a restored tab bypasses it; a second
+page of the same `<n>` takes over and the first shows "Connection Terminated"; audio plays on the main
+page only; placement does not survive a desktop restart (the tab then goes back through
+`/apps/<name>`, section 7.5).
 
 ### 7.7 Agent API (gateway to agent)
 
@@ -517,15 +532,21 @@ cluster must provide that isolation itself.
 1. `<name>` must match `[A-Za-z0-9._-]+` (else 400) and `applications/<name>.desktop` must exist in
    the user's data dirs (`~/.local/share`, the user manager's `XDG_DATA_DIRS`, the NixOS profiles)
    (else 404).
-2. If a different app is recorded in `/run/webtop/placed-app`, `webtop-app-screen release <old>`.
-3. `webtop-app-screen place <name> SELKIES-2`, before the app starts, so its window lands on the
+2. The app's display number is sticky: `/run/webtop/app-screens` (JSON) maps each app to a number,
+   starting at 3 (2 is Selkies' own sidebar button), and a number is never reused while the file
+   lives, so a reload or restored tab cannot reach another app.
+3. An app without a live screen needs a free one: the live screens (`webtop-app-screen screens`, one
+   `SELKIES-<n>` per line; failure: 502) plus the screens opened less than 60 s ago whose page may not
+   have connected yet are counted, and at `WEBTOP_MAX_APP_SCREENS` (default 4; unset or invalid: 4) the
+   call answers `409` `{"max":<cap>,"open":["<id>",...]}` and starts nothing. An app that has a live
+   or just-opened screen re-attaches and is never refused.
+4. `webtop-app-screen place <name> SELKIES-<n>`, before the app starts, so its window lands on the
    screen as it opens. It is repeated on every call (harmless; it also recovers a lost KWin script).
    Failure: 502.
-4. Record `<name>` in `/run/webtop/placed-app`.
 5. Unless an active unit `app-<name>@....service` or `app-<name>-<pid>.scope` exists in the user
    manager (how KDE/systemd name a launched app), start it:
    `systemd-run --user --collect -- kioclient exec <path of the .desktop file>`. Failure: 500.
-   `204` on success.
+   `200` `{"display":<n>}` on success.
 
 Reloading `/apps/<name>` therefore does not start a second instance while the app runs; an app that
 is not recognised as running but has its own single-instance logic just raises its window.
@@ -552,6 +573,10 @@ The agent runs as root and `~/.local/share` is the user's, so both endpoints rea
 file only if, with symlinks resolved, it is a regular file in the Nix store (`/nix/store`) or inside
 the user's own `~/.local/share` (itself resolved inside the home). A link leading anywhere else is
 ignored.
+
+`POST /api/v1/focus/<screen>` raises a screen: `main` or a number matching `^[0-9]{1,9}$` (else 400)
+that is in the app-screens file (else 404), by `webtop-app-screen focus SELKIES-<n>` or `focus main`.
+`204`; failure 502.
 
 `GET /healthz` answers `ok`.
 
@@ -814,7 +839,7 @@ Gateway:
 
 | metric | type | labels |
 | --- | --- | --- |
-| `webtop_gateway_requests_total` | counter | `outcome` (`proxy`, `boot`, `off`, `start`, `asleep`, `wake`, `app`, `unavailable`, `denied`, `notfound`, `error`) |
+| `webtop_gateway_requests_total` | counter | `outcome` (`proxy`, `boot`, `off`, `start`, `asleep`, `wake`, `app`, `capped`, `unavailable`, `denied`, `notfound`, `error`) |
 | `webtop_gateway_websockets` | gauge | — |
 | `webtop_gateway_starts_total` | counter | `trigger` (`create`, `navigate`, `button`) |
 

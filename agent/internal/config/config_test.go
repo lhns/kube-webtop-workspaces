@@ -60,3 +60,17 @@ func TestSuspendMode(t *testing.T) {
 		}
 	}
 }
+
+func TestMaxAppScreens(t *testing.T) {
+	for in, want := range map[string]int{"": 0, "2": 2, "0": 0, "-1": 0, "x": 0} {
+		got := FromEnv(func(k string) string {
+			if k == "WEBTOP_MAX_APP_SCREENS" {
+				return in
+			}
+			return ""
+		}).MaxAppScreens
+		if got != want {
+			t.Errorf("%q: %d, want %d", in, got, want)
+		}
+	}
+}

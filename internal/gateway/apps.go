@@ -27,8 +27,14 @@ import (
 // the desktop like any other path.
 const appPrefix = "/apps/"
 
-// appFragment makes the Selkies page a second-display page: it grows the SELKIES-2 screen.
-const appFragment = "#display2-right"
+// legacyDisplay is the screen an agent that still answers 204 used for every app (desktops update
+// on their next start, ADR 0006).
+const legacyDisplay = 2
+
+// focusPath is POSTed by reload.js to raise the screen of the page that has the user's attention.
+const focusPath = reservedPrefix + "/focus"
+
+var focusScreenRE = regexp.MustCompile(`^[0-9]{1,9}$|^main$`)
 
 // appNameRE is a desktop file id, the same rule the agent applies.
 var appNameRE = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
@@ -42,6 +48,15 @@ const maxIconBytes = 1 << 20
 
 // ErrAppNotFound means the desktop has no such application.
 var ErrAppNotFound = errors.New("no such application")
+
+// AppCapError means the desktop shows as many app screens as it allows. Open holds the ids of
+// the apps on them.
+type AppCapError struct {
+	Max  int
+	Open []string
+}
+
+func (e *AppCapError) Error() string { return fmt.Sprintf("at most %d app screens", e.Max) }
 
 // AppInfo is an entry of the agent's application list.
 type AppInfo struct {
@@ -64,9 +79,12 @@ type AppOpener interface {
 	List(ctx context.Context, base *url.URL) ([]AppInfo, error)
 	// Icon returns ErrAppNotFound if the application or its icon does not exist.
 	Icon(ctx context.Context, base *url.URL, app string) (*AppIcon, error)
-	// Open returns ErrAppNotFound for an unknown application, any other error when the agent is
-	// unreachable or failed. base is the desktop's Status.URL.
-	Open(ctx context.Context, base *url.URL, app string) error
+	// Open returns the app's display number, ErrAppNotFound for an unknown application,
+	// *AppCapError over the screen cap, any other error when the agent is unreachable or failed.
+	// base is the desktop's Status.URL.
+	Open(ctx context.Context, base *url.URL, app string) (int, error)
+	// Focus raises screen ("main" or a display number). ErrAppNotFound: no app on that screen.
+	Focus(ctx context.Context, base *url.URL, screen string) error
 }
 
 // agentClient is the HTTP AppOpener.
@@ -82,20 +100,65 @@ func newAgentClient(rt http.RoundTripper) *agentClient {
 	}}
 }
 
-func (c *agentClient) Open(ctx context.Context, base *url.URL, app string) error {
-	u := url.URL{Scheme: base.Scheme, Host: hostWithPort(base, c.port), Path: "/api/v1/apps/" + app}
+func (c *agentClient) post(ctx context.Context, base *url.URL, p string) (*http.Response, []byte, error) {
+	u := url.URL{Scheme: base.Scheme, Host: hostWithPort(base, c.port), Path: p}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(nil))
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	defer resp.Body.Close()
-	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	return resp, b, nil
+}
+
+func (c *agentClient) Open(ctx context.Context, base *url.URL, app string) (int, error) {
+	resp, b, err := c.post(ctx, base, "/api/v1/apps/"+app)
+	if err != nil {
+		return 0, err
+	}
 	switch resp.StatusCode {
-	case http.StatusNoContent, http.StatusOK:
+	case http.StatusNoContent:
+		return legacyDisplay, nil
+	case http.StatusOK:
+		var r struct {
+			Display int `json:"display"`
+		}
+		if err := json.Unmarshal(b, &r); err != nil || r.Display < 1 {
+			return 0, fmt.Errorf("agent answered an unusable display: %q", b)
+		}
+		return r.Display, nil
+	case http.StatusNotFound:
+		return 0, ErrAppNotFound
+	case http.StatusConflict:
+		var r struct {
+			Max  int      `json:"max"`
+			Open []string `json:"open"`
+		}
+		if err := json.Unmarshal(b, &r); err != nil {
+			return 0, fmt.Errorf("agent answered HTTP 409: %q", b)
+		}
+		e := &AppCapError{Max: r.Max}
+		for _, id := range r.Open {
+			if appNameRE.MatchString(id) { // the id is shown on a page
+				e.Open = append(e.Open, id)
+			}
+		}
+		return 0, e
+	}
+	return 0, fmt.Errorf("agent answered HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
+}
+
+func (c *agentClient) Focus(ctx context.Context, base *url.URL, screen string) error {
+	resp, b, err := c.post(ctx, base, "/api/v1/focus/"+screen)
+	if err != nil {
+		return err
+	}
+	switch resp.StatusCode {
+	case http.StatusNoContent:
 		return nil
 	case http.StatusNotFound:
 		return ErrAppNotFound
@@ -186,8 +249,18 @@ func (h *Handler) serveApp(w http.ResponseWriter, r *http.Request, rt *route, d 
 		h.errorPage(w, http.StatusBadGateway, "Desktop unreachable", "The desktop has no valid address.", outError)
 		return
 	}
-	switch err := h.agent.Open(r.Context(), base, app); {
+	var capErr *AppCapError
+	display, err := h.agent.Open(r.Context(), base, app)
+	switch {
 	case err == nil:
+	case errors.As(err, &capErr):
+		h.count(outCapped)
+		msg := fmt.Sprintf("This desktop shows at most %d apps at once. Close one of their tabs and try again.", capErr.Max)
+		if len(capErr.Open) > 0 {
+			msg += " Open now: " + strings.Join(capErr.Open, ", ") + "."
+		}
+		writePage(w, http.StatusConflict, "error", pageData{Title: "Too many apps open", Message: msg, Back: rt.base + appPrefix})
+		return
 	case errors.Is(err, ErrAppNotFound):
 		h.errorPage(w, http.StatusNotFound, "App not found", "This desktop has no application with the ID "+app+".", outNotFound)
 		return
@@ -199,7 +272,45 @@ func (h *Handler) serveApp(w http.ResponseWriter, r *http.Request, rt *route, d 
 	}
 	h.count(outApp)
 	w.Header().Set("Cache-Control", "no-store")
-	http.Redirect(w, r, rt.base+"/"+appFragment, http.StatusSeeOther)
+	// The suffix only labels the page for reload.js; Selkies ignores it.
+	http.Redirect(w, r, fmt.Sprintf("%s/#display%d-right-%s", rt.base, display, app), http.StatusSeeOther)
+}
+
+// serveFocus handles POST <base>/.webtop/focus?screen=<n|main>: raise a screen. It never starts or
+// wakes the desktop, and it is same-origin only, as any state-changing request.
+func (h *Handler) serveFocus(w http.ResponseWriter, r *http.Request, d *v1alpha1.Desktop) {
+	w.Header().Set("Cache-Control", "no-store")
+	if d == nil {
+		h.errorPage(w, http.StatusNotFound, "Not found", "This desktop does not exist.", outNotFound)
+		return
+	}
+	if !sameOrigin(r) {
+		h.errorPage(w, http.StatusForbidden, "Forbidden", "The request could not be verified.", outDenied)
+		return
+	}
+	if !isReady(d) {
+		h.unavailable(w)
+		return
+	}
+	screen := r.URL.Query().Get("screen")
+	if !focusScreenRE.MatchString(screen) {
+		h.errorPage(w, http.StatusBadRequest, "Bad request", "That screen cannot be used.", outDenied)
+		return
+	}
+	base, err := parseTarget(d.Status.URL)
+	if err != nil {
+		h.errorPage(w, http.StatusBadGateway, "Desktop unreachable", "The desktop has no valid address.", outError)
+		return
+	}
+	switch err := h.agent.Focus(r.Context(), base, screen); {
+	case err == nil:
+		w.WriteHeader(http.StatusNoContent)
+	case errors.Is(err, ErrAppNotFound):
+		h.errorPage(w, http.StatusNotFound, "Not found", "No app is on that screen.", outNotFound)
+	default:
+		h.log.Error(err, "focusing screen", "desktop", d.Name, "screen", screen)
+		h.errorPage(w, http.StatusBadGateway, "Desktop unreachable", "The desktop could not switch screens.", outError)
+	}
 }
 
 // serveAppsOverview handles GET <base>/apps/ of a Running desktop: a page listing the
@@ -222,7 +333,7 @@ func (h *Handler) serveAppsOverview(w http.ResponseWriter, r *http.Request, rt *
 		if !appNameRE.MatchString(a.ID) { // the agent is trusted, but the id ends up in URLs
 			continue
 		}
-		v := appView{Name: a.Name, Href: rt.base + appPrefix + a.ID, Running: a.Running}
+		v := appView{ID: a.ID, Name: a.Name, Href: rt.base + appPrefix + a.ID, Running: a.Running}
 		if v.Name == "" {
 			v.Name = a.ID
 		}

@@ -32,11 +32,13 @@ type pageData struct {
 	CSRF      string
 	App       string // off and asleep pages: the app to return to after Start (appsOverview for the overview), empty for the desktop
 	Apps      []appView
-	Wide      bool // the main card is wide (overview)
+	Back      string // error page: a link back (escaped path), empty for none
+	Wide      bool   // the main card is wide (overview)
 }
 
 // appView is a card of the overview page.
 type appView struct {
+	ID      string
 	Name    string
 	Href    string
 	IconURL string // empty: show Initial
