@@ -53,6 +53,8 @@ unknown keys. Defaults are in `values.yaml`.
 | `gateway.displayNameHeader` | `Remote-Name` | header with the user's display name (desktop account name) |
 | `gateway.logoutUrl` | `""` | absolute http(s) URL the browser goes to when the desktop session logs out; empty: nowhere |
 | `gateway.ssoLogoutDefaults.onLogout` | `true` | sign out at the provider on logout, unless the user set `onLogout` in `~/.config/webtop/session.conf` |
+| `gateway.lockLogsOut` | `false` | offer Lock in the desktop; using it signs the browser out at the provider while the session keeps running. Needs `gateway.logoutUrl` (the chart fails without it). `false`: Lock is hidden and blocked |
+| `gateway.ssoLogoutDefaults.onLock` | `true` | with `lockLogsOut`, sign out at the provider on Lock, unless the user set `onLock` in `~/.config/webtop/session.conf` (`false`: Lock does nothing for that user) |
 | `desktop.runtimeClassName` | `""` | RuntimeClass with writable cgroups (not created by the chart) |
 | `desktop.hostUsers` | `false` | user namespace |
 | `desktop.port`, `resources`, `nodeSelector`, `tolerations`, `affinity`, `priorityClassName`, `podLabels`, `podAnnotations` | see values.yaml | desktop pod scheduling |
@@ -109,3 +111,13 @@ With `gateway.logoutUrl` set, logging out of the desktop session also signs the 
 login provider: the value is any absolute http(s) URL, such as the provider's logout endpoint with a return address; kww does not interpret it. Empty: nothing
 is redirected and the session comes back. The URL is read from the gateway config only, never put in
 a page.
+
+### Lock
+
+Lock never locks or ends the session. With `gateway.lockLogsOut: true` (and a `logoutUrl`) Plasma offers
+Lock, and using it signs the browser out at the provider; signing back in lands in the same session,
+with its apps still running. The desktop clears the lock at once, so there is no lock screen (its
+greeter cannot be used here). A user whose `onLock` is `false` (home-manager `webtop.ssoLogout.onLock`,
+else `gateway.ssoLogoutDefaults.onLock`) still sees Lock, but it does nothing for them. With
+`lockLogsOut: false`, the default, Lock is hidden and blocked as before. A change of `lockLogsOut`
+applies when the desktop session starts (a pod restart or a Log Out).

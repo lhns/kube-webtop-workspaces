@@ -10,6 +10,7 @@
   var seen = null; // pod of the Running state this tab has observed
   var awake = false; // this tab has seen the desktop Running and not asleep
   var loggedOut = null; // lastLogout as first seen; only a later change counts
+  var locked = null; // lastLock, likewise
   var delay = 1000;
   var es;
 
@@ -23,6 +24,9 @@
       // and only with a logout URL): visit the gateway path that redirects to the provider.
       if (loggedOut === null) loggedOut = s.loggedOut || "";
       else if (s.loggedOut && s.loggedOut !== loggedOut) { logout(); return; }
+      // Lock signs out the same way; the desktop itself keeps running.
+      if (locked === null) locked = s.locked || "";
+      else if (s.locked && s.locked !== locked) { logout(); return; }
       if (s.phase === "Running") {
         if (seen === null) seen = s.podUID || "";
         else if (seen !== (s.podUID || "")) reload();

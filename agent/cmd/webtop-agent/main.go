@@ -234,11 +234,18 @@ func run(cfg config.Config) {
 		return
 	}
 	(&boot.Steady{
-		Sender:   client,
-		Clients:  boot.SelkiesClients(cfg.HTTPPort),
-		Idle:     tracker.Seconds,
-		Asleep:   func() bool { return freeze.Asleep(cfg.StateDir) },
-		Logout:   func() (string, *bool, bool) { return logout.Read(cfg.StateDir) },
+		Sender:  client,
+		Clients: boot.SelkiesClients(cfg.HTTPPort),
+		Idle:    tracker.Seconds,
+		Asleep:  func() bool { return freeze.Asleep(cfg.StateDir) },
+		Logout:  func() (string, *bool, bool) { return logout.Read(cfg.StateDir) },
+		Lock: func() (string, *bool, bool) {
+			at, ok := logout.ReadLock(fmt.Sprintf("/run/user/%d", du.UID))
+			if !ok {
+				return "", nil, false
+			}
+			return at, logout.LockPref(du.Home), true
+		},
 		Poll:     5 * time.Second,
 		Interval: 30 * time.Second,
 	}).Run(ctx)

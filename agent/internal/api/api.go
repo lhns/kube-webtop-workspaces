@@ -59,6 +59,9 @@ type Report struct {
 	// LoggedOutAt (RFC 3339) and LogoutPref come from the logout marker.
 	LoggedOutAt *string `json:"loggedOutAt,omitempty"`
 	LogoutPref  *bool   `json:"logoutPref,omitempty"`
+	// LockedAt (RFC 3339) and LockPref come from the lock guard's marker and the user's session.conf.
+	LockedAt *string `json:"lockedAt,omitempty"`
+	LockPref *bool   `json:"lockPref,omitempty"`
 	// Set by Client.Report.
 	LoginName string   `json:"loginName,omitempty"`
 	HomePaths []string `json:"homePaths,omitempty"`

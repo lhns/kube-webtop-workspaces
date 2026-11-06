@@ -113,6 +113,9 @@ type Gateway struct {
 	// LogoutURL is where the browser goes when the session logs out; empty: nowhere.
 	// It never appears in a page: the browser only visits a gateway path that redirects.
 	LogoutURL string `json:"logoutUrl"`
+	// LockLogsOut offers Lock in the desktop and makes it sign the browser out at the provider
+	// (the session keeps running). It needs LogoutURL.
+	LockLogsOut bool `json:"lockLogsOut"`
 	// SSOLogoutDefaults are the events that log out at the provider when the user has not chosen.
 	SSOLogoutDefaults SSOLogout `json:"ssoLogoutDefaults"`
 }
@@ -120,6 +123,8 @@ type Gateway struct {
 // SSOLogout says which session events sign the browser out at the login provider.
 type SSOLogout struct {
 	OnLogout bool `json:"onLogout"`
+	// OnLock only counts with Gateway.LockLogsOut.
+	OnLock bool `json:"onLock"`
 }
 
 // Load reads, defaults and validates the config file.
@@ -245,6 +250,9 @@ func (c *Config) validate() error {
 		if p, err := url.Parse(u); err != nil || (p.Scheme != "http" && p.Scheme != "https") || p.Host == "" {
 			errs = append(errs, errors.New("gateway.logoutUrl: must be an absolute http(s) URL"))
 		}
+	}
+	if c.Gateway.LockLogsOut && c.Gateway.LogoutURL == "" {
+		errs = append(errs, errors.New("gateway.lockLogsOut: requires gateway.logoutUrl"))
 	}
 	errs = append(errs, c.validateSelkies())
 	return errors.Join(errs...)

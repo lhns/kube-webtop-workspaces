@@ -30,4 +30,7 @@
   # WEBTOP_TIME_ZONE / WEBTOP_LOCALE (docs/contract.md, "Time zone and locale") reach the session through
   # the env webtop-init copies here.
   services.webtop.localeEnvironmentFiles = [ "-/run/webtop/env" ];
+
+  # WEBTOP_LOCK_SCREEN (the chart's gateway.lockLogsOut) shows Lock in Plasma; read at each session start.
+  services.webtop.lockEnvironmentFiles = [ "-/run/webtop/env" ];
 }

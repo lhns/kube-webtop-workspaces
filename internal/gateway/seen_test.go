@@ -3,6 +3,8 @@
 package gateway
 
 import (
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -127,5 +129,33 @@ func TestLogoutEventOnlyForOwnerWithURL(t *testing.T) {
 	}
 	if ev := eventOf(d, time.Now(), false); ev.LoggedOut != "" {
 		t.Fatalf("not owner or no URL: %+v", ev)
+	}
+}
+
+func TestLockEventOnlyForOwnerWithURL(t *testing.T) {
+	at := metav1.NewTime(time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC))
+	d := desktop("alice", "alice", func(d *v1alpha1.Desktop) { d.Status.LastLock = &at })
+	if ev := eventOf(d, time.Now(), true); ev.Locked != "2026-01-02T03:04:05Z" || ev.LoggedOut != "" {
+		t.Fatalf("owner: %+v", ev)
+	}
+	if ev := eventOf(d, time.Now(), false); ev.Locked != "" {
+		t.Fatalf("not owner or no URL: %+v", ev)
+	}
+}
+
+// The browser acts on a lock through the logout redirect; reload.js does it only for a change.
+func TestReloadScriptActsOnLockOnlyAfterConnect(t *testing.T) {
+	js, err := os.ReadFile("reload.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`var locked = null;`,
+		`if (locked === null) locked = s.locked || "";`,
+		`else if (s.locked && s.locked !== locked) { logout(); return; }`,
+	} {
+		if !strings.Contains(string(js), want) {
+			t.Errorf("reload.js lacks %q", want)
+		}
 	}
 }

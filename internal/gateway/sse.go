@@ -28,6 +28,8 @@ type statusEvent struct {
 	// LoggedOut is when the session logged out, for the owner when a logout URL is configured; a
 	// tab acts on a change after it connected, never on the value it first saw.
 	LoggedOut string `json:"loggedOut,omitempty"`
+	// Locked is when the owner used Lock; handled like LoggedOut.
+	Locked string `json:"locked,omitempty"`
 	// Pull is set while the image is being downloaded.
 	Pull *pullEvent `json:"pull,omitempty"`
 }
@@ -52,6 +54,9 @@ func eventOf(d *v1alpha1.Desktop, now time.Time, logout bool) statusEvent {
 	}
 	if t := d.Status.LastLogout; logout && t != nil {
 		ev.LoggedOut = t.UTC().Format(time.RFC3339)
+	}
+	if t := d.Status.LastLock; logout && t != nil {
+		ev.Locked = t.UTC().Format(time.RFC3339)
 	}
 	if ip := d.Status.ImagePull; ip != nil && d.Status.Stage == v1alpha1.StagePullingImage && ip.StartedAt != nil {
 		ev.Pull = &pullEvent{
