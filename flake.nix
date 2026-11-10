@@ -2,7 +2,7 @@
   description = "kube-webtop-workspaces desktop image: NixOS (systemd PID 1) with a browser-streamed Plasma desktop";
 
   inputs = {
-    # webtop-nix's nixpkgs: one Qt tree with its grafted KWin (README, "KWin patch"), and its image
+    # webtop-nix's nixpkgs: one Qt tree with its grafted KWin (webtop-nix README, "KWin without a GPU"), and its image
     # builder's skopeo, so a layer compresses to the same blob as in the last build.
     nixpkgs.follows = "webtop-nix/nixpkgs";
     webtop-nix.url = "github:lhns/webtop-nix/4e779a09951af2f70f2829bd1de7b9185cc1a32b";
