@@ -2,11 +2,9 @@
 //
 //	webtop-agent run                 long-running: boot/steady reports, and the gateway's apps API on :8081
 //	webtop-agent power-hook          at shutdown: report the queued target (poweroff|reboot|halt)
-//	webtop-agent suspend             Sleep: freeze the session until the next client (or, with
-//	                                 WEBTOP_SUSPEND_MODE=poweroff or on failure, mark + poweroff)
+//	webtop-agent sleep-report STATE  sleep hook of webtop-nix (services.webtop.sleep.hooks): tell the
+//	                                 controller the desktop is asleep or awake
 //	webtop-agent session-exit        ExecStopPost of the session unit: record a logout (no shutdown queued)
-//	webtop-agent thaw                thaw whatever Sleep froze (idempotent)
-//	webtop-agent save-session        save the Plasma session on kube stop/suspend
 package main
 
 import (
@@ -16,7 +14,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"syscall"
@@ -26,13 +23,11 @@ import (
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/apps"
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/boot"
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/config"
-	"github.com/lhns/kube-webtop-workspaces/agent/internal/freeze"
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/identity"
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/idle"
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/logout"
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/powerhook"
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/restore"
-	"github.com/lhns/kube-webtop-workspaces/agent/internal/session"
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/state"
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/sysd"
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/usersession"
@@ -50,23 +45,19 @@ func main() {
 		run(cfg)
 	case "power-hook":
 		powerHook(cfg)
-	case "suspend":
-		os.Exit(suspend(cfg))
+	case "sleep-report":
+		sleepReport(cfg, args[1:])
 	case "session-exit":
 		sessionExit(cfg)
-	case "thaw":
-		thaw(cfg)
 	case "restore-job":
 		restoreJob(cfg)
-	case "save-session":
-		session.Run(cfg.StateDir)
 	default:
 		usage()
 	}
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: webtop-agent run | power-hook | suspend | thaw | restore-job | save-session | session-exit")
+	fmt.Fprintln(os.Stderr, "usage: webtop-agent run | power-hook | sleep-report asleep|awake | restore-job | session-exit")
 	os.Exit(2)
 }
 
@@ -92,42 +83,23 @@ func powerHook(cfg config.Config) {
 	// Always exit 0: a failing hook must never block the shutdown.
 }
 
-// suspend blocks while the session is frozen and returns 0 on wake, so systemd and logind
-// run their normal resume. If freezing is off or fails, it powers off like a suspend used to.
-func suspend(cfg config.Config) int {
-	if cfg.SuspendMode == "freeze" {
-		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
-		defer stop()
-		err := (&freeze.Sleeper{
-			Freezer:  newFreezer(cfg),
-			Sessions: boot.SelkiesSessions(cfg.HTTPPort),
-			Poll:     500 * time.Millisecond,
-			Notify:   notifyAsleep(cfg),
-		}).Run(ctx)
-		if err == nil {
-			return 0
-		}
-		log.Printf("suspend: freeze failed, powering off instead: %v", err)
+// sleepReport is the sleep hook of webtop-nix (services.webtop.sleep.hooks), run as root with
+// "asleep" after the freeze and "awake" after the thaw. It reports the state once; the steady
+// reports repeat it from /run/webtop/frozen-units. Best effort: it always exits 0.
+func sleepReport(cfg config.Config, args []string) {
+	if len(args) != 1 || (args[0] != "asleep" && args[0] != "awake") {
+		log.Print("sleep-report: want asleep or awake")
+		return
 	}
-	return suspendPoweroff(cfg)
-}
-
-func newFreezer(cfg config.Config) *freeze.Freezer {
-	return &freeze.Freezer{Ctl: freeze.UserCtl{User: usersession.LookupUser(cfg.User)}, StateDir: cfg.StateDir}
-}
-
-// notifyAsleep reports the sleep state once; the steady reports repeat it from the state file.
-func notifyAsleep(cfg config.Config) func(bool) {
 	client := api.New(cfg.ControllerURL, cfg.TokenPath)
-	return func(asleep bool) {
-		if !client.Enabled() {
-			return
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := client.Report(ctx, api.Report{Asleep: &asleep}); err != nil {
-			log.Printf("suspend: report asleep=%v: %v", asleep, err)
-		}
+	if !client.Enabled() {
+		return
+	}
+	asleep := args[0] == "asleep"
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	if err := client.Report(ctx, api.Report{Asleep: &asleep}); err != nil {
+		log.Printf("sleep-report: report asleep=%v: %v", asleep, err)
 	}
 }
 
@@ -138,31 +110,6 @@ func sessionExit(cfg config.Config) {
 		log.Printf("session-exit: %v", err)
 	}
 	log.Printf("session-exit: logout recorded=%v", marked)
-}
-
-func thaw(cfg config.Config) {
-	if err := newFreezer(cfg).Thaw(context.Background()); err != nil {
-		log.Printf("thaw: %v", err) // never block the shutdown
-	}
-}
-
-func suspendPoweroff(cfg config.Config) int {
-	if err := state.WriteAtomic(filepath.Join(cfg.StateDir, state.StopReason), []byte("suspend\n")); err != nil {
-		log.Printf("suspend: %v", err)
-		return 1
-	}
-	// Start the target via the manager: logind refuses poweroff while this
-	// suspend operation is still in progress.
-	cmd := exec.Command("systemctl", "start", "--no-block", "--job-mode=replace-irreversibly", "poweroff.target")
-	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
-	if err := cmd.Run(); err != nil {
-		log.Printf("suspend: systemctl start poweroff.target: %v", err)
-		if ee, ok := err.(*exec.ExitError); ok {
-			return ee.ExitCode()
-		}
-		return 1
-	}
-	return 0
 }
 
 // restoreJob shows the software restore as a job in the desktop's tray. It runs as the desktop
@@ -237,7 +184,7 @@ func run(cfg config.Config) {
 		Sender:  client,
 		Clients: boot.SelkiesClients(cfg.HTTPPort),
 		Idle:    tracker.Seconds,
-		Asleep:  func() bool { return freeze.Asleep(cfg.StateDir) },
+		Asleep:  func() bool { return state.Read(filepath.Join(cfg.StateDir, state.FrozenUnits)) != "" },
 		Logout:  func() (string, *bool, bool) { return logout.Read(cfg.StateDir) },
 		Lock: func() (string, *bool, bool) {
 			at, ok := logout.ReadLock(fmt.Sprintf("/run/user/%d", du.UID))

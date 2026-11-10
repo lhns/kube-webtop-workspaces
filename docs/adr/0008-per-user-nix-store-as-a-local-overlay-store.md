@@ -46,3 +46,7 @@ breaks (with Nix's own GC, before the overlay is mounted); the whole-overlay res
 the fallback, entered from the exact pre-run state. The overlay is mounted with `index=off,xino=off`
 and Nix runs with `fsync-store-paths = true`. A volume moved to an image of another architecture
 shares no store paths with it, so everything is invalidated there.
+
+## Amendment 2026-11-10
+
+The overlay scripts, the image-update handling and the restore, reinstall and trash units moved to webtop-nix (its ADR 0013); see [0019](0019-desktop-features-that-need-no-kubernetes-come-from-webtop-nix.md). The decision above stands.

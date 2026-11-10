@@ -1,6 +1,6 @@
 # 0009 — Sleep freezes the session instead of powering off
 
-- Status: Accepted; supersedes the "suspend means session save and stop" line of [0005](0005-power-actions-call-the-controller-with-pod-bound-tokens.md)
+- Status: Superseded by [0019](0019-desktop-features-that-need-no-kubernetes-come-from-webtop-nix.md) (moved to webtop-nix, its ADR 0012); supersedes the "suspend means session save and stop" line of [0005](0005-power-actions-call-the-controller-with-pod-bound-tokens.md)
 - Date: 2026-11-01
 
 ## Context

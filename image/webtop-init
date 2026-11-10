@@ -1,15 +1,7 @@
 #!@busybox@/bin/sh
-# Container entrypoint (static busybox): per-user overlay /nix/store and /home on the volume, then
-# exec systemd. Layout under /persist:
-#   nix/upper, nix/work   overlay upper/work of /nix/store (lower: the image's store)
-#   nix/var               /nix/var/nix of the overlay store (its DB holds the upper paths and the
-#                         lower paths they reference)
-#   nix/lower-stamp       stamp of the lower store the upper was built against
-#   nix/lower-paths       that store's path list (webtop-nix-lower, webtop-nix-partial)
-#   nix/reinstall/        after an image update: manifests, and the `pending` / `restore` markers
-#   nix/trash-*/          what an image update moved out of the overlay, kept until
-#                         webtop-nix-restore.service has copied the users' paths out of it
-#                         (webtop-nix-trash.service deletes it)
+# Container entrypoint (static busybox): per-user store overlay (webtop-nix's webtop-store-init, layout
+# in its README, "Store overlay") and /home on the volume, then exec systemd. Under /persist:
+#   nix/                  the store overlay's state (webtop-nix)
 #   home/user             the user's home, bind-mounted at each path in its .config/webtop/home-paths
 #                         (ADR 0011); /home is a tmpfs holding only those
 # WEBTOP_INIT_DEBUG=1       a failing step parks the container (shell / sleep) instead of exiting.
@@ -19,7 +11,6 @@ export PATH=@busybox@/bin
 # Account and group names of the image except the desktop user's, from its NixOS config.
 RESERVED=@reservedNames@
 P=/persist
-N=$P/nix
 H=$P/home/user
 
 log() { echo "webtop-init: $*"; }
@@ -56,33 +47,6 @@ persist_path() {
   [ "$src" = /persist ] && return 0
   mkdir -p /persist && mount --bind "$src" /persist
 }
-
-bind_lower() {
-  # Nix creates its state dirs even for a read-only lower store; they must exist before the ro bind.
-  mkdir -p /nix/var/nix/profiles/per-user /nix/var/nix/gcroots/per-user /nix/var/nix/temproots /nix/var/nix/db &&
-  mkdir -p /.lower/nix &&
-  mount --bind /nix /.lower/nix &&
-  # Source and target given: busybox otherwise looks the target up in /proc/mounts, whose lines
-  # (one lowerdir per image layer) overflow its buffer.
-  mount -o remount,bind,ro /nix /.lower/nix
-}
-
-prepare_persist() {
-  # The upper DB is NOT seeded from the image: the overlay store reads lower paths from the lower
-  # store's own DB (/.lower/nix/var/nix/db). This one holds the upper paths and the lower paths
-  # they reference.
-  mkdir -p "$N/upper" "$N/work" "$N/var" "$P/home"
-}
-
-# index=off: with index on, a kept upper whose root records the old lower's origin fails to mount
-# after an image update. xino=off: offline lower changes are allowed only without index and xino.
-mount_overlay() {
-  mount -t overlay overlay \
-    -o "lowerdir=/.lower/nix/store,upperdir=$N/upper,workdir=$N/work,userxattr,index=off,xino=off" \
-    /nix/store
-}
-
-bind_var() { mount --bind "$N/var" /nix/var/nix; }
 
 # Login name rule (docs/contract.md, section 4), and not an account of the image: those are not in
 # its passwd yet (activation writes it), hence the list. systemd-*: systemd's dynamic users.
@@ -187,18 +151,6 @@ console_relay() {
   ( while :; do cat /run/webtop/console; done ) &
 }
 
-# logind offers sleep only if /sys/power/state is writable, which it is not in a pod. Sleep itself
-# runs systemd-suspend.service, which the image maps to freezing the session, so a writable
-# stand-in is enough.
-fake_sys_power() {
-  # Not `test -w`: busybox reports every file writable for root, even on a read-only mount.
-  [ -e /sys/power/state ] && awk '$5 == "/sys" && $6 ~ /(^|,)ro(,|$)/ { f = 1 } END { exit !f }' /proc/self/mountinfo || return 0
-  d=/run/webtop/sys-power
-  mkdir -p $d && echo "freeze mem" > $d/state && echo "s2idle [deep]" > $d/mem_sleep &&
-  mount --bind $d/state /sys/power/state &&
-  { [ ! -e /sys/power/mem_sleep ] || mount --bind $d/mem_sleep /sys/power/mem_sleep; }
-}
-
 # systemd does not pass the container env to units; they read these files.
 write_env() {
   mkdir -p /run/webtop &&
@@ -252,14 +204,10 @@ step "make / rprivate" make_rprivate
 step "volume at /persist" persist_path
 if [ "$WEBTOP_INIT_SKIP_OVERLAY" = 1 ]; then
   log "WEBTOP_INIT_SKIP_OVERLAY=1: skipping the store overlay"
-  step "prepare /persist" mkdir -p "$P/home"
 else
-  step "bind image /nix read-only at /.lower/nix" bind_lower
-  step "store overlay after image updates" /webtop-nix-lower
-  step "prepare /persist" prepare_persist
-  step "overlay on /nix/store" mount_overlay
-  step "bind $N/var on /nix/var/nix" bind_var
+  step "store overlay" @storeInit@/bin/webtop-store-init
 fi
+step "prepare $P/home" mkdir -p "$P/home"
 step "login name" identity
 step "home paths" home_paths
 step "bind $H at the home paths" mount_homes
@@ -269,7 +217,7 @@ step "write /run/webtop/selkies.env" write_selkies_env
 step "write /run/webtop/nix.conf" write_nix_conf
 step "write /run/webtop/session.env" write_session_env
 log "step: writable /sys/power stand-in"
-fake_sys_power || log "no /sys/power stand-in: the desktop will not offer sleep"
+@sysPower@/bin/webtop-sys-power || log "no /sys/power stand-in: the desktop will not offer sleep"
 
 log "exec /sbin/init"
 exec /sbin/init

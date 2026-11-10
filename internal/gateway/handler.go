@@ -603,7 +603,7 @@ func (h *Handler) asleepPage(w http.ResponseWriter, rt *route, app string) {
 }
 
 // serveWake lets the visitor's next navigation through to the sleeping desktop: that opens a new
-// session, which makes the agent thaw it (docs/contract.md, 7.5).
+// session, which makes the desktop thaw it (docs/contract.md, 7.5).
 func (h *Handler) serveWake(w http.ResponseWriter, r *http.Request, rt *route, d *v1alpha1.Desktop) {
 	if d == nil {
 		h.errorPage(w, http.StatusNotFound, "Not found", "This desktop does not exist.", outNotFound)

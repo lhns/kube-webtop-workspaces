@@ -155,7 +155,7 @@ Only the leader reconciles. Status is written with merge patches of the fields i
 | --- | --- |
 | `user` | agent (shutdown/reboot from the desktop) |
 | `idle` | agent (PowerDevil idle action) |
-| `suspend` | agent (Sleep fallback: save + poweroff, when freezing fails or `WEBTOP_SUSPEND_MODE=poweroff`) |
+| `suspend` | agent (Sleep fallback: save + poweroff, when freezing fails or `WEBTOP_SUSPEND_MODE=poweroff`; webtop-nix writes `/run/webtop/stop-reason`, the power hook reads it) |
 | `kube-stop` | agent (PID 1 got the stop signal from a pod deletion); never recorded |
 | `exit` | controller (clean exit without a recorded stop) |
 | `admin` | controller (`powerState` set `Off` by someone else) |
@@ -459,7 +459,7 @@ accepted only if field = cookie (constant-time) and the request is same-origin (
 same-origin` if present, else `Origin` host = `Host`; neither → reject). Success: patch
 `powerState: On`, `303` to `<base>/`. Failure: 403.
 
-**Sleep page / wake:** Sleep (ADR 0009) freezes the stream, so a tab would stay on the last frame.
+**Sleep page / wake:** Sleep (ADR 0019) freezes the stream, so a tab would stay on the last frame.
 `status` carries `"asleep": true` while `status.asleep` is set (omitted otherwise), and `reload.js`
 reloads a tab that saw the desktop awake when it falls asleep (a tab opened while it is still waking
 does not). A navigation (section 7.4) `GET` to a `Running` desktop with `status.asleep` gets the
@@ -475,7 +475,7 @@ the focus call answers `404`. It also sets the tab's title to the app id.
 Wake checks CSRF like start, sets cookie `webtop_wake=1` (`HttpOnly`, `SameSite=Lax`, `Path=<base>/`,
 `Max-Age=60`, `Secure` as above) and answers `303` to `<base>/` or `<base>/apps/<app>`. A navigation
 with that cookie is proxied while the desktop is asleep: it opens a new Selkies session, which makes
-the agent thaw the session. A navigation with the cookie to an awake desktop expires it, so the next
+the desktop thaw the session. A navigation with the cookie to an awake desktop expires it, so the next
 Sleep shows the page again.
 
 ### 7.6 Single app: `<base>/apps/<name>`

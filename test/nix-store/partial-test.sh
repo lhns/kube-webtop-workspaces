@@ -1,11 +1,12 @@
 #!/bin/sh
-# Inside a privileged nixos/nix container (run.sh): image/webtop-nix-lower and webtop-nix-partial
-# (the store overlay after an image update, ADR 0008) against real local-overlay stores, run as root
-# of a user namespace with the image's static busybox, as webtop-init runs them. The restore after
-# the update is image/webtop-nix-restore.sh itself.
+# Inside a privileged nixos/nix container (run.sh): webtop-nix's webtop-nix-lower and webtop-nix-partial
+# (the store overlay after an image update, ADR 0008 and webtop-nix's 0013) against real local-overlay
+# stores, run as root of a user namespace with the image's static busybox, as webtop-store-init runs
+# them. The restore after the update is webtop-nix-restore.sh itself.
 # Needs NIXPKGS_REV (the flake's nixpkgs): busybox and sqlite3 come from it.
 set -eu
 [ -z "${TRACE:-}" ] || set -x
+. /src/test/nix-store/webtop-nix-scripts.sh
 if [ ! -e /bb/awk ]; then
   f="nix --extra-experimental-features nix-command --extra-experimental-features flakes"
   bb=$($f build --no-link --print-out-paths "github:NixOS/nixpkgs/$NIXPKGS_REV#pkgsStatic.busybox")
@@ -33,10 +34,11 @@ failt() { echo "FAIL: $*"; bad=$((bad + 1)); }
 check() { if eval "$2"; then pass "$1"; else failt "$1"; fi; }
 
 mkdir -p /t && mount -t tmpfs tmpfs /t
-# The image scripts as flake.nix substitutes them.
+# webtop-nix's scripts as its storeOverlay.init substitutes them (paths as in the image; the tests
+# override them through the environment).
 mkdir -p /t/bin
 for s in webtop-nix-lower webtop-nix-partial; do
-  sed -e "s|@busybox@|$(cat /bb/.root)|" -e "s|@nixStore@|$(command -v nix-store)|" "/src/image/$s" > "/t/bin/$s"
+  sed -e "s|@busybox@|$(cat /bb/.root)|" -e "s|@nixStore@|$(command -v nix-store)|"     -e "s|@persistPath@|/persist/nix|" -e "s|@lowerRoot@|/.lower|" -e "s|@homesRoot@|/persist/home|"     -e "s|@bin@|/t/bin|" "/wn-scripts/$s" > "/t/bin/$s"
   chmod +x "/t/bin/$s"
 done
 cat > /t/paths.nix <<'EOF'
@@ -127,9 +129,9 @@ auto-optimise-store = true" nix copy --no-check-sigs --to "$O" "$u1" "$u2r" "$u3
       nix-store --store "local?root=/t/B" --register-validity --reregister --hash-given
     for r in $ROOTS; do ln -s "$r" "$S/var/gcroots/${r#*-}"; done
   fi
-  # As webtop-init's bind_lower: state dirs exist before the read-only bind.
+  # As webtop-store-init's bind_lower: state dirs exist before the read-only bind.
   mkdir -p /t/B/nix/var/nix/profiles/per-user /t/B/nix/var/nix/gcroots/per-user /t/B/nix/var/nix/temproots
-  mkdir -p "$LB" && mount --bind /t/B "$LB" && mount -o remount,bind,ro /t/B "$LB" # source given, as in webtop-init
+  mkdir -p "$LB" && mount --bind /t/B "$LB" && mount -o remount,bind,ro /t/B "$LB" # source given, as in webtop-store-init
   { echo "stamp A"; nix-store --store "local?root=$PR/A&read-only=true" --dump-db | heads | sort; } > "$S/lower-paths"
   echo A > "$S/lower-stamp"
 }
@@ -148,23 +150,23 @@ prestate() { # exact pre-run state: DB contents and every upper file
   echo ---; ls "$S"
 }
 
-# As webtop-init runs them: no HOME and no passwd entry (before activation), busybox only.
+# As webtop-store-init runs them: no HOME and no passwd entry (before activation), busybox only.
 echo B > /t/stampB
 ENVP="env -u HOME -u XDG_CONFIG_HOME -u XDG_CACHE_HOME N=$S LOWER=$LB WEBTOP_NIX_PARTIAL_WORK=/t/work"
 run_partial() { $ENVP PATH=/bb /t/bin/webtop-nix-partial A B; }
-run_lower() { $ENVP STAMP_FILE=/t/stampB WEBTOP_PERSIST_ROOT=$PR PATH=/t/shim:/bb /t/bin/webtop-nix-lower; }
+run_lower() { $ENVP STAMP_FILE=/t/stampB WEBTOP_NIX_PERSIST=$S WEBTOP_LOWER_ROOT=$LB WEBTOP_HOMES_ROOT=$PR/home PATH=/t/shim:/bb /t/bin/webtop-nix-lower; }
 markers() { [ -e "$S/reinstall/pending" ] && [ -e "$S/reinstall/restore" ]; }
 invalid_up() { [ "$(nix-store --store "$(UPS)" --check-validity --print-invalid "$1" 2>/dev/null)" = "$1" ]; }
 
-# image/webtop-nix-restore.sh on the new store (the overlay over the new lower), then the valid roots.
+# webtop-nix-restore.sh on the new store (the overlay over the new lower), then the valid roots.
 restore_roots() {
-  mkdir -p "$S/upper" "$S/work" "$S/var" # as webtop-init's prepare_persist
+  mkdir -p "$S/upper" "$S/work" "$S/var" # as webtop-store-init's prepare_persist
   mount_ovl "$LB"; O=$(OVL "$LB")
   NIX_CONFIG="$BASECONF
 store = $O
 substitute = true
-substituters = file:///t/subst" WEBTOP_NIX_PERSIST=$S WEBTOP_HOMES=$PR/home PATH=$PROFILE_PATH \
-    bash /src/image/webtop-nix-restore.sh > /t/restore.log 2>&1 || true
+substituters = file:///t/subst" WEBTOP_NIX_PERSIST=$S WEBTOP_HOMES_ROOT=$PR/home PATH=$PROFILE_PATH \
+    bash /wn-scripts/webtop-nix-restore.sh > /t/restore.log 2>&1 || true
   for r in $ROOTS; do nix path-info --store "$O" "$r" >/dev/null 2>&1 && echo "$r"; done | sort > /t/valid-roots
   nix-store --store "$O" --verify --check-contents > /t/rv.log 2>&1 && ! grep -q 'disappeared\|modified' /t/rv.log
   rc=$?
@@ -291,7 +293,7 @@ check "mirror: the restore has nothing to restore" "grep -q 'nothing to restore'
 
 echo "=== the procedure killed (OOM), the caller rolls back and resets"
 setup
-$ENVP STAMP_FILE=/t/stampB WEBTOP_PERSIST_ROOT=$PR WEBTOP_TEST_PAUSE_AT=after-moves PATH=/bb /t/bin/webtop-nix-lower > /t/lower.log 2>&1 &
+$ENVP STAMP_FILE=/t/stampB WEBTOP_NIX_PERSIST=$S WEBTOP_LOWER_ROOT=$LB WEBTOP_HOMES_ROOT=$PR/home WEBTOP_TEST_PAUSE_AT=after-moves PATH=/bb /t/bin/webtop-nix-lower > /t/lower.log 2>&1 &
 lpid=$!
 i=0; while [ ! -e /t/work/paused ] && [ $i -lt 300 ]; do sleep 0.2; i=$((i + 1)); done
 kill -9 "$(pgrep -f 'webtop-nix-partial A B' | head -n 1)"

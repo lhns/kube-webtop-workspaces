@@ -6,7 +6,7 @@
   system.stateVersion = "26.05";
 
   services.webtop = {
-    storeOverlay.enable = true; # webtop-init mounts the overlay and binds the lower store at /.lower
+    storeOverlay.enable = true; # webtop-init runs storeOverlay.init: the overlay, the lower store at /.lower, image updates
     journalRelay.enable = true; # webtop-init relays the fifo (default path) to the real stdout
     adminTools.enable = true;
     # The desktop user owns the container (it is user-namespaced); sudo without a password.
@@ -20,9 +20,6 @@
   nix.settings = {
     # By group: the desktop user's name is chosen at runtime (identity.nix).
     trusted-users = [ "root" "@wheel" ];
-    # A registered path's bytes are on disk before its row: the image-update invalidation
-    # (webtop-nix-partial) keeps upper paths by their rows. Costs an fsync per installed path.
-    fsync-store-paths = true;
   };
   # Extra substituters/keys from the chart (desktop.nix.*), written by webtop-init; optional include.
   nix.extraOptions = "!include /run/webtop/nix.conf";

@@ -145,8 +145,8 @@ jobs:
           jq -e '.nodes.root.inputs.nixpkgs == ["webtop-nix", "nixpkgs"]' flake.lock \
             || { echo "::error::inputs.nixpkgs must be follows = \"webtop-nix/nixpkgs\""; exit 1; }
 
-  # The store overlay across image updates (webtop-nix-lower, webtop-nix-partial,
-  # webtop-nix-restore.sh) against real local-overlay stores in privileged nixos/nix containers.
+  # webtop-nix's store overlay scripts (webtop-nix-lower, -partial, -restore.sh; the revision flake.lock
+  # pins) across image updates, against real local-overlay stores in privileged nixos/nix containers.
   nix-store:
     runs-on: ubuntu-latest
     timeout-minutes: 30
