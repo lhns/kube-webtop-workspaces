@@ -67,13 +67,11 @@ failed step instead of exiting; `WEBTOP_INIT_SKIP_OVERLAY=1` boots on the image'
 systemd replaces PID 1's stdout, so a unit follows the journal into a fifo that webtop-init relays to
 the container log (`kubectl logs`).
 
-**Nix store** (ADR 0008). The daemon opens `/nix/store` as a `local-overlay` store whose lower is
-the image's store (with its own DB) and whose upper and DB are on the volume; clients, root included,
-use the daemon. The user's packages (`nix profile`, home-manager) cost only what they add.
-The overlay, its layout and the image-update handling (partial invalidation or reset, then the restore,
-trash and reinstall units) are webtop-nix's: its README, "Store overlay", and its ADR 0013 ([ADR 0019](docs/adr/0019-desktop-features-that-need-no-kubernetes-come-from-webtop-nix.md)).
-This repo sets `storeOverlay.enable` and shows the restore: the agent reads `/run/webtop/restore/progress.json`
-(`nixProfile.progress`), reports it to the controller, and `webtop-restore-job` shows it in the tray.
+**Nix store** (ADR 0008, amended by [ADR 0019](docs/adr/0019-desktop-features-that-need-no-kubernetes-come-from-webtop-nix.md)).
+This repo sets `storeOverlay.enable` and runs webtop-nix's `storeOverlay.init` from `webtop-init`, with the state in `/persist/nix`.
+The overlay, its layout and the image-update handling are webtop-nix's ([README, "Store overlay"](https://github.com/lhns/webtop-nix#store-overlay), its ADR 0013).
+This repo shows the restore: the agent reads `/run/webtop/restore/progress.json` (`nixProfile.progress`), reports it to the
+controller, and `webtop-restore-job` shows it in the tray.
 
 **User identity** (ADR 0011). The desktop user (uid 1000) is named after the desktop
 (`WEBTOP_DESKTOP`), with home `/home/<name>` and the login proxy's display name header (`WEBTOP_DISPLAY_NAME`) as
@@ -88,18 +86,12 @@ or a symlinked file are ignored (logged by webtop-init). `status.loginName` and 
 show the result.
 
 *Existing volumes.* The first start creates `home-paths` with the new path and `/home/user`, so profile
-links, `home.homeDirectory` and KDE configs that name `/home/user` keep working. home-manager itself
-checks the user name and home, so at every start `webtop-home-manager-template.service` rewrites
-`~/.config/home-manager/{flake.nix,home.nix}` for the current name while they are unmodified: what it
-last wrote (hashes in `~/.local/state/webtop/templates.sha256`) or byte-identical to the starter
-template rendered for a name in `home-paths`. An edited flake is left alone; if it still names
-another user, the journal of that unit and a desktop notification list the lines to change
-(`homeConfigurations."…"`, `home.username`, `home.homeDirectory`). Until then a plain
-`home-manager switch` fails. A failed rename at
+links, `home.homeDirectory` and KDE configs that name `/home/user` keep working. `webtop-init` passes
+the paths as `WEBTOP_HOME_PATHS` (`/run/webtop/env`, `nixProfile.templateEnvironmentFiles`), so webtop-nix's
+starter-flake upgrade rewrites an unmodified starter for the current name and treats one rendered for a
+listed name as unmodified ([README, "Software"](https://github.com/lhns/webtop-nix#software)). A failed rename at
 activation leaves the account `user` with `/home/user` mounted; the reason is reported (condition
-`LoginName`, `RenameFailed`). The unmodified check is the
-`webtop-template write|unmodified` helper, for other units that update files the image put into the
-home too.
+`LoginName`, `RenameFailed`).
 
 Remove `/home/user` from `home-paths` only once nothing refers to it. Known referrers: `~/.nix-profile`
 and other profile links (`~/.local/state/nix/profiles`), home-manager's `home.homeDirectory` and the
@@ -109,58 +101,11 @@ generated `hm-session-vars.sh`, older generations kept as GC roots (a rollback t
 `ls -l ~/.nix-profile ~/.local/state/nix/profiles`; switch home-manager after updating its config so
 the current generation refers to the new path.
 
-**home-manager.** On first boot, only if `~/.config/home-manager` is absent (and once), a starter
-flake is created there (webtop-nix `modules/nix-profile/starter/`) and switched to. Its `nixpkgs`, `home-manager` and `webtop` inputs come from the
-image (no download): flake inputs resolve indirect refs through the global registry only, so the image
-sets `flake-registry` to the upstream registry with its own pins in front (`webtop` is a store path of
-webtop-nix `modules/nix-profile/webtop-flake/`).
-The template is written for the login name; its generation is prebuilt for the placeholder `user`, so the
-first switch builds the few derivations that carry the name. Building a changed config may substitute build
-tools from cache.nixos.org. A flake in a git repo ignores untracked files (`git add` them; the profile
-hook does `git add --intent-to-add packages.json`), and so is `local.nix`. After an image update the
-image-registry inputs are relocked automatically (`webtop-home-manager`, which the reinstall unit runs);
-`webtop` whenever it is not the image's current copy.
-
-**Software** (ADR 0013). One declaration, `~/.config/home-manager/packages.json`, which the
-starter flake's `webtop.homeModules.packages` module installs and points `nix profile` at:
-
-| to | run |
-| --- | --- |
-| install | `nix profile add nixpkgs#hello` (any flake installable) |
-| remove | `nix profile remove hello` (names and store paths; `--regex` and `--all` match packages.json only) |
-| list | `nix profile list` (declared packages, then undeclared profile elements, marked `Backend:`) |
-| upgrade | `nix profile upgrade --all`: relocks packages from other flakes; nixpkgs ones follow the image |
-| undo | `nix profile history`, `nix profile rollback [--to N]`: versions of packages.json only |
-| try without installing | `nix shell nixpkgs#hello` |
-
-Nix is patched (webtop-nix `modules/nix-profile/nix/`): with `profile-backend = declaration:<file>` (set in the user's
-`~/.config/nix/nix.conf` by that module), `add` builds the installable and records it in the
-file the way `manifest.json` records an element, then runs `profile-hook`
-(`webtop-profile-hook`: `home-manager switch`); if the hook fails the file is restored. Store
-paths and elements the file does not declare stay in the profile as before (home-manager's own
-generation is one); a profile element of the same name moves into the file when added, and a store path named like a
-declared package is refused. If any part
-of a command fails, all of it is reverted. `--profile-backend profile` or `--profile <path>` gives
-stock behaviour for one call. Entries are locked: a package from a local `path:` flake picks up edits only with
-`nix profile upgrade`, and such a flake needs its `flake.lock` before the first `add` (`nix flake
-lock`), since writing it changes the directory's hash. Packages in `home.nix` work as before. KDE add-ons from Plasma's "Get New…" dialogs live in
-`~/.local/share`, outside the declaration. The GUI for installing is the Nix Software Center (it runs `nix profile`); there is no Discover.
-
-Your own additions go into `~/.config/home-manager/local.nix`, a module the starter flake imports if it
-exists and the image never writes. In a git repo `git add` it, like `packages.json`: an untracked file
-is invisible to the flake.
-
-`webtop-home-manager-template.service` keeps the starter files current with `webtop-template`: an
-unmodified `flake.nix`/`home.nix` (what the unit last wrote, or the template rendered for another of the
-home's names) is rewritten for the login name and the current template. An older template that
-imported `packages.nix` is upgraded the same way: `packages.nix` is removed if unmodified, and
-`packages.json` stays. Files you edited are never rewritten, nor is a starter whose `packages.nix` you
-edited or whose `~/.config/nix/nix.conf` is your own (the module writes that file); an edited flake
-that still imports `./packages.nix` keeps working. For these a notification says once per template
-version that a newer one exists. `webtop-home-manager-update` prints the difference to the current
-template and changes nothing; `webtop-home-manager-update --apply` backs up each differing file as
-`<file>.bak-<time>`, installs the template and switches, and restores files and hashes if the switch
-fails. Nothing is merged: move your edits over by hand (into `local.nix`, where they survive).
+**Software** (webtop-nix [README, "Software"](https://github.com/lhns/webtop-nix#software), its ADRs 0006 and 0014; [ADR 0019](docs/adr/0019-desktop-features-that-need-no-kubernetes-come-from-webtop-nix.md)).
+`nixProfile.enable` gives each user `packages.json`, `nix profile`, the starter flake and the Software Center. This repo fits it
+to the pod (`image/nixos/home-manager.nix`): `homeStoragePath = /persist/home/user`, whatever paths the home is mounted at, and
+`templateEnvironmentFiles` for `WEBTOP_HOME_PATHS`. Changing `homeStoragePath` makes every unmodified starter flake look edited,
+since existing homes' `templates.sha256` are keyed by it.
 
 **Power.** The agent reports stops to the controller before PID 1 exits (contract section 8.2):
 
@@ -178,85 +123,59 @@ jobs) posts the request and retries until the 200 or 60 s
 agent tracks input idleness from KWin (`ext-idle-notify-v1` on the socket named by `WAYLAND_DISPLAY`
 in the user manager's environment); a poweroff after at least 60 s without
 input (`WEBTOP_IDLE_REASON_THRESHOLD`; PowerDevil's idle action needs a minute or more) is `idle`.
-A Plasma shutdown saves the session itself (restore is on by default);
-webtop-nix's `webtop-session-save.service` (`sessionSave`) saves it on a pod deletion or a Sleep that falls back to poweroff
-(its README, "Sleep and session save"). A shell `systemctl poweroff` does not save it, as on a real machine.
+The session is saved by webtop-nix's `sessionSave` ([README, "Sleep and session save"](https://github.com/lhns/webtop-nix#sleep-and-session-save)); `terminationGracePeriodSeconds` must cover it.
 
-**Sleep.** webtop-nix's `sleep.mode = "freeze"` ([ADR 0019](docs/adr/0019-desktop-features-that-need-no-kubernetes-come-from-webtop-nix.md);
-its README, "Sleep and session save"): `systemd-suspend.service` runs `webtop-power suspend`, which freezes the Plasma session
-and the apps, waits for a new Selkies session and thaws; Selkies, the session bus, audio and the agent stay up, so the readiness
-probe passes and a browser can still connect. A stop while asleep thaws first. This repo adds the controller side: a `sleep.hooks`
-entry (`webtop-agent sleep-report asleep|awake`) reports `asleep: true` at the freeze and `false` at the thaw, the steady reports
-repeat the state from `/run/webtop/frozen-units`, and a Sleep that powers off (freeze failed, or `WEBTOP_SUSPEND_MODE=poweroff` in
-the pod environment, default `freeze`) writes `/run/webtop/stop-reason` = `suspend`, which the power hook reports as reason `suspend`.
+**Sleep.** The image sets webtop-nix's `sleep.mode = "freeze"` ([README, "Sleep and session save"](https://github.com/lhns/webtop-nix#sleep-and-session-save), its ADR 0012;
+[ADR 0019](docs/adr/0019-desktop-features-that-need-no-kubernetes-come-from-webtop-nix.md)). The agent, Selkies and the session bus stay up, so the readiness
+probe passes and a browser can still connect. This repo adds the controller side: a `sleep.hooks` entry (`webtop-agent sleep-report asleep|awake`)
+reports `asleep: true` at the freeze and `false` at the thaw, the steady reports repeat the state from `/run/webtop/frozen-units`, and a
+Sleep that powers off (`WEBTOP_SUSPEND_MODE=poweroff` in the pod environment, or a failed freeze) leaves `/run/webtop/stop-reason` = `suspend`,
+which the power hook reports as reason `suspend`.
 
 **Boot progress and activity.** `webtop-agent run` reports the stage and progress from systemd's
 boot progress, the user's `plasma-workspace.target` and Selkies' port, then `ready`. Afterwards it
 reports `connectedClients` (Selkies `GET /api/sessions`), `idleSeconds` and `asleep` every 30 s and when the
 client count or sleep state changes.
 
-**Path prefix.** The gateway strips `/u/<user>` and requires the trailing slash; the Selkies web
-client loads its assets and opens `api/websockets` relative to the page's directory, so it needs no
-prefix setting. Selkies' `SELKIES_SUBFOLDER` must stay empty: it would make the server expect the
-prefix the gateway has already stripped.
+**Path prefix.** The gateway strips `/u/<user>` and requires the trailing slash. Selkies' `SELKIES_SUBFOLDER` must stay empty
+(webtop-nix leaves it unset): it would make the server expect the prefix the gateway has already stripped.
 
-**Time zone and locale** (`desktop.timeZone`, `desktop.locale`): pod env `WEBTOP_TIME_ZONE` / `WEBTOP_LOCALE`, read from
-`/run/webtop/env` by webtop-nix's `webtop-locale` before each session start. Precedence: the user's
-`webtop.timeZone` / `webtop.locale` (home-manager, in `~/.config/webtop/session.conf`) > the chart > UTC and
-`en_US.UTF-8`. Invalid values are logged and skipped. No browser input; contract, "Time zone and locale".
+**Time zone and locale** (`desktop.timeZone`, `desktop.locale`): pod env `WEBTOP_TIME_ZONE` / `WEBTOP_LOCALE`, which `webtop-init` copies to
+`/run/webtop/env` (`localeEnvironmentFiles`). Precedence and validation are webtop-nix's ([README, "Time zone and locale"](https://github.com/lhns/webtop-nix#time-zone-and-locale));
+contract, "Time zone and locale". No browser input.
 
-**Selkies settings** (`image/nixos/desktop.nix`): plain HTTP; audio sink, cursor path and library
-wrapper come from webtop-nix. Clipboard, file transfer and browser cursors are webtop-nix's defaults.
-Precedence, low to high: the image's defaults < the cluster (`desktop.selkies` and the tab title
+**Selkies settings** (`image/nixos/desktop.nix`): plain HTTP (`SELKIES_ENABLE_HTTPS=false`); the rest of
+the Selkies setup is webtop-nix's. Precedence, low to high: the image's defaults < the cluster (`desktop.selkies` and the tab title
 `desktop.title`, delivered through `/run/webtop/selkies.env`; contract, "Selkies settings") < the user's
 allowlisted `~/.config/webtop/selkies.env` (`services.webtop.userSettings`: stream quality and input
 feel). The per-user file is a convenience, not a security boundary, since the user can edit their own
 systemd user units; settings that must hold (file transfers off) cannot rely on it. A changed setting or
 title applies on the desktop's next start (ADR 0006).
 
-**KWin patch.** KWin 6.8 dropped QPainter compositing, so without a GPU it needs a patch to render
-nested under Selkies: [webtop-nix](https://github.com/lhns/webtop-nix) grafts a patched KWin (LinuxServer's
-software-presentation patch) over the stock one (`services.webtop.kwinSoftwarePresentation`, its ADR 0004).
-Plasma is otherwise plain nixpkgs, which this flake follows from webtop-nix: bumping the webtop-nix pin moves it; the patch only applies to KWin 6.8.x,
-and the evaluation fails on another minor version. Building that KWin takes 25–45 minutes on a GitHub runner, so
-the `desktop-image` job caches it (`packages.<system>.kwin`, keyed by its store path, so per architecture).
-
 **Known limits**
 
 - The Nix build sandbox is off (`pivot_root` fails with `EPERM` in the user-namespaced pod).
-- No real suspend: sleep freezes the session's processes. The pod keeps its RAM and CPU request while
-  asleep, and PowerDevil's idle shutdown does not fire while frozen. logind offers sleep only with a
-  writable `/sys/power/state`, which is read-only in a pod; webtop-init binds a stand-in over it
-  (best effort, logged).
-- Session restore on Wayland relaunches apps; it restores only what ksmserver can (X11 apps via
-  Xwayland, apps that support KDE's session restore), not window contents of arbitrary apps.
-- The desktop user has passwordless sudo: root in the pod is unprivileged on the node (user
-  namespace).
+- No real suspend: Sleep freezes the session, so the pod keeps its RAM and CPU request while asleep. `/sys/power/state` is
+  read-only in a pod; `webtop-init` runs webtop-nix's `webtop-sys-power` over it (best effort, logged). The desktop's own limits
+  are in the [webtop-nix README](https://github.com/lhns/webtop-nix).
+- The desktop user has passwordless sudo (`sudo.enable`): root in the pod is unprivileged on the node (user namespace).
 
 ## Features and third-party changes
 
-A single desktop's features come from [webtop-nix](https://github.com/lhns/webtop-nix) (see its README for the full list and
-[ADR 0016](docs/adr/0016-desktop-features-come-from-webtop-nix-options.md) for the split): the streamed Plasma session, GPU-less
-rendering, software installation, uploads and downloads, several pages and single-app streaming, and the container options
-(`storeOverlay`, `journalRelay`, `adminTools`, `sudo`) with the cursor, 30 fps and DrKonqi defaults. This repo adds what needs
+A single desktop's features come from [webtop-nix](https://github.com/lhns/webtop-nix) (see its README for the full list, including every change to a third-party
+program, and [ADR 0016](docs/adr/0016-desktop-features-come-from-webtop-nix-options.md) and
+[ADR 0019](docs/adr/0019-desktop-features-that-need-no-kubernetes-come-from-webtop-nix.md) for the split). This repo adds what needs
 Kubernetes or the agent:
 
-- Controller and gateway: desktops created on first use, membership from LDAP, one hostname with identity from forward-auth, the
-  Desktop CRD and its status, power actions and updates on the next start.
+- Controller and gateway: desktops created on first use, one hostname with identity and groups from the login proxy's headers
+  ([ADR 0017](docs/adr/0017-no-ldap-identity-and-groups-from-the-login-proxy.md)), the Desktop CRD and its status, power actions and
+  updates on the next start.
 - The in-pod agent: boot progress, activity and power reports (including asleep/awake from webtop-nix's sleep hook), the apps API
   for single-app streaming, the restore's tray job and progress on the boot page.
-- The pod's entrypoint (`webtop-init`): the env files, the login-name home, and the calls to webtop-nix's `webtop-store-init`
-  (the overlay and the image-update restore) and `webtop-sys-power`. Sleep and the session save are webtop-nix's.
+- The pod's entrypoint (`webtop-init`): the env files, the login-name home, and the calls to webtop-nix's `webtop-store-init` and
+  `webtop-sys-power`.
 
-Third-party changes: none are made in this repo. The desktop image carries webtop-nix's, each with its reason in the webtop-nix README
-(["Features and third-party changes"](https://github.com/lhns/webtop-nix#features-and-third-party-changes)):
-
-| what | change |
-| --- | --- |
-| KWin 6.8 / 6.7 | software presentation, frame finishing, output device globals (GPU-less rendering) |
-| Selkies | second display without primary, upload path, latest page owns the display, touch and touchpad edits in the web client |
-| Nix 2.34 | `nix profile` backends (the `packages.json` declaration), cacheable `path:` inputs |
-| Nix Software Center | the `lhns` fork, pinned |
+This repo changes no third-party program.
 
 ## Development
 
@@ -281,7 +200,7 @@ green. `main` publishes `0.0.0-dev.<sha7>`; a tag publishes images `vX.Y.Z` (and
 `X.Y.Z`. Both images are amd64+arm64 indexes and a tag's digest is the index's. The `desktop-image` job
 builds the image on PRs too, on an x86 and an arm runner, and boots each under docker
 (`.github/scripts/boot-test.sh`): it passes only when the agent reports Ready, which needs KWin
-compositing. `nixpkgs-sync` requires `inputs.nixpkgs` to follow webtop-nix's. `prune.yaml` lists old dev versions weekly and deletes them only with the repo
+compositing; the job caches webtop-nix's patched KWin (`packages.<system>.kwin`, per architecture). `nixpkgs-sync` requires `inputs.nixpkgs` to follow webtop-nix's. `prune.yaml` lists old dev versions weekly and deletes them only with the repo
 variable `PRUNE_ENABLED=true`.
 
 ## License
