@@ -13,7 +13,6 @@ func TestDefaults(t *testing.T) {
 	want := Config{
 		TokenPath: "/run/webtop/sa/token", HTTPPort: 8080, StateDir: "/run/webtop", HomePaths: []string{}, RestoreMarker: "/persist/nix/reinstall/pending",
 		PowerHookTimeout: 60 * time.Second, IdleThreshold: 60 * time.Second, CompositorTimeout: 3 * time.Minute,
-		SuspendMode: "freeze",
 	}
 	if !reflect.DeepEqual(c, want) {
 		t.Fatalf("got %+v", c)
@@ -50,14 +49,6 @@ func TestInvalidValuesFallBack(t *testing.T) {
 	}
 	if FromEnv(env(map[string]string{"WEBTOP_HTTP_PORT": "0"})).HTTPPort != 8080 {
 		t.Fatal("port 0 accepted")
-	}
-}
-
-func TestSuspendMode(t *testing.T) {
-	for in, want := range map[string]string{"": "freeze", "freeze": "freeze", "bogus": "freeze", "poweroff": "poweroff", " PowerOff ": "poweroff"} {
-		if got := FromEnv(env(map[string]string{"WEBTOP_SUSPEND_MODE": in})).SuspendMode; got != want {
-			t.Errorf("%q: got %q, want %q", in, got, want)
-		}
 	}
 }
 

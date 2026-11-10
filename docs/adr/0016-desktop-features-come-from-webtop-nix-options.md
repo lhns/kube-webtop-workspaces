@@ -24,3 +24,7 @@ and frame-rate defaults, a DrKonqi drop-in and the restore's progress writer.
 - A pin bump of webtop-nix moves these defaults; the built `nix.conf`, the Selkies unit environment and
   the user's groups are the checks that a bump changed nothing it should not.
 - The agent still reads `/run/webtop/restore/progress.json`: that file is a contract with webtop-nix.
+
+## Amendment 2026-11-10
+
+The restore scripts and units, the session save and Sleep also come from webtop-nix now, as does the `fsync-store-paths` default ([0019](0019-desktop-features-that-need-no-kubernetes-come-from-webtop-nix.md)); only the progress reader, the tray job and the controller reports stay here.

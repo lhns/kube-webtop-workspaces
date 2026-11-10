@@ -51,21 +51,17 @@ for `x86_64-linux` and `aarch64-linux`, each built on its own architecture.
 
 | path | what |
 | --- | --- |
-| `image/webtop-init` | entrypoint (static busybox): mounts, then `exec /sbin/init` |
+| `image/webtop-init` | entrypoint (static busybox): mounts, runs webtop-nix's `webtop-store-init` and `webtop-sys-power`, then `exec /sbin/init` |
 | `image/nixos/container.nix` | webtop-nix's `nixosModules.container` fitted to the pod: kubelet-owned mounts, `storeOverlay`, `journalRelay`, passwordless sudo, Nix settings by group |
 | `image/nixos/desktop.nix` | `services.webtop` (webtop-nix) wired to the pod contract |
-| `image/nixos/hooks.nix` | agent units: power hook, session save, suspend, image-update restore and reinstall |
-| `image/nixos/home-manager.nix` | webtop-nix's `services.webtop.nixProfile` (patched Nix, `packages.json`, starter flake, `webtop-notify`; its ADR 0006) fitted to the pod: home on the volume, restore ordering, progress |
+| `image/nixos/hooks.nix` | agent units (power hook, restore job) and the options that tie session exit and Sleep to the agent |
+| `image/nixos/home-manager.nix` | webtop-nix's `services.webtop.nixProfile` (patched Nix, `packages.json`, starter flake, `webtop-notify`; its ADR 0006) fitted to the pod: home on the volume, progress |
 | `image/nixos/identity.nix` | renames the desktop user (uid 1000) to the login name at activation |
-| `image/webtop-nix-lower` | run by webtop-init: the store overlay after an image update (partial invalidation, else reset) |
-| `image/webtop-nix-partial` | invalidates what a new image store breaks in the overlay, rolls back on failure |
-| `image/webtop-nix-restore.sh` | copies the users' paths from the old store overlay into the new one |
 | `agent/` | in-pod agent (Go, its own module; packaged by `image/agent.nix`) |
 
-**Entrypoint.** `webtop-init` makes `/` rprivate, binds the image's `/nix` read-only at
-`/.lower/nix`, mounts an overlayfs on `/nix/store` (lower: the image's store, upper:
-`/persist/nix/upper`, `userxattr,index=off,xino=off`), binds `/persist/nix/var` on `/nix/var/nix`, mounts the user's home at its paths
-(below), writes the `WEBTOP_*` env to `/run/webtop/env` and extra binary caches (`WEBTOP_NIX_*`) to
+**Entrypoint.** `webtop-init` makes `/` rprivate, runs webtop-nix's `webtop-store-init` (the store overlay on `/nix/store`,
+state in `/persist/nix`), mounts the user's home at its paths
+(below), binds webtop-nix's `/sys/power` stand-in (`webtop-sys-power`), writes the `WEBTOP_*` env to `/run/webtop/env` and extra binary caches (`WEBTOP_NIX_*`) to
 `/run/webtop/nix.conf` (systemd does not pass the container env to units) and execs systemd. Stop signal `SIGRTMIN+3`. `WEBTOP_INIT_DEBUG=1` parks the container on a
 failed step instead of exiting; `WEBTOP_INIT_SKIP_OVERLAY=1` boots on the image's store alone.
 systemd replaces PID 1's stdout, so a unit follows the journal into a fifo that webtop-init relays to
@@ -74,32 +70,10 @@ the container log (`kubectl logs`).
 **Nix store** (ADR 0008). The daemon opens `/nix/store` as a `local-overlay` store whose lower is
 the image's store (with its own DB) and whose upper and DB are on the volume; clients, root included,
 use the daemon. The user's packages (`nix profile`, home-manager) cost only what they add.
-An image update changes the lower store, which the overlay store does not expect:
-`webtop-nix-lower` (run by webtop-init before the overlay is mounted) compares
-`/webtop-image-stamp` (a hash of the image's store paths and their NAR hashes) with
-`/persist/nix/lower-stamp`, and on a change records each user's profile manifest and runs
-`webtop-nix-partial`. That compares the upper DB with the old image's path list
-(`/persist/nix/lower-paths`, headed by that image's stamp; a list of another image is not used) and
-the new image's DB: rows of paths the new image dropped or ships
-with other bytes, rows whose files are not whole in the upper, and everything referring to them are
-invalidated with `nix-store --delete --ignore-liveness` on the upper opened as a plain local store;
-upper entries that would merge with or hide a path of the new image (copy-up leftovers, whiteouts,
-copies of paths the image now ships, unfinished writes) and the invalidated paths move to
-`/persist/nix/trash-*`, with a snapshot of the DB. A post-condition then checks every row again.
-Everything else stays in place. If anything fails (or two attempts were interrupted), the pre-run
-state is put back (if even that fails, its trash dir is kept for the restore) and the overlay is
-reset as a whole: the old upper/DB move to the trash, the
-store starts fresh, the old GC roots are kept. The reason is in the container log. After boot, in
-the background (no shutdown step), `webtop-nix-restore.service` (`image/webtop-nix-restore.sh`)
-copies the users' live paths (profiles, home-manager generations, GC roots) that are not in the new
-store from the trash; paths only the old image had are substituted, and a root whose closure ended
-up split over several trash dirs is copied path by path. It skips when there is no room (free space after the copy must stay above a
-reserve). Only then `webtop-nix-trash.service` deletes the old overlay, and
-`webtop-nix-reinstall.service` runs for what did not come back (roots that depend on image-only paths
-such as the patched KWin, or no network): it reinstalls the recorded flake packages of the profile (by
-locked URL) and runs `webtop-home-manager` (relock, `home-manager switch`, which reinstates everything
-declared), with desktop notifications. Packages built locally without a flake reference are lost only
-if they cannot be restored.
+The overlay, its layout and the image-update handling (partial invalidation or reset, then the restore,
+trash and reinstall units) are webtop-nix's: its README, "Store overlay", and its ADR 0013 ([ADR 0019](docs/adr/0019-desktop-features-that-need-no-kubernetes-come-from-webtop-nix.md)).
+This repo sets `storeOverlay.enable` and shows the restore: the agent reads `/run/webtop/restore/progress.json`
+(`nixProfile.progress`), reports it to the controller, and `webtop-restore-job` shows it in the tray.
 
 **User identity** (ADR 0011). The desktop user (uid 1000) is named after the desktop
 (`WEBTOP_DESKTOP`), with home `/home/<name>` and the login proxy's display name header (`WEBTOP_DISPLAY_NAME`) as
@@ -205,27 +179,16 @@ agent tracks input idleness from KWin (`ext-idle-notify-v1` on the socket named 
 in the user manager's environment); a poweroff after at least 60 s without
 input (`WEBTOP_IDLE_REASON_THRESHOLD`; PowerDevil's idle action needs a minute or more) is `idle`.
 A Plasma shutdown saves the session itself (restore is on by default);
-`webtop-session-save.service` saves it on a pod deletion or a Sleep that falls back to poweroff: it calls ksmserver's
-`saveCurrentSession` over the user's session bus, which writes the "saved by user" session, and
-copies that group to "saved at previous logout" in `~/.config/ksmserverrc`, the one Plasma restores. A shell `systemctl poweroff` does not save it, as on a real machine.
+webtop-nix's `webtop-session-save.service` (`sessionSave`) saves it on a pod deletion or a Sleep that falls back to poweroff
+(its README, "Sleep and session save"). A shell `systemctl poweroff` does not save it, as on a real machine.
 
-**Sleep.** `systemd-suspend.service` runs `webtop-agent suspend` (ADR 0009). It freezes the user
-manager's `plasma-*.service` units in `session.slice` and every unit in `app.slice` except Selkies
-(`systemctl --user freeze`, the cgroup freezer), reports `asleep: true`, and blocks. Selkies, the
-session bus, audio, `background.slice` and the agent stay up, so the readiness probe passes and
-a browser can still connect. A new Selkies connection thaws exactly what was frozen and the unit
-exits 0, so logind and PowerDevil resume as on hardware. The units are listed in
-`/run/webtop/frozen-units`; `webtop-agent thaw` thaws them.
-
-Wake rule: the agent records the Selkies session ids when Sleep starts and wakes on a session
-id it has not seen, or when the session count rises above the lowest it has seen since. Clients
-open at Sleep do not wake it, but their reload (new id) or closing and reopening the tab does. If
-Selkies' sessions carry no ids, a reload faster than the 0.5 s poll cannot be told from the open tab.
-
-A stop while asleep (pod deletion, poweroff) thaws first: the agent thaws on SIGTERM,
-`systemd-suspend.service` is ordered after `webtop-session-save.service` so it stops first, and the
-latter thaws again before saving. If freezing fails, or `WEBTOP_SUSPEND_MODE=poweroff` is set in the
-pod environment (default `freeze`), Sleep saves the session and powers off with reason `suspend`.
+**Sleep.** webtop-nix's `sleep.mode = "freeze"` ([ADR 0019](docs/adr/0019-desktop-features-that-need-no-kubernetes-come-from-webtop-nix.md);
+its README, "Sleep and session save"): `systemd-suspend.service` runs `webtop-power suspend`, which freezes the Plasma session
+and the apps, waits for a new Selkies session and thaws; Selkies, the session bus, audio and the agent stay up, so the readiness
+probe passes and a browser can still connect. A stop while asleep thaws first. This repo adds the controller side: a `sleep.hooks`
+entry (`webtop-agent sleep-report asleep|awake`) reports `asleep: true` at the freeze and `false` at the thaw, the steady reports
+repeat the state from `/run/webtop/frozen-units`, and a Sleep that powers off (freeze failed, or `WEBTOP_SUSPEND_MODE=poweroff` in
+the pod environment, default `freeze`) writes `/run/webtop/stop-reason` = `suspend`, which the power hook reports as reason `suspend`.
 
 **Boot progress and activity.** `webtop-agent run` reports the stage and progress from systemd's
 boot progress, the user's `plasma-workspace.target` and Selkies' port, then `ready`. Afterwards it
@@ -280,10 +243,10 @@ Kubernetes or the agent:
 
 - Controller and gateway: desktops created on first use, membership from LDAP, one hostname with identity from forward-auth, the
   Desktop CRD and its status, power actions and updates on the next start.
-- The in-pod agent: boot progress, activity and power reports, the session save on an external stop (`webtop-session-save`), sleep that
-  freezes the session, the apps API for single-app streaming.
-- The pod's entrypoint (`webtop-init`): the overlay mounts for `storeOverlay`, the login-name home, the image-update restore
-  (`webtop-nix-lower`, `-partial`, `-restore`) and its tray job and progress on the boot page.
+- The in-pod agent: boot progress, activity and power reports (including asleep/awake from webtop-nix's sleep hook), the apps API
+  for single-app streaming, the restore's tray job and progress on the boot page.
+- The pod's entrypoint (`webtop-init`): the env files, the login-name home, and the calls to webtop-nix's `webtop-store-init`
+  (the overlay and the image-update restore) and `webtop-sys-power`. Sleep and the session save are webtop-nix's.
 
 Third-party changes: none are made in this repo. The desktop image carries webtop-nix's, each with its reason in the webtop-nix README
 (["Features and third-party changes"](https://github.com/lhns/webtop-nix#features-and-third-party-changes)):

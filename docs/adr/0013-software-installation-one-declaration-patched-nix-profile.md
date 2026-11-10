@@ -1,6 +1,6 @@
 # 0013 — Software installation: one declaration, patched `nix profile`
 
-- Status: Accepted
+- Status: Superseded by [0019](0019-desktop-features-that-need-no-kubernetes-come-from-webtop-nix.md) (moved to webtop-nix, its ADR 0014)
 - Date: 2026-11-02
 
 ## Context

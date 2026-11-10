@@ -5,7 +5,7 @@
     # webtop-nix's nixpkgs: one Qt tree with its grafted KWin (README, "KWin patch"), and its image
     # builder's skopeo, so a layer compresses to the same blob as in the last build.
     nixpkgs.follows = "webtop-nix/nixpkgs";
-    webtop-nix.url = "github:lhns/webtop-nix/04219a7985b03eae8a7daedaa30bfa5d6cf1ef55";
+    webtop-nix.url = "github:lhns/webtop-nix/4e779a09951af2f70f2829bd1de7b9185cc1a32b";
   };
 
   outputs = { self, nixpkgs, webtop-nix, ... }:
@@ -41,19 +41,16 @@
           (pkgs.lib.remove c.services.webtop.user (pkgs.lib.unique
             (pkgs.lib.mapAttrsToList (_: u: u.name) c.users.users ++ pkgs.lib.mapAttrsToList (_: g: g.name) c.users.groups))));
 
-        # The shebangs are a static busybox: they run before /nix/store is overlaid. nix-store runs from
-        # the image's store, which is what /nix/store is until then.
+        # The shebangs are a static busybox: they run before /nix/store is overlaid. The store overlay and
+        # the /sys/power stand-in are webtop-nix's scripts (storeOverlay.init, sleep.init).
         webtopInit = pkgs.runCommand "webtop-init" { } ''
           mkdir -p $out
           substitute ${./image/webtop-init} $out/webtop-init \
             --subst-var-by busybox ${pkgs.pkgsStatic.busybox} \
-            --subst-var-by reservedNames ${reservedNames}
-          substitute ${./image/webtop-nix-lower} $out/webtop-nix-lower \
-            --subst-var-by busybox ${pkgs.pkgsStatic.busybox}
-          substitute ${./image/webtop-nix-partial} $out/webtop-nix-partial \
-            --subst-var-by busybox ${pkgs.pkgsStatic.busybox} \
-            --subst-var-by nixStore ${nixos.config.nix.package}/bin/nix-store
-          chmod +x $out/webtop-init $out/webtop-nix-lower $out/webtop-nix-partial
+            --subst-var-by reservedNames ${reservedNames} \
+            --subst-var-by storeInit ${nixos.config.services.webtop.storeOverlay.init} \
+            --subst-var-by sysPower ${nixos.config.services.webtop.sleep.init}
+          chmod +x $out/webtop-init
         '';
 
         rootfs = pkgs.runCommand "rootfs" { } ''
@@ -64,7 +61,7 @@
           ln -s ${pkgs.pkgsStatic.busybox}/bin/sh $out/bin/sh
         '';
 
-        # Identifies the image's store (the overlay's lower). webtop-nix-lower compares it with the stamp
+        # Identifies the image's store (the overlay's lower). webtop-store-init compares it with the stamp
         # on the volume; it lives outside /nix so busybox can read it before the overlay is mounted.
         # Over paths and NAR hashes: a path rebuilt with other bytes is a change too. The image's
         # store is exactly this closure: its layers may hold only the toplevel's.

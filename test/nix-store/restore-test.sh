@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Inside a privileged nixos/nix container (run.sh): image/webtop-nix-restore.sh against real
+# Inside a privileged nixos/nix container (run.sh): webtop-nix's webtop-nix-restore.sh against real
 # local-overlay stores. Two image stores share l1; l2 is only in the old one, l3 only in the new one.
-# A "pod" on the old store builds user paths, then an update moves its overlay aside as webtop-init
+# A "pod" on the old store builds user paths, then an update moves its overlay aside as webtop-nix-lower
 # does, and the restore must bring the paths back on the new store without building anything.
 set -euo pipefail
+. /src/test/nix-store/webtop-nix-scripts.sh
 
 SH=$(readlink -f /bin/sh)
 bins=""
@@ -20,7 +21,7 @@ substituters =
 require-sigs = false
 max-jobs = 1"
 
-RESTORE=/src/image/webtop-nix-restore.sh
+RESTORE=/wn-scripts/webtop-nix-restore.sh
 pass=0
 ok()  { echo "PASS  $1"; pass=$((pass + 1)); }
 die() { echo "FAIL  $1"; exit 1; }
@@ -71,7 +72,7 @@ boot() { unshare -m bash /boot.sh "$@"; }
 export -f mk
 export SH
 
-# What webtop-init does on a stamp change (the part the restore depends on).
+# What webtop-nix-lower does on a stamp change (the part the restore depends on).
 update() {
   local t=/persist/nix/trash-$1
   mkdir -p "$t"
@@ -100,7 +101,7 @@ fresh_volume() {
 # Restore on the new image. max-jobs = 0: anything that would need a build fails instead.
 restore() {
   boot B env NIX_CONFIG="$NIX_CONFIG
-max-jobs = 0" WEBTOP_HOMES=/persist/home bash -c "$1"
+max-jobs = 0" WEBTOP_HOMES_ROOT=/persist/home bash -c "$1"
 }
 
 echo "== 1: update, l2 substitutable"
