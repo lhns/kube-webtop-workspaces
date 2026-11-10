@@ -554,4 +554,34 @@ for mode in 644:Asia/Kolkata:IST 600:Asia/Tokyo:JST; do
   tzl_check "$zone" de_DE.UTF-8 "$abbr"
 done
 echo "time zone and locale: ok"
+
+# Sleep (webtop-nix's kww wiring): the freeze is reported to the controller, a Selkies client wakes
+# it, and a stop with the "suspend" reason is reported as such. The unit is started directly, as in
+# webtop-nix's tests/power.nix: logind's own checks for suspend are the distro's.
+last_report() { grep -o '"asleep":[a-z]*' "$reports" | tail -n 1; }
+wait_asleep() { # <true|false>
+  for _ in $(seq 1 60); do
+    [ "$(last_report)" = "\"asleep\":$1" ] && return 0
+    sleep 1
+  done
+  fail "the controller was not told asleep=$1 (last: $(last_report)): $(tail -n 3 "$reports")"
+}
+docker exec desktop-boot systemctl start --no-block systemd-suspend.service
+wait_asleep true
+docker exec desktop-boot test -s /run/webtop/frozen-units || fail "asleep was reported but no unit is frozen"
+python3 "$(dirname "$0")/ws-client.py" 8080 &
+wsclient=$!
+trap 'kill $wsclient 2>/dev/null || true; cleanup' EXIT
+wait_asleep false
+! docker exec desktop-boot test -s /run/webtop/frozen-units || fail "awake was reported but units are still frozen"
+kill $wsclient
+echo "sleep and wake: ok"
+# A stop with the reason marker (what Sleep in poweroff mode leaves) reaches the controller as suspend.
+docker exec desktop-boot sh -c 'echo suspend > /run/webtop/stop-reason && systemctl poweroff' || true
+for _ in $(seq 1 120); do
+  grep -qF '{"action":"suspend","reason":"suspend"}' "$reports" && break
+  sleep 1
+done
+grep -qF '{"action":"suspend","reason":"suspend"}' "$reports" || fail "no power report with reason suspend: $(tail -n 3 "$reports")"
+echo "suspend stop reason: ok"
 echo "boot test passed"

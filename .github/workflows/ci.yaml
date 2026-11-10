@@ -421,11 +421,15 @@ jobs:
       - name: store overlay across an image update
         timeout-minutes: 40
         run: .github/scripts/lower-swap-test.sh ${{ env.DESKTOP_IMAGE }}:dev 300
+      - name: old volume under the new image
+        timeout-minutes: 40
+        run: .github/scripts/old-volume-test.sh ${{ env.DESKTOP_IMAGE }}:dev ${{ env.DESKTOP_IMAGE }}:main 300
       - name: boot diagnostics
         if: failure()
         run: |
           docker ps -a
           docker logs desktop-swap 2>&1 | tail -n 100 || true
+          docker logs desktop-oldvol 2>&1 | tail -n 100 || true
           docker logs desktop-boot 2>&1 | tail -n 200 || true
           echo "::group::journal (system)"
           docker exec desktop-boot journalctl -b --no-pager 2>&1 | tail -n 500 || true
@@ -436,7 +440,7 @@ jobs:
           docker exec desktop-boot ps -eo user,pid,args 2>&1 | grep -E 'kwin|plasma|selkies|webtop' || true
       - name: stop test container
         if: always()
-        run: docker rm -f desktop-boot desktop-swap || true
+        run: docker rm -f desktop-boot desktop-swap desktop-oldvol || true
 
       # ------ publish (main, tags) ------
       # By digest only: desktop-index puts the tags on the index. copyTo is skopeo copy from the Nix

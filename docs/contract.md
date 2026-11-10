@@ -317,7 +317,7 @@ Optional agent overrides, never set by the controller (the defaults are what shi
 | `WEBTOP_POWER_HOOK_TIMEOUT` | `60s`: how long the power hook retries the request |
 | `WEBTOP_IDLE_REASON_THRESHOLD` | `60s`: input idleness at poweroff that counts as `idle` |
 | `WEBTOP_COMPOSITOR_TIMEOUT` | `3m`: how long KWin may stay non-compositing, once the target and the web port are up, before the agent reports the stuck stage `Compositor not active` |
-| `WEBTOP_AGENT_STATE_DIR` | `/run/webtop` |
+| `WEBTOP_AGENT_STATE_DIR` | `/run/webtop`: must stay so, webtop-nix's Sleep and stop-reason units write the state files there |
 | `WEBTOP_AGENT_WAYLAND_SOCKET` | unset: the agent finds it from the user manager's `WAYLAND_DISPLAY` |
 | `WEBTOP_AGENT_USER` | unset: the account with uid 1000 (renamed at boot) |
 | `WEBTOP_SUSPEND_MODE` | `freeze`: Sleep freezes the session; `poweroff` saves it and powers off (reason `suspend`) |
