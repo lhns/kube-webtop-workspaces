@@ -16,11 +16,25 @@ timeout=$2
 dir=$(mktemp -d)
 mkdir "$dir/persist"
 c=desktop-swap
-. "$(dirname "$0")/lower-swap-lib.sh"
+fail() { echo "::error::$*"; exit 1; }
+x() { docker exec "$c" "$@"; }
 
 echo "overlay module parameters:"
 grep -r . /sys/module/overlay/parameters/ 2>/dev/null | sed 's|/sys/module/overlay/parameters/|  |' || echo "  (none readable)"
 
+boot() {
+  docker rm -f "$c" >/dev/null 2>&1 || true
+  docker run -d --name "$c" --privileged --cgroupns=private --shm-size=1g -v "$dir/persist:/persist" \
+    -e WEBTOP_DESKTOP=ci -e WEBTOP_USER=ci -e WEBTOP_CONTROLLER_URL=http://127.0.0.1:9 "$image" >/dev/null
+  local deadline=$(($(date +%s) + timeout))
+  until x nix-store -q --hash /run/current-system >/dev/null 2>&1; do
+    [ "$(docker inspect -f '{{.State.Running}}' "$c")" = true ] || { docker logs "$c" 2>&1 | tail -n 50; fail "the container exited"; }
+    [ "$(date +%s)" -lt "$deadline" ] || { docker logs "$c" 2>&1 | tail -n 50; fail "no nix-daemon within ${timeout}s"; }
+    sleep 2
+  done
+}
+# Not waiting for the power hook's report to the (absent) controller; webtop-init must cope anyway.
+stop() { docker stop -t 15 "$c" >/dev/null; }
 heads='BEGIN{st=0} { if (st==0) {print; st=1} else if (st<4) st++; else if (st==4) { n=$0+0; st = n ? 5 : 0 } else if (--n == 0) st=0 }'
 nixexpr() { # <name> <shell command writing $out>
   printf 'derivation { name = "%s"; system = builtins.currentSystem; builder = "/bin/sh"; args = [ "-c" "%s" ]; }' "$1" "$2"
@@ -91,6 +105,32 @@ echo "store overlay across an image update: ok"
 
 # ------ Installed software across an image update, on a new volume: a home-manager generation, a
 # declared package and an undeclared profile package, through the restore and through the reinstall.
+as_user() { x runuser -u ci -- env HOME=/home/ci PATH=/home/ci/.nix-profile/bin:/home/ci/.local/state/nix/profiles/profile/bin:/run/current-system/sw/bin "$@"; }
+journal() { x journalctl -u "$1" --no-pager -o cat | tail -n 400; }
+wait_setup() {
+  for _ in $(seq 1 $((timeout / 3))); do
+    [ "$(x systemctl show -P ActiveState webtop-home-manager)" = active ] || [ "$(x systemctl show -P ExecMainExitTimestampMonotonic webtop-home-manager)" = 0 ] || return 0
+    sleep 3
+  done
+  journal webtop-home-manager; fail "the setup unit did not finish"
+}
+# Until the image update's work is done: the markers go only after it succeeded.
+wait_markers() {
+  for _ in $(seq 1 $((timeout / 3))); do
+    sudo test -e "$dir/persist/nix/reinstall/restore" || sudo test -e "$dir/persist/nix/reinstall/pending" || return 0
+    sleep 3
+  done
+  journal webtop-nix-restore; journal webtop-nix-reinstall; fail "the update's markers are still there"
+}
+software_works() { # <what>
+  as_user hello >/dev/null || { journal webtop-nix-reinstall; fail "$1: the declared package does not run"; }
+  as_user cowsay ok >/dev/null || { journal webtop-nix-reinstall; fail "$1: the undeclared profile package does not run"; }
+  as_user nix profile list --json | jq -e '.elements.hello.backend == "declaration" and .elements.cowsay.backend == "profile"' >/dev/null \
+    || fail "$1: nix profile list: $(as_user nix profile list)"
+  as_user test -e /home/ci/.local/state/nix/profiles/home-manager || fail "$1: no home-manager generation"
+  x nix-store --verify --check-contents || fail "$1: the store does not verify"
+}
+
 sudo rm -rf "$dir/persist"
 mkdir "$dir/persist"
 echo "== software: boot 1"
