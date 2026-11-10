@@ -300,15 +300,10 @@ plus a capture and an encoder.
 
 The chart's `desktop.timeZone` and `desktop.locale` are the pod env `WEBTOP_TIME_ZONE` (an IANA name) and
 `WEBTOP_LOCALE` (e.g. `de_DE.UTF-8`), set only when non-empty; they reach the image through
-`/run/webtop/env`. Before each start of `webtop-session.service` the image (webtop-nix's `webtop-locale`)
-takes, per setting, the first valid of: `timeZone=` / `locale=` in the user's
-`~/.config/webtop/session.conf` (home-manager `webtop.timeZone` / `webtop.locale`), the env, the default
-(UTC, `en_US.UTF-8`). A zone must be a file under the image's zoneinfo; a locale must be built into the
-image (webtop-nix `services.webtop.locales`). Anything else is logged and the next source used; the file is
-read as the user, only if it is a regular file of at most 64 KiB, and unknown keys (the gateway's
-`onLogout`, `onLock`) are ignored. The result is `/etc/localtime`, `/etc/locale.conf` (`LANG`) and the
-session's `LANG`. A change needs a restart of the desktop session; `/etc` is the image's again after a pod
-restart. A time zone chosen in KDE's settings is written to `/etc/localtime` and lasts until then.
+`/run/webtop/env`, which the image lists in `services.webtop.localeEnvironmentFiles`. Validation, the order of
+sources (the user's `session.conf`, then the env, then UTC and `en_US.UTF-8`) and what is written are
+webtop-nix's ([README, "Time zone and locale"](https://github.com/lhns/webtop-nix#time-zone-and-locale)). A change needs a restart of the
+desktop session; `/etc` is the image's again after a pod restart.
 
 Optional agent overrides, never set by the controller (the defaults are what ships):
 
@@ -317,10 +312,10 @@ Optional agent overrides, never set by the controller (the defaults are what shi
 | `WEBTOP_POWER_HOOK_TIMEOUT` | `60s`: how long the power hook retries the request |
 | `WEBTOP_IDLE_REASON_THRESHOLD` | `60s`: input idleness at poweroff that counts as `idle` |
 | `WEBTOP_COMPOSITOR_TIMEOUT` | `3m`: how long KWin may stay non-compositing, once the target and the web port are up, before the agent reports the stuck stage `Compositor not active` |
-| `WEBTOP_AGENT_STATE_DIR` | `/run/webtop`: must stay so, webtop-nix's Sleep and stop-reason units write the state files there |
+| `WEBTOP_AGENT_STATE_DIR` | `/run/webtop`: must stay so, webtop-nix's Sleep and session stop write the state files there |
 | `WEBTOP_AGENT_WAYLAND_SOCKET` | unset: the agent finds it from the user manager's `WAYLAND_DISPLAY` |
 | `WEBTOP_AGENT_USER` | unset: the account with uid 1000 (renamed at boot) |
-| `WEBTOP_SUSPEND_MODE` | `freeze`: Sleep freezes the session; `poweroff` saves it and powers off (reason `suspend`) |
+| `WEBTOP_SUSPEND_MODE` | read by webtop-nix's Sleep (`sleep.environmentFiles`); `freeze` (default): Sleep freezes the session; `poweroff` saves it and powers off (reason `suspend`) |
 
 **Image obligations:**
 
@@ -608,13 +603,11 @@ Lock does not lock or end the session: it signs the browser out at the login pro
 that leaves the session running. It needs `gateway.lockLogsOut` and `gateway.logoutUrl`; off, Lock is
 hidden and blocked.
 
-1. The chart passes `WEBTOP_LOCK_SCREEN=true|false` (from `gateway.lockLogsOut`) in the pod env; before
-   each start of the session unit the image (webtop-nix's `webtop-lock-config`, reading `/run/webtop/env`)
-   writes `/etc/xdg/kdeglobals`, so Plasma shows Lock or not. Autolock and lock on resume stay off.
-2. A lock, whichever way it started, is seen by the user's `webtop-lock-guard` (D-Bus
-   `org.freedesktop.ScreenSaver` `ActiveChanged`), which writes the time to
-   `/run/user/<uid>/webtop/lock` and clears the lock through logind at once: there is never a greeter, and
-   the session and its processes are untouched.
+1. The chart passes `WEBTOP_LOCK_SCREEN=true|false` (from `gateway.lockLogsOut`) in the pod env; the image lists
+   `/run/webtop/env` in `services.webtop.lockEnvironmentFiles`, so Plasma shows Lock or not at each session start.
+2. The lock itself is webtop-nix's ([README, "Lock screen"](https://github.com/lhns/webtop-nix#lock-screen), its ADR 0010): it never stays, there is
+   never a greeter, and the session and its processes are untouched. It leaves the marker
+   `/run/user/<uid>/webtop/lock`, the interface to the agent.
 3. The agent reads the marker (a regular file of at most 64 bytes, no link followed, only an RFC 3339
    time) and `onLock=true|false` of `~/.config/webtop/session.conf` (read as in 7.8), and reports
    `lockedAt` and `lockPref` (section 8.3). The controller stores `status.lastLock` (reset with the pod)
