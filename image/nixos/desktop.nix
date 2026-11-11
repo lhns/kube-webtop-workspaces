@@ -30,9 +30,8 @@
   # allowlisted ~/.config/webtop/selkies.env (services.webtop.userSettings) wins over it.
   services.webtop.environmentFiles = [ "-/run/webtop/selkies.env" ];
 
-  # WEBTOP_TIME_ZONE / WEBTOP_LOCALE (docs/contract.md, "Time zone and locale") reach the session through
-  # the env webtop-init copies here.
-  services.webtop.localeEnvironmentFiles = [ "-/run/webtop/env" ];
+  # The chart's desktop.defaults, mounted here (docs/contract.md, "Desktop defaults"); webtop-nix snapshots it at boot.
+  services.webtop.defaults.source = "/run/webtop/defaults-source";
 
   # WEBTOP_LOCK_SCREEN (the chart's gateway.lockLogsOut) shows Lock in Plasma; read at each session start.
   services.webtop.lockEnvironmentFiles = [ "-/run/webtop/env" ];

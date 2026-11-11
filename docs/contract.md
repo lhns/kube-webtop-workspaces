@@ -296,14 +296,17 @@ The cap on app screens (chart: `desktop.maxAppScreens`, default 4, 1 to 8) is th
 `WEBTOP_MAX_APP_SCREENS`, read by the agent (section 7.7). Each visible app screen costs a KWin output
 plus a capture and an encoder.
 
-#### Time zone and locale
+#### Desktop defaults
 
-The chart's `desktop.timeZone` and `desktop.locale` are the pod env `WEBTOP_TIME_ZONE` (an IANA name) and
-`WEBTOP_LOCALE` (e.g. `de_DE.UTF-8`), set only when non-empty; they reach the image through
-`/run/webtop/env`, which the image lists in `services.webtop.localeEnvironmentFiles`. Validation, the order of
-sources (the user's `session.conf`, then the env, then UTC and `en_US.UTF-8`) and what is written are
-webtop-nix's ([README, "Time zone and locale"](https://github.com/lhns/webtop-nix#time-zone-and-locale)). A change needs a restart of the
-desktop session; `/etc` is the image's again after a pod restart.
+The chart's `desktop.defaults` (`timeZone`, `locale`, `language`, `formats`, `xdgConfig`, `homeModule`) renders the
+ConfigMap `<fullname>-desktop-defaults`, mounted read-only at `/run/webtop/defaults-source` in every desktop pod and
+set as the image's `services.webtop.defaults.source`. Its keys are the entries of webtop-nix's defaults directory:
+`session.conf` (the first four values), `xdg/<name>` (key `xdg-<name>`) and `home.nix`. What each entry means, how a
+user overrides it and when it applies are webtop-nix's
+([README, "Admin defaults"](https://github.com/lhns/webtop-nix#admin-defaults)). The chart adds a checksum of the data
+to the pod annotations, so a change marks running desktops `updatePending` (ADR 0006) and reaches each at its next
+start. `desktop.defaults.xdgConfig.plasma-localerc` is refused (webtop-locale owns that file); the removed
+`desktop.timeZone` and `desktop.locale` fail the render. The ConfigMap is readable by every desktop user: no secrets.
 
 Optional agent overrides, never set by the controller (the defaults are what ships):
 

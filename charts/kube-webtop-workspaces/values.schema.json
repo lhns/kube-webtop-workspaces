@@ -107,6 +107,22 @@
         "extraVolumeMounts": {"type": "array"},
         "timeZone": {"type": "string"},
         "locale": {"type": "string"},
+        "defaults": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "timeZone": {"type": "string", "pattern": "^[^\r\n]*$"},
+            "locale": {"type": "string", "pattern": "^[^\r\n]*$"},
+            "language": {"type": "string", "pattern": "^[^\r\n]*$"},
+            "formats": {
+              "type": "object",
+              "propertyNames": {"enum": ["LC_TIME", "LC_NUMERIC", "LC_MONETARY", "LC_MEASUREMENT", "LC_PAPER", "LC_COLLATE", "LC_ADDRESS", "LC_NAME", "LC_TELEPHONE"]},
+              "additionalProperties": {"type": "string", "pattern": "^[^\r\n]*$"}
+            },
+            "xdgConfig": {"type": "object", "additionalProperties": {"type": "string"}},
+            "homeModule": {"type": "string"}
+          }
+        },
         "nix": {
           "type": "object",
           "additionalProperties": false,

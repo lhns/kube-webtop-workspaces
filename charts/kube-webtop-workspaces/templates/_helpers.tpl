@@ -58,3 +58,36 @@ podAntiAffinity:
             {{- include "kwt.selector" . | nindent 12 }}
 {{- end }}
 {{- end }}
+
+{{/*
+The desktop defaults (desktop.defaults) as JSON {data, items}: the ConfigMap data, and the volume items that
+place its keys in webtop-nix's defaults directory (session.conf, xdg/<file>, home.nix). Empty data: none set.
+*/}}
+{{- define "kwt.desktopDefaults" -}}
+{{- $d := .Values.desktop.defaults | default dict -}}
+{{- if or .Values.desktop.timeZone .Values.desktop.locale -}}
+{{- fail "desktop.timeZone and desktop.locale are replaced by desktop.defaults.timeZone and desktop.defaults.locale" -}}
+{{- end -}}
+{{- $data := dict -}}
+{{- $items := list -}}
+{{- $conf := list -}}
+{{- with $d.timeZone }}{{ $conf = append $conf (printf "timeZone=%s" .) }}{{ end -}}
+{{- with $d.locale }}{{ $conf = append $conf (printf "locale=%s" .) }}{{ end -}}
+{{- with $d.language }}{{ $conf = append $conf (printf "language=%s" .) }}{{ end -}}
+{{- range $k, $v := ($d.formats | default dict) }}{{ $conf = append $conf (printf "%s=%s" $k $v) }}{{ end -}}
+{{- if $conf -}}
+{{- $_ := set $data "session.conf" (printf "%s\n" (join "\n" $conf)) -}}
+{{- $items = append $items (dict "key" "session.conf" "path" "session.conf") -}}
+{{- end -}}
+{{- range $name, $text := ($d.xdgConfig | default dict) -}}
+{{- if eq $name "plasma-localerc" -}}{{- fail "desktop.defaults.xdgConfig.plasma-localerc is not allowed: webtop-locale owns that file; use timeZone, locale, language and formats" -}}{{- end -}}
+{{- if not (regexMatch "^[A-Za-z0-9][A-Za-z0-9._-]*$" $name) -}}{{- fail (printf "desktop.defaults.xdgConfig.%s: not a plain file name" $name) -}}{{- end -}}
+{{- $_ := set $data (printf "xdg-%s" $name) $text -}}
+{{- $items = append $items (dict "key" (printf "xdg-%s" $name) "path" (printf "xdg/%s" $name)) -}}
+{{- end -}}
+{{- with $d.homeModule -}}
+{{- $_ := set $data "home.nix" . -}}
+{{- $items = append $items (dict "key" "home.nix" "path" "home.nix") -}}
+{{- end -}}
+{{- dict "data" $data "items" $items | toJson -}}
+{{- end }}

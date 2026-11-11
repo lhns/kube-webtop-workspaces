@@ -25,6 +25,12 @@ reports=$dir/reports
 touch "$reports"
 echo token > "$dir/token"
 mkdir "$dir/persist"
+# The chart's desktop.defaults as the ConfigMap volume mounts it (docs/contract.md, "Desktop defaults"): the
+# zone and locale that tzl_check expects, and LC_TIME for ISO dates.
+mkdir -p "$dir/defaults/xdg"
+printf 'timeZone=Asia/Tokyo\nlocale=de_DE.UTF-8\nLC_TIME=sv_SE.UTF-8\n' > "$dir/defaults/session.conf"
+printf '[General]\nColorScheme=BreezeDark\n' > "$dir/defaults/xdg/kdeglobals"
+chmod -R a+rX "$dir/defaults"
 # A volume from before the login names, its home-paths already edited: /home/user is kept, the rest
 # must be ignored (ADR 0011). Owned by uid 1000 like a real home.
 hp=$dir/persist/home/user/.config/webtop
@@ -54,20 +60,21 @@ trap cleanup EXIT
 
 docker rm -f desktop-boot >/dev/null 2>&1 || true
 args=(--privileged --cgroupns=private --shm-size=1g --add-host=host.docker.internal:host-gateway -p 8080:8080 -p 8083:8081
-  -v "$dir/persist:/persist" -v "$dir/token:/token:ro"
+  -v "$dir/persist:/persist" -v "$dir/token:/token:ro" -v "$dir/defaults:/run/webtop/defaults-source:ro"
+  --tmpfs "/run:rw,nosuid,nodev,exec,mode=755"
   -e WEBTOP_CONTROLLER_URL=http://host.docker.internal:8081 -e WEBTOP_TOKEN_PATH=/token
   -e WEBTOP_HTTP_PORT=8080 -e WEBTOP_MAX_APP_SCREENS=2 -e NSC_UNFREE_LISTED_DEFAULT=0 -e WEBTOP_USER=ci -e WEBTOP_DESKTOP=ci -e WEBTOP_NAMESPACE=ci -e "WEBTOP_DISPLAY_NAME=CI Tester"
-  -e WEBTOP_TIME_ZONE=Asia/Tokyo -e WEBTOP_LOCALE=de_DE.UTF-8
   -e WEBTOP_NIX_EXTRA_SUBSTITUTERS=http://cache.invalid/ci -e "WEBTOP_NIX_EXTRA_TRUSTED_PUBLIC_KEYS=ci:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
   -e "WEBTOP_SELKIES_UI_TITLE=$title" -e "WEBTOP_SELKIES_CI_PROBE=$probe"
   -e "WEBTOP_SELKIES_CI_TAB=$tab" -e "WEBTOP_SELKIES_CI_NL=$nl")
 if [ "$mode" = gray ]; then
   mkdir -p "$dir/dropin"
   printf '[Service]\nEnvironment=KWIN_COMPOSE=Q\n' > "$dir/dropin/gray.conf"
-  # /run must be a tmpfs already, so that the drop-in is not hidden by webtop-init's own mount.
-  args+=(--tmpfs "/run:rw,nosuid,nodev,exec,mode=755" -v "$dir/dropin:/run/systemd/system/webtop-session.service.d:ro"
+  args+=(-v "$dir/dropin:/run/systemd/system/webtop-session.service.d:ro"
     -e WEBTOP_COMPOSITOR_TIMEOUT=45s)
 fi
+# /run is a tmpfs from the start, as kubelet gives it: webtop-init would otherwise mount its own over the
+# defaults and the drop-in.
 # --privileged stands in for the pod's SYS_ADMIN, unmasked /proc and unconfined AppArmor.
 # /persist is a bind mount: the store overlay's upperdir cannot sit on the container's own overlayfs.
 start=$(date +%s)
@@ -242,13 +249,16 @@ done
 grep -qF '"softwareRestore":{"active":false,"done":2,"total":2,"failed":false}' "$reports" \
   || fail "the agent did not report the finished restore"
 echo "restore progress report: ok"
-# Time zone and locale (docs/contract.md): the chart env reaches the system and the session. The user's
-# session.conf and its bad values are tested in webtop-nix (tests/vm.nix).
-tzl_check() { # <zone> <locale> <abbreviation>
+# Desktop defaults (docs/contract.md): the mounted source reaches the system and the session. The chain
+# with the user's session.conf, the invalid values and home.nix are tested in webtop-nix (tests/defaults.nix).
+tzl_check() { # <zone> <locale> <abbreviation> <LC_TIME>
   local env
   [ "$(docker exec desktop-boot readlink /etc/localtime)" = "/etc/zoneinfo/$1" ] || fail "/etc/localtime is not $1: $(docker exec desktop-boot ls -l /etc/localtime)"
   [ "$(docker exec desktop-boot timedatectl show -P Timezone)" = "$1" ] || fail "timedatectl does not report $1"
   docker exec desktop-boot localectl status | grep -qF "LANG=$2" || fail "localectl does not report $2"
+  docker exec desktop-boot grep -qx "LC_TIME=$4" /etc/locale.conf || fail "/etc/locale.conf has no LC_TIME=$4: $(docker exec desktop-boot cat /etc/locale.conf)"
+  docker exec desktop-boot grep -qx "LC_TIME=$4" /run/webtop/xdg-session/plasma-localerc || fail "plasma-localerc has no LC_TIME=$4"
+  docker exec desktop-boot grep -q 'ColorScheme=BreezeDark' /run/webtop/defaults/xdg/kdeglobals || fail "the snapshot has no xdg/kdeglobals"
   # Past the wrapper (which loads /etc/locale.conf), then startplasma's own environment.
   for _ in $(seq 1 60); do
     docker exec desktop-boot sh -c 'grep -aq startplasma /proc/$(systemctl show -P MainPID webtop-session)/cmdline' && break
@@ -256,12 +266,14 @@ tzl_check() { # <zone> <locale> <abbreviation>
   done
   env=$(docker exec desktop-boot sh -c 'tr "\0" "\n" < /proc/$(systemctl show -P MainPID webtop-session)/environ')
   grep -qx "LANG=$2" <<<"$env" || fail "the session's LANG is not $2: $(grep -E '^(LANG|LC_)' <<<"$env")"
+  grep -qx "LC_TIME=$4" <<<"$env" || fail "the session's LC_TIME is not $4: $(grep -E '^(LANG|LC_)' <<<"$env")"
+  grep -q '^XDG_CONFIG_DIRS=.*/run/webtop/defaults/xdg' <<<"$env" || fail "the session's XDG_CONFIG_DIRS lacks the defaults: $(grep '^XDG_CONFIG_DIRS' <<<"$env")"
   ! grep -qE '^(TZ|LC_ALL)=' <<<"$env" || fail "TZ or LC_ALL in the session's environment"
   [ "$(docker exec desktop-boot sh -c 'env -u TZ date +%Z')" = "$3" ] || fail "date does not show $3"
   [ "$(docker exec desktop-boot systemctl show -P ActiveState webtop-session)" = active ] || fail "the session is not active"
 }
-tzl_check Asia/Tokyo de_DE.UTF-8 JST
-echo "time zone and locale: ok"
+tzl_check Asia/Tokyo de_DE.UTF-8 JST sv_SE.UTF-8
+echo "desktop defaults: ok"
 
 # Sleep (webtop-nix's kww wiring): the freeze is reported to the controller, a Selkies client wakes
 # it, and a stop with the "suspend" reason is reported as such. The unit is started directly, as in

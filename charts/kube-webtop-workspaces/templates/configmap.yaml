@@ -1,16 +1,21 @@
 {{- /* Rendered 1:1 into internal/config. Chart-only keys are stripped; the config parser rejects unknown fields. */ -}}
 {{- $_ := required "desktop.image is required" .Values.desktop.image }}
-{{- $desktop := set (omit (deepCopy .Values.desktop) "nix" "prePull" "softwareCenter" "maxAppScreens" "timeZone" "locale") "serviceAccountName" (include "kwt.desktopServiceAccount" .) }}
+{{- $desktop := set (omit (deepCopy .Values.desktop) "nix" "prePull" "softwareCenter" "maxAppScreens" "defaults" "timeZone" "locale") "serviceAccountName" (include "kwt.desktopServiceAccount" .) }}
 {{- $nixEnv := list }}
 {{- with .Values.desktop.nix.extraSubstituters }}{{ $nixEnv = append $nixEnv (dict "name" "WEBTOP_NIX_EXTRA_SUBSTITUTERS" "value" (join " " .)) }}{{ end }}
 {{- with .Values.desktop.nix.extraTrustedPublicKeys }}{{ $nixEnv = append $nixEnv (dict "name" "WEBTOP_NIX_EXTRA_TRUSTED_PUBLIC_KEYS" "value" (join " " .)) }}{{ end }}
-{{- with .Values.desktop.timeZone }}{{ $nixEnv = append $nixEnv (dict "name" "WEBTOP_TIME_ZONE" "value" .) }}{{ end }}
-{{- with .Values.desktop.locale }}{{ $nixEnv = append $nixEnv (dict "name" "WEBTOP_LOCALE" "value" .) }}{{ end }}
 {{- if and .Values.gateway.lockLogsOut (not .Values.gateway.logoutUrl) }}{{ fail "gateway.lockLogsOut requires gateway.logoutUrl" }}{{ end }}
 {{- $nixEnv = append $nixEnv (dict "name" "WEBTOP_LOCK_SCREEN" "value" (ternary "true" "false" (.Values.gateway.lockLogsOut | default false))) }}
 {{- $nixEnv = append $nixEnv (dict "name" "NSC_UNFREE_LISTED_DEFAULT" "value" (ternary "1" "0" (.Values.desktop.softwareCenter.unfreeListedDefault | default false))) }}
 {{- $nixEnv = append $nixEnv (dict "name" "WEBTOP_MAX_APP_SCREENS" "value" (.Values.desktop.maxAppScreens | default 4 | toString)) }}
 {{- with $nixEnv }}{{ $_ := set $desktop "extraEnv" (concat ($desktop.extraEnv | default list) .) }}{{ end }}
+{{- /* The defaults ConfigMap is mounted read-only; its checksum in the pod template marks running desktops updatePending (ADR 0006) when it changes. */}}
+{{- $defaults := include "kwt.desktopDefaults" . | fromJson }}
+{{- if $defaults.data }}
+{{- $_ := set $desktop "extraVolumes" (append ($desktop.extraVolumes | default list) (dict "name" "desktop-defaults" "configMap" (dict "name" (printf "%s-desktop-defaults" (include "kwt.fullname" .)) "items" $defaults.items))) }}
+{{- $_ := set $desktop "extraVolumeMounts" (append ($desktop.extraVolumeMounts | default list) (dict "name" "desktop-defaults" "mountPath" "/run/webtop/defaults-source" "readOnly" true)) }}
+{{- $_ := set $desktop "podAnnotations" (merge (dict "checksum/desktop-defaults" (toJson $defaults.data | sha256sum)) ($desktop.podAnnotations | default dict)) }}
+{{- end }}
 {{- $controller := set (deepCopy .Values.controller) "gatewayDeployment" (printf "%s-gateway" (include "kwt.fullname" .)) }}
 {{- $powerApi := set (deepCopy .Values.powerApi) "url" (include "kwt.powerApiURL" .) }}
 {{- $config := dict

@@ -1,6 +1,6 @@
 # 0019 — Desktop features that need no Kubernetes come from webtop-nix
 
-- Status: Accepted; supersedes [0009](0009-sleep-freezes-the-session.md) and [0013](0013-software-installation-one-declaration-patched-nix-profile.md), amends [0008](0008-per-user-nix-store-as-a-local-overlay-store.md) and [0016](0016-desktop-features-come-from-webtop-nix-options.md)
+- Status: Accepted; supersedes [0009](0009-sleep-freezes-the-session.md) and [0013](0013-software-installation-one-declaration-patched-nix-profile.md), amends [0008](0008-per-user-nix-store-as-a-local-overlay-store.md) and [0016](0016-desktop-features-come-from-webtop-nix-options.md); amended by [0020](0020-chart-defaults-reach-the-desktop-as-webtop-nixs-defaults-directory.md)
 - Date: 2026-11-10
 
 ## Context
