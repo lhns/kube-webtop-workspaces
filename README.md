@@ -140,9 +140,10 @@ client count or sleep state changes.
 **Path prefix.** The gateway strips `/u/<user>` and requires the trailing slash. Selkies' `SELKIES_SUBFOLDER` must stay empty
 (webtop-nix leaves it unset): it would make the server expect the prefix the gateway has already stripped.
 
-**Time zone and locale** (`desktop.timeZone`, `desktop.locale`): pod env `WEBTOP_TIME_ZONE` / `WEBTOP_LOCALE`, which `webtop-init` copies to
-`/run/webtop/env` (`localeEnvironmentFiles`). Precedence and validation are webtop-nix's ([README, "Time zone and locale"](https://github.com/lhns/webtop-nix#time-zone-and-locale));
-contract, "Time zone and locale". No browser input.
+**Desktop defaults** (`desktop.defaults`: time zone, language, formats, KDE config, a home-manager module): a ConfigMap
+mounted at `/run/webtop/defaults-source`, which the image names as `services.webtop.defaults.source`. Precedence,
+validation and the override order are webtop-nix's ([README, "Admin defaults"](https://github.com/lhns/webtop-nix#admin-defaults));
+contract, "Desktop defaults". No browser input.
 
 **Selkies settings** (`image/nixos/desktop.nix`): plain HTTP (`SELKIES_ENABLE_HTTPS=false`); the rest of
 the Selkies setup is webtop-nix's. Precedence, low to high: the image's defaults < the cluster (`desktop.selkies` and the tab title

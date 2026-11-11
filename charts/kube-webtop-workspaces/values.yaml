@@ -71,11 +71,15 @@ desktop:
   # WEBTOP_MAX_APP_SCREENS env, docs/contract.md). Each visible app screen costs a KWin output plus a
   # capture and an encoder.
   maxAppScreens: 4
-  # Session time zone (IANA name) and locale for every desktop (chart-only: passed as WEBTOP_TIME_ZONE /
-  # WEBTOP_LOCALE env, docs/contract.md). A user's own webtop.timeZone / webtop.locale wins. Applied when the
-  # desktop session starts. Empty: UTC and en_US.UTF-8.
-  timeZone: ""                  # "Europe/Berlin"
-  locale: ""                    # "de_DE.UTF-8", one built into the image
+  # Defaults for every desktop (docs/contract.md, "Desktop defaults"): users override each one. Every
+  # user can read them, so no secrets. A change applies at a desktop's next start (updatePending).
+  defaults:
+    timeZone: ""                # IANA name, e.g. Europe/Berlin; empty: UTC
+    locale: ""                  # LANG, e.g. de_DE.UTF-8; one built into the image
+    language: ""                # LANGUAGE, e.g. "de:en"
+    formats: {}                 # {LC_TIME: sv_SE.UTF-8}: ISO dates, 24 h
+    xdgConfig: {}               # {kdeglobals: "<ini text>"}: KDE config under xdg/<name>; not plasma-localerc
+    homeModule: ""              # a home-manager module (Nix text); scalars should use lib.mkDefault
   # The Nix Software Center's default for listing unfree packages (chart-only: passed as the
   # NSC_UNFREE_LISTED_DEFAULT env, docs/contract.md). A user's own choice in the app overrides it.
   softwareCenter:

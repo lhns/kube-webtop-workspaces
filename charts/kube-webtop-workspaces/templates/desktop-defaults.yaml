@@ -1,0 +1,12 @@
+{{- $defaults := include "kwt.desktopDefaults" . | fromJson }}
+{{- if $defaults.data }}
+# Every desktop's defaults, mounted at /run/webtop/defaults-source (docs/contract.md, "Desktop defaults").
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "kwt.fullname" . }}-desktop-defaults
+  labels:
+    {{- include "kwt.labels" . | nindent 4 }}
+data:
+  {{- toYaml $defaults.data | nindent 2 }}
+{{- end }}

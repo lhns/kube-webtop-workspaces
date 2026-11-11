@@ -5,6 +5,7 @@ Needs helm and PyYAML. Run from anywhere: python3 charts/tests/check.py
 """
 import filecmp
 import pathlib
+import re
 import subprocess
 import sys
 
@@ -115,10 +116,43 @@ for name, args in cases.items():
                 "WEBTOP_NIX_EXTRA_TRUSTED_PUBLIC_KEYS": "a:AAAA b:BBBB"} if name == "all-on" else {}
     if nix_env != want_env:
         fail(f"{name}: desktop WEBTOP_NIX_* env {nix_env}, want {want_env}")
-    tz_env = {e["name"]: e["value"] for e in cfg["desktop"].get("extraEnv") or [] if e["name"] in ("WEBTOP_TIME_ZONE", "WEBTOP_LOCALE")}
-    want_tz = {"WEBTOP_TIME_ZONE": "Europe/Berlin", "WEBTOP_LOCALE": "de_DE.UTF-8"} if name == "all-on" else {}
-    if tz_env != want_tz:
-        fail(f"{name}: desktop time zone/locale env {tz_env}, want {want_tz}")
+    leaked = {e["name"] for e in cfg["desktop"].get("extraEnv") or [] if e["name"] in ("WEBTOP_TIME_ZONE", "WEBTOP_LOCALE")}
+    if leaked:
+        fail(f"{name}: time zone/locale env {leaked} still rendered; they are the defaults directory now")
+    if "defaults" in cfg["desktop"]:
+        fail(f"{name}: chart-only desktop.defaults leaked into the config")
+    # Desktop defaults: one ConfigMap, mounted read-only as webtop-nix's defaults directory.
+    dcm = [d for d in docs if d["kind"] == "ConfigMap" and d["metadata"]["name"].endswith("-desktop-defaults")]
+    dvols = [v for v in cfg["desktop"].get("extraVolumes") or [] if v["name"] == "desktop-defaults"]
+    dmounts = [m for m in cfg["desktop"].get("extraVolumeMounts") or [] if m["name"] == "desktop-defaults"]
+    ann = cfg["desktop"].get("podAnnotations") or {}
+    if name != "all-on":
+        if dcm or dvols or dmounts or "checksum/desktop-defaults" in ann:
+            fail(f"{name}: desktop defaults rendered while none are set")
+    elif len(dcm) != 1 or len(dvols) != 1 or len(dmounts) != 1:
+        fail(f"{name}: want one defaults ConfigMap, volume and mount, got {len(dcm)}/{len(dvols)}/{len(dmounts)}")
+    else:
+        want_data = {
+            "session.conf": "timeZone=Europe/Berlin\nlocale=de_DE.UTF-8\nlanguage=de:en\nLC_TIME=sv_SE.UTF-8\n",
+            "xdg-kdeglobals": "[General]\nColorScheme=BreezeDark\n",
+            "xdg-kwinrc": "[Windows]\nFocusPolicy=ClickToFocus\n",
+            "home.nix": "{ lib, ... }: { programs.git.enable = lib.mkDefault true; }",
+        }
+        if dcm[0]["data"] != want_data:
+            fail(f"{name}: defaults ConfigMap data {dcm[0]['data']}")
+        want_items = {"session.conf": "session.conf", "xdg-kdeglobals": "xdg/kdeglobals",
+                      "xdg-kwinrc": "xdg/kwinrc", "home.nix": "home.nix"}
+        if {i["key"]: i["path"] for i in dvols[0]["configMap"]["items"]} != want_items:
+            fail(f"{name}: defaults volume items {dvols[0]['configMap']['items']}")
+        if dvols[0]["configMap"]["name"] != dcm[0]["metadata"]["name"]:
+            fail(f"{name}: defaults volume names {dvols[0]['configMap']['name']}, not the ConfigMap")
+        if dmounts[0] != {"name": "desktop-defaults", "mountPath": "/run/webtop/defaults-source", "readOnly": True}:
+            fail(f"{name}: defaults mount {dmounts[0]}")
+        if not re.fullmatch(r"[0-9a-f]{64}", ann.get("checksum/desktop-defaults", "")):
+            fail(f"{name}: no checksum of the defaults in podAnnotations: {ann}")
+        # The user's own extras stay, the defaults are appended.
+        if cfg["desktop"]["extraVolumes"][0] != {"name": "data", "emptyDir": {}} or cfg["desktop"]["extraVolumeMounts"][0]["name"] != "data":
+            fail(f"{name}: desktop.defaults replaced extraVolumes/extraVolumeMounts instead of appending")
     if name == "all-on" and {"name": "FOO", "value": "bar"} not in cfg["desktop"]["extraEnv"]:
         fail(f"{name}: desktop.nix replaced desktop.extraEnv instead of appending")
 
@@ -226,6 +260,11 @@ refuse("networkPolicy.ingressController needs a namespaceSelector",
 refuse("networkPolicy.dns needs a namespaceSelector",
        "--set", "desktop.image=x", "--set-json", "networkPolicy.dns={\"namespaceSelector\":null,\"podSelector\":null}")
 refuse("SELKIES_[A-Z0-9_]+", "--set", "desktop.image=x", "--set-string", "desktop.selkies.selkies_x=1")
+refuse("replaced by desktop.defaults", "--set", "desktop.image=x", "--set", "desktop.timeZone=Europe/Berlin")
+refuse("replaced by desktop.defaults", "--set", "desktop.image=x", "--set", "desktop.locale=de_DE.UTF-8")
+refuse("plasma-localerc is not allowed", "--set", "desktop.image=x", "--set", "desktop.defaults.xdgConfig.plasma-localerc=x")
+refuse("not a plain file name", "--set", "desktop.image=x", "--set-json", 'desktop.defaults.xdgConfig={"a b":"x"}')
+refuse("LC_TIME", "--set", "desktop.image=x", "--set", "desktop.defaults.formats.LC_ALL=sv_SE.UTF-8")
 print("ok: invalid values refused")
 
 sys.exit(1 if errors else 0)
