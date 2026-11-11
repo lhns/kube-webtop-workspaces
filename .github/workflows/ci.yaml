@@ -320,7 +320,7 @@ jobs:
     name: desktop-image (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
-    needs: [meta, unit, agent, integration, trivy-fs, helm, nixpkgs-sync]
+    needs: [meta, unit, agent, integration, trivy-fs, nixpkgs-sync]
     permissions:
       contents: read
       packages: write
