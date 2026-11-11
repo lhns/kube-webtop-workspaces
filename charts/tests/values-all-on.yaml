@@ -12,8 +12,19 @@ desktop:
   resources: {requests: {cpu: "1", memory: 2Gi}}
   maxAppScreens: 2
   softwareCenter: {unfreeListedDefault: false}
-  timeZone: Europe/Berlin
-  locale: de_DE.UTF-8
+  defaults:
+    timeZone: Europe/Berlin
+    locale: de_DE.UTF-8
+    language: "de:en"
+    formats: {LC_TIME: sv_SE.UTF-8}
+    xdgConfig:
+      kdeglobals: |
+        [General]
+        ColorScheme=BreezeDark
+      kwinrc: |
+        [Windows]
+        FocusPolicy=ClickToFocus
+    homeModule: "{ lib, ... }: { programs.git.enable = lib.mkDefault true; }"
   prePull: {enabled: true}
 storage: {storageClassName: fast, size: 10Gi}
 controller: {cleanExitCodes: [0, 143]}
