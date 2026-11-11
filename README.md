@@ -183,7 +183,6 @@ This repo changes no third-party program.
 make generate   # deepcopy, CRD (config/crd), RBAC (config/rbac)
 make build vet
 make test       # unit + envtest; setup-envtest downloads kube-apiserver/etcd
-test/nix-store/run.sh  # image-update store restore against real overlay stores (privileged docker)
 ```
 
 envtest has no Windows binaries. On Windows, run the tests in a Linux container:

@@ -1,4 +1,4 @@
-# Software installation (webtop-nix's services.webtop.nixProfile, ADR 0013), fitted to the pod: the home
+# Software installation (webtop-nix's services.webtop.nixProfile, its ADR 0014), fitted to the pod: the home
 # on the volume, and the agent's view of the restore's progress. The store restore and reinstall after an
 # image update come with storeOverlay (container.nix).
 { ... }:

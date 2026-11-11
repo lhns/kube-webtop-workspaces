@@ -145,18 +145,6 @@ jobs:
           jq -e '.nodes.root.inputs.nixpkgs == ["webtop-nix", "nixpkgs"]' flake.lock \
             || { echo "::error::inputs.nixpkgs must be follows = \"webtop-nix/nixpkgs\""; exit 1; }
 
-  # webtop-nix's store overlay scripts (webtop-nix-lower, -partial, -restore.sh; the revision flake.lock
-  # pins) across image updates, against real local-overlay stores in privileged nixos/nix containers.
-  nix-store:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-      - name: store restore test
-        run: test/nix-store/run.sh restore-test.sh
-      - name: partial invalidation test
-        run: test/nix-store/run.sh partial-test.sh
-
   integration:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -234,7 +222,7 @@ jobs:
   controller-image:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    needs: [meta, unit, agent, integration, trivy-fs, helm, nixpkgs-sync, nix-store]
+    needs: [meta, unit, agent, integration, trivy-fs, helm, nixpkgs-sync]
     permissions:
       contents: read
       packages: write
@@ -332,7 +320,7 @@ jobs:
     name: desktop-image (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
-    needs: [meta, unit, agent, integration, trivy-fs, helm, nixpkgs-sync, nix-store]
+    needs: [meta, unit, agent, integration, trivy-fs, helm, nixpkgs-sync]
     permissions:
       contents: read
       packages: write
@@ -418,14 +406,10 @@ jobs:
       - name: boot test (compositing off must be caught)
         timeout-minutes: 15
         run: .github/scripts/boot-test.sh ${{ env.DESKTOP_IMAGE }}:dev 600 gray
-      - name: store overlay across an image update
-        timeout-minutes: 40
-        run: .github/scripts/lower-swap-test.sh ${{ env.DESKTOP_IMAGE }}:dev 300
       - name: boot diagnostics
         if: failure()
         run: |
           docker ps -a
-          docker logs desktop-swap 2>&1 | tail -n 100 || true
           docker logs desktop-boot 2>&1 | tail -n 200 || true
           echo "::group::journal (system)"
           docker exec desktop-boot journalctl -b --no-pager 2>&1 | tail -n 500 || true
@@ -436,7 +420,7 @@ jobs:
           docker exec desktop-boot ps -eo user,pid,args 2>&1 | grep -E 'kwin|plasma|selkies|webtop' || true
       - name: stop test container
         if: always()
-        run: docker rm -f desktop-boot desktop-swap || true
+        run: docker rm -f desktop-boot || true
 
       # ------ publish (main, tags) ------
       # By digest only: desktop-index puts the tags on the index. copyTo is skopeo copy from the Nix

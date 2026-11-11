@@ -31,3 +31,9 @@ updates, 0014 `nix profile` recording into one declaration).
   moves it, and the image tests are the check that a bump changed nothing it should not.
 - The on-volume layout (`/persist/nix`) and `WEBTOP_SUSPEND_MODE` are unchanged, so volumes and the pod contract are.
 - A missing hook is a webtop-nix option, not an override here.
+
+## Amendment 2026-11-11
+
+The store overlay scripts' tests and the `nix profile` and starter template image tests moved to webtop-nix
+(`tests/`, run on its own image). Here the boot test keeps what needs the pod: the agent's reports, the identity
+rename and the controller contract.
