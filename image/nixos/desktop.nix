@@ -19,6 +19,9 @@
 
   services.webtop.softwareCenter.enable = true;
 
+  # Rootless Podman and the docker CLI; needs the seccomp profile (chart: desktop.seccompProfile).
+  services.webtop.containers.enable = true;
+
   # The session (Plasma and its apps) gets webtop-init's session.env, e.g. the software center's default.
   services.webtop.sessionEnvironmentFiles = [ "-/run/webtop/session.env" ];
 
