@@ -108,8 +108,9 @@ desktop:
   title: "{{ .User }} – Desktop"
   # Mount the node's /dev/net/tun (a CharDevice hostPath; the runtime's default device rules allow it,
   # no privilege). Gives containers run inside the desktop (rootless Podman) their own networks; without
-  # it they share the desktop's network.
-  tunDevice: false
+  # it they share the desktop's network. On by default (the desktops ship rootless Podman/docker); set
+  # false on nodes without the tun module or under Pod Security baseline+ (hostPath is disallowed).
+  tunDevice: true
   # Seccomp profile of the desktop container (null: RuntimeDefault). RuntimeDefault refuses pivot_root,
   # which bubblewrap (buildFHSEnv apps, Flatpak) and containers in the desktop need. webtop-nix's
   # seccomp/desktop.json is RuntimeDefault plus pivot_root (docs/cluster-requirements.md):

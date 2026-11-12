@@ -154,7 +154,7 @@ for name, args in cases.items():
         # The user's own extras stay, the defaults are appended.
         if cfg["desktop"]["extraVolumes"][0] != {"name": "data", "emptyDir": {}} or cfg["desktop"]["extraVolumeMounts"][0]["name"] != "data":
             fail(f"{name}: desktop.defaults replaced extraVolumes/extraVolumeMounts instead of appending")
-    if cfg["desktop"].get("tunDevice", False) != (name == "all-on"):
+    if cfg["desktop"].get("tunDevice") is not True:
         fail(f"{name}: desktop.tunDevice did not reach the config")
     want_seccomp = {"type": "Localhost", "localhostProfile": "webtop-desktop.json"} if name == "all-on" else None
     if cfg["desktop"].get("seccompProfile") != want_seccomp:
