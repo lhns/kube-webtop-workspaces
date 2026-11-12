@@ -1,4 +1,4 @@
-# 0021 — The chart ships webtop-nix's seccomp profile
+# 0022 — The chart ships webtop-nix's seccomp profile
 
 - Status: Accepted
 - Date: 2026-11-12
