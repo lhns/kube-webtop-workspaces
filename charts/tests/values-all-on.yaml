@@ -19,8 +19,8 @@ desktop:
     formats: {LC_TIME: sv_SE.UTF-8}
     xdgConfig:
       kdeglobals: |
-        [General]
-        ColorScheme=BreezeDark
+        [KDE]
+        LookAndFeelPackage=org.kde.breezedark.desktop
       kwinrc: |
         [Windows]
         FocusPolicy=ClickToFocus
