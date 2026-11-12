@@ -80,6 +80,7 @@ desktop:
     formats: {}                 # {LC_TIME: sv_SE.UTF-8}: ISO dates, 24 h
     xdgConfig: {}               # {kdeglobals: "<ini text>"}: KDE config under xdg/<name>; not plasma-localerc
     homeModule: ""              # a home-manager module (Nix text); scalars should use lib.mkDefault
+    systemModule: ""            # a NixOS module (Nix text) the desktop system is rebuilt with; applies at the second start
   # The Nix Software Center's default for listing unfree packages (chart-only: passed as the
   # NSC_UNFREE_LISTED_DEFAULT env, docs/contract.md). A user's own choice in the app overrides it.
   softwareCenter:

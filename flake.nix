@@ -5,7 +5,7 @@
     # webtop-nix's nixpkgs: one Qt tree with its grafted KWin (webtop-nix README, "KWin without a GPU"), and its image
     # builder's skopeo, so a layer compresses to the same blob as in the last build.
     nixpkgs.follows = "webtop-nix/nixpkgs";
-    webtop-nix.url = "github:lhns/webtop-nix/f11c151b184eff565b124bbb4baf7b2a78bc86c8";
+    webtop-nix.url = "github:lhns/webtop-nix/e3143d87ae4d232fe2d863771cd6fcfb81619249";
   };
 
   outputs = { self, nixpkgs, webtop-nix, ... }:
@@ -30,6 +30,9 @@
             ./image/nixos/hooks.nix
             ./image/nixos/home-manager.nix
             ./image/nixos/identity.nix
+            # The admin's system.nix (desktop.defaults.systemModule) rebuilds this configuration
+            # (webtop-nix README, "Admin defaults").
+            { services.webtop.defaults.system = { flake = self; source = "${imageSource}"; name = "desktop-${system}"; }; }
           ];
         };
         toplevel = nixos.config.system.build.toplevel;
@@ -49,7 +52,8 @@
             --subst-var-by busybox ${pkgs.pkgsStatic.busybox} \
             --subst-var-by reservedNames ${reservedNames} \
             --subst-var-by storeInit ${nixos.config.services.webtop.storeOverlay.init} \
-            --subst-var-by sysPower ${nixos.config.services.webtop.sleep.init}
+            --subst-var-by sysPower ${nixos.config.services.webtop.sleep.init} \
+            --subst-var-by defaultsBoot ${nixos.config.services.webtop.defaults.system.boot}
           chmod +x $out/webtop-init
         '';
 
@@ -72,6 +76,11 @@
         '';
       };
       sys = forAllSystems perSystem;
+      # What evaluating the desktop system reads: a docs or chart change leaves the image as it is.
+      imageSource = nixpkgs.lib.fileset.toSource {
+        root = ./.;
+        fileset = nixpkgs.lib.fileset.unions [ ./flake.nix ./flake.lock ./image ./agent ];
+      };
     in
     {
       nixosConfigurations = nixpkgs.lib.mapAttrs' (system: s: nixpkgs.lib.nameValuePair "desktop-${system}" s.nixos) sys;

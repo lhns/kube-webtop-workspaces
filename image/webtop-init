@@ -219,5 +219,5 @@ step "write /run/webtop/session.env" write_session_env
 log "step: writable /sys/power stand-in"
 @sysPower@/bin/webtop-sys-power || log "no /sys/power stand-in: the desktop will not offer sleep"
 
-log "exec /sbin/init"
-exec /sbin/init
+# The system built from the admin's system.nix when it is current, else /sbin/init (webtop-nix README, "Admin defaults").
+exec @defaultsBoot@/bin/webtop-defaults-boot

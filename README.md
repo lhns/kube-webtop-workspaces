@@ -51,7 +51,7 @@ for `x86_64-linux` and `aarch64-linux`, each built on its own architecture.
 
 | path | what |
 | --- | --- |
-| `image/webtop-init` | entrypoint (static busybox): mounts, runs webtop-nix's `webtop-store-init` and `webtop-sys-power`, then `exec /sbin/init` |
+| `image/webtop-init` | entrypoint (static busybox): mounts, runs webtop-nix's `webtop-store-init` and `webtop-sys-power`, then execs `/sbin/init` or the system built from the admin's `system.nix` (`webtop-defaults-boot`) |
 | `image/nixos/container.nix` | webtop-nix's `nixosModules.container` fitted to the pod: kubelet-owned mounts, `storeOverlay`, `journalRelay`, passwordless sudo, Nix settings by group |
 | `image/nixos/desktop.nix` | `services.webtop` (webtop-nix) wired to the pod contract |
 | `image/nixos/hooks.nix` | agent units (power hook, restore job) and the options that tie session exit and Sleep to the agent |

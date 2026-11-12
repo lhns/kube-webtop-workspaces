@@ -27,3 +27,8 @@ defaults directory (its ADR 0015) and has dropped `localeEnvironmentFiles`.
 - A site moves from `desktop.timeZone` / `desktop.locale` to `desktop.defaults` in the same change as the chart bump.
 - An admin change applies per desktop at its next start, not to running sessions.
 - The chart knows webtop-nix's entry names, and nothing of what they do.
+
+## Amendment 2026-11-12
+
+`desktop.defaults.systemModule` renders `system.nix`, a NixOS module the image rebuilds its own system with
+(webtop-nix ADR 0016); the image sets `services.webtop.defaults.system` and `webtop-init` execs `webtop-defaults-boot`.

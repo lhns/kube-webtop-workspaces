@@ -61,7 +61,7 @@ podAntiAffinity:
 
 {{/*
 The desktop defaults (desktop.defaults) as JSON {data, items}: the ConfigMap data, and the volume items that
-place its keys in webtop-nix's defaults directory (session.conf, xdg/<file>, home.nix). Empty data: none set.
+place its keys in webtop-nix's defaults directory (session.conf, xdg/<file>, home.nix, system.nix). Empty data: none set.
 */}}
 {{- define "kwt.desktopDefaults" -}}
 {{- $d := .Values.desktop.defaults | default dict -}}
@@ -88,6 +88,10 @@ place its keys in webtop-nix's defaults directory (session.conf, xdg/<file>, hom
 {{- with $d.homeModule -}}
 {{- $_ := set $data "home.nix" . -}}
 {{- $items = append $items (dict "key" "home.nix" "path" "home.nix") -}}
+{{- end -}}
+{{- with $d.systemModule -}}
+{{- $_ := set $data "system.nix" . -}}
+{{- $items = append $items (dict "key" "system.nix" "path" "system.nix") -}}
 {{- end -}}
 {{- dict "data" $data "items" $items | toJson -}}
 {{- end }}

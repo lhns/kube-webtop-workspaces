@@ -120,7 +120,8 @@
               "additionalProperties": {"type": "string", "pattern": "^[^\r\n]*$"}
             },
             "xdgConfig": {"type": "object", "additionalProperties": {"type": "string"}},
-            "homeModule": {"type": "string"}
+            "homeModule": {"type": "string"},
+            "systemModule": {"type": "string"}
           }
         },
         "nix": {

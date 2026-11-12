@@ -298,14 +298,14 @@ plus a capture and an encoder.
 
 #### Desktop defaults
 
-The chart's `desktop.defaults` (`timeZone`, `locale`, `language`, `formats`, `xdgConfig`, `homeModule`) renders the
+The chart's `desktop.defaults` (`timeZone`, `locale`, `language`, `formats`, `xdgConfig`, `homeModule`, `systemModule`) renders the
 ConfigMap `<fullname>-desktop-defaults`, mounted read-only at `/run/webtop/defaults-source` in every desktop pod and
 set as the image's `services.webtop.defaults.source`. Its keys are the entries of webtop-nix's defaults directory:
-`session.conf` (the first four values), `xdg/<name>` (key `xdg-<name>`) and `home.nix`. What each entry means, how a
+`session.conf` (the first four values), `xdg/<name>` (key `xdg-<name>`), `home.nix` and `system.nix`. What each entry means, how a
 user overrides it and when it applies are webtop-nix's
 ([README, "Admin defaults"](https://github.com/lhns/webtop-nix#admin-defaults)). The chart adds a checksum of the data
 to the pod annotations, so a change marks running desktops `updatePending` (ADR 0006) and reaches each at its next
-start. `desktop.defaults.xdgConfig.plasma-localerc` is refused (webtop-locale owns that file); the removed
+start (`system.nix`: at the second, which builds it first). `desktop.defaults.xdgConfig.plasma-localerc` is refused (webtop-locale owns that file); the removed
 `desktop.timeZone` and `desktop.locale` fail the render. The ConfigMap is readable by every desktop user: no secrets.
 
 Optional agent overrides, never set by the controller (the defaults are what ships):

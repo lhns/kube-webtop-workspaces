@@ -25,6 +25,7 @@ desktop:
         [Windows]
         FocusPolicy=ClickToFocus
     homeModule: "{ lib, ... }: { programs.git.enable = lib.mkDefault true; }"
+    systemModule: "{ ... }: { environment.etc.\"site\".text = \"x\"; }"
   prePull: {enabled: true}
 storage: {storageClassName: fast, size: 10Gi}
 controller: {cleanExitCodes: [0, 143]}

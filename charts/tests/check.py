@@ -137,11 +137,12 @@ for name, args in cases.items():
             "xdg-kdeglobals": "[General]\nColorScheme=BreezeDark\n",
             "xdg-kwinrc": "[Windows]\nFocusPolicy=ClickToFocus\n",
             "home.nix": "{ lib, ... }: { programs.git.enable = lib.mkDefault true; }",
+            "system.nix": "{ ... }: { environment.etc.\"site\".text = \"x\"; }",
         }
         if dcm[0]["data"] != want_data:
             fail(f"{name}: defaults ConfigMap data {dcm[0]['data']}")
         want_items = {"session.conf": "session.conf", "xdg-kdeglobals": "xdg/kdeglobals",
-                      "xdg-kwinrc": "xdg/kwinrc", "home.nix": "home.nix"}
+                      "xdg-kwinrc": "xdg/kwinrc", "home.nix": "home.nix", "system.nix": "system.nix"}
         if {i["key"]: i["path"] for i in dvols[0]["configMap"]["items"]} != want_items:
             fail(f"{name}: defaults volume items {dvols[0]['configMap']['items']}")
         if dvols[0]["configMap"]["name"] != dcm[0]["metadata"]["name"]:
