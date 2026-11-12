@@ -483,3 +483,25 @@ func TestReportLocked(t *testing.T) {
 		t.Fatalf("bad time: %d", rec.Code)
 	}
 }
+
+func TestReportNoticesAnswersUpdatePending(t *testing.T) {
+	d := desktop(func(d *v1alpha1.Desktop) { d.Status.UpdatePending = true })
+	e := newEnv(t, d, desktopPod("pod-1"))
+	// Without notices the answer stays 204 (older agents want exactly that).
+	if rec := e.do("/api/v1/report", `{"connectedClients":1}`, "tok"); rec.Code != 204 || rec.Body.Len() != 0 {
+		t.Fatal(rec.Code, rec.Body)
+	}
+	rec := e.do("/api/v1/report", `{"connectedClients":1,"notices":true}`, "tok")
+	if rec.Code != 200 || strings.TrimSpace(rec.Body.String()) != `{"updatePending":true}` {
+		t.Fatal(rec.Code, rec.Body)
+	}
+	cur := e.get(t)
+	cur.Status.UpdatePending = false
+	if err := e.c.Status().Update(context.Background(), cur); err != nil {
+		t.Fatal(err)
+	}
+	rec = e.do("/api/v1/report", `{"notices":true}`, "tok")
+	if rec.Code != 200 || strings.TrimSpace(rec.Body.String()) != `{"updatePending":false}` {
+		t.Fatal(rec.Code, rec.Body)
+	}
+}

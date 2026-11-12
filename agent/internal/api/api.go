@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +24,9 @@ type Client struct {
 	HomePaths []string
 	// LoginError is why the account could not be renamed ("" if it could).
 	LoginError string
+	// OnUpdatePending, if set, is called with the desktop's updatePending after each report the
+	// controller answered with it. A controller that does not answer with it never calls it.
+	OnUpdatePending func(bool)
 
 	mu      sync.Mutex
 	restore *SoftwareRestore
@@ -69,6 +73,13 @@ type Report struct {
 	LoginError *string `json:"loginError,omitempty"`
 	// Set by Client.Report once SetRestore was called.
 	SoftwareRestore *SoftwareRestore `json:"softwareRestore,omitempty"`
+	// Set by Client.Report when OnUpdatePending is set: asks the controller for updatePending.
+	Notices bool `json:"notices,omitempty"`
+}
+
+// ReportReply is the controller's answer to a report that sent notices.
+type ReportReply struct {
+	UpdatePending bool `json:"updatePending"`
 }
 
 // SoftwareRestore is the progress of the restore after an image update.
@@ -100,33 +111,50 @@ func (c *Client) Report(ctx context.Context, r Report) error {
 	c.mu.Lock()
 	r.SoftwareRestore = c.restore
 	c.mu.Unlock()
-	return c.post(ctx, "/api/v1/report", r, http.StatusNoContent)
+	r.Notices = c.OnUpdatePending != nil
+	b, err := c.send(ctx, "/api/v1/report", r, http.StatusNoContent, http.StatusOK)
+	if err != nil {
+		return err
+	}
+	if len(b) > 0 && c.OnUpdatePending != nil {
+		var reply ReportReply
+		if json.Unmarshal(b, &reply) == nil {
+			c.OnUpdatePending(reply.UpdatePending)
+		}
+	}
+	return nil
 }
 
 func (c *Client) post(ctx context.Context, path string, body any, want int) error {
+	_, err := c.send(ctx, path, body, want)
+	return err
+}
+
+// send posts body and returns the response body of a status in want.
+func (c *Client) send(ctx context.Context, path string, body any, want ...int) ([]byte, error) {
 	// kubelet rotates the token, so read it on every request.
 	tok, err := os.ReadFile(c.TokenPath)
 	if err != nil {
-		return fmt.Errorf("read token: %w", err)
+		return nil, fmt.Errorf("read token: %w", err)
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.URL+path, bytes.NewReader(payload))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(tok)))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-	if resp.StatusCode != want {
-		return &StatusError{resp.StatusCode, strings.TrimSpace(string(b))}
+	if !slices.Contains(want, resp.StatusCode) {
+		return nil, &StatusError{resp.StatusCode, strings.TrimSpace(string(b))}
 	}
-	return nil
+	return b, nil
 }

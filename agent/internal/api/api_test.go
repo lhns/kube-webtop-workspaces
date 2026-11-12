@@ -149,3 +149,33 @@ func TestReportCarriesRestore(t *testing.T) {
 		t.Fatalf("body = %v", got)
 	}
 }
+
+func TestReportUpdatePending(t *testing.T) {
+	var asked bool
+	reply := http.StatusNoContent
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var got map[string]any
+		json.NewDecoder(r.Body).Decode(&got)
+		asked = got["notices"] == true
+		w.WriteHeader(reply)
+		if reply == http.StatusOK {
+			w.Write([]byte(`{"updatePending":true}`))
+		}
+	}))
+	defer srv.Close()
+	c := New(srv.URL, token(t, "t"))
+	// Not asked for unless something listens.
+	if err := c.Report(context.Background(), Report{}); err != nil || asked {
+		t.Fatalf("err %v, asked %v", err, asked)
+	}
+	var calls []bool
+	c.OnUpdatePending = func(p bool) { calls = append(calls, p) }
+	// An older controller answers 204: nothing to follow.
+	if err := c.Report(context.Background(), Report{}); err != nil || !asked || len(calls) != 0 {
+		t.Fatalf("err %v, asked %v, calls %v", err, asked, calls)
+	}
+	reply = http.StatusOK
+	if err := c.Report(context.Background(), Report{}); err != nil || len(calls) != 1 || !calls[0] {
+		t.Fatalf("err %v, calls %v", err, calls)
+	}
+}

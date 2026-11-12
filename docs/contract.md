@@ -691,6 +691,14 @@ controller may not have recorded it yet, so the agent retries a 409 (every few s
 `stage`/`bootProgress` are only applied before ready. `stage` is free text for the boot page, at
 most 64 characters (longer → `400`); it never becomes a metric label value (section 11). Response `204`.
 
+`notices: true` asks for the desktop's `status.updatePending` in the answer: the response is then `200
+{"updatePending": true|false}` instead of `204`. The agent sends it with every report and keeps
+`/run/webtop/notices/update-pending.json` (webtop-nix's notice channel, its ADR 0019) in step: written while
+true, removed while false; a controller that answers `204` leaves it as it is. The notice reads "Updates are
+ready" / "Restart your desktop to apply them." with the `restart` action. The value is the one the
+reconciler last stored, so a change reaches the desktop with a report after it
+(every 30 s) ([ADR 0021](adr/0021-update-pending-is-a-notice-file-in-webtop-nixs-channel.md)).
+
 **Readiness:** the agent reports `ready: true` only when `multi-user.target` and the user's `plasma-workspace.target` are active, the web port accepts connections, and KWin is compositing (D-Bus `org.kde.KWin` `/Compositor` `org.kde.kwin.Compositing.active` on the user bus; any compositing type counts). While KWin is not compositing the stage is `Starting compositor`; after `WEBTOP_COMPOSITOR_TIMEOUT` it becomes `Compositor not active` (the agent keeps polling and still turns ready if KWin recovers).
 
 **Agent cadence:** during boot on every stage change (≤ 1/s); after ready every 30 s, and
