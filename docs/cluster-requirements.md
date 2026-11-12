@@ -35,6 +35,11 @@ inside a user namespace, which needs the following.
   container needs `SYS_ADMIN`, `SYS_NICE` (to exec NixOS's kwin_wayland capability wrapper; real-time
   priority still fails harmlessly in a user namespace), `procMount: Unmasked` and runs as UID 0 inside the user namespace,
   so the `restricted` and `baseline` profiles reject it).
+- With `desktop.seccompProfile.securityProfilesOperator`: the
+  [Security Profiles Operator](https://github.com/kubernetes-sigs/security-profiles-operator) (v1 API)
+  installed first, with its `kubeletDir` set to the nodes' kubelet root (k0s: `/var/lib/k0s/kubelet`).
+  It installs the chart's `SeccompProfile` on every node, also on nodes added later. A desktop
+  container scheduled before the file is on its node does not start; the kubelet retries until it is.
 - With `desktop.seccompProfile` set to a `Localhost` profile: the file on every node desktops can run
   on, under the kubelet's seccomp directory (`<kubelet root-dir>/seccomp/`: `/var/lib/kubelet/seccomp/`,
   k0s `/var/lib/k0s/kubelet/seccomp/`), before the value is set; a pod whose profile is missing does

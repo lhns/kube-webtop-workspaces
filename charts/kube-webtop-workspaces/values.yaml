@@ -111,10 +111,14 @@ desktop:
   # it they share the desktop's network.
   tunDevice: false
   # Seccomp profile of the desktop container (null: RuntimeDefault). RuntimeDefault refuses pivot_root,
-  # which bubblewrap (buildFHSEnv apps, Flatpak) and containers in the desktop need; webtop-nix's
-  # seccomp/desktop.json is RuntimeDefault plus pivot_root (docs/cluster-requirements.md). A Localhost
-  # profile missing on a node stops the pod from starting there.
-  seccompProfile: null        # e.g. {type: Localhost, localhostProfile: webtop-desktop.json}
+  # which bubblewrap (buildFHSEnv apps, Flatpak) and containers in the desktop need. webtop-nix's
+  # seccomp/desktop.json is RuntimeDefault plus pivot_root (docs/cluster-requirements.md):
+  #   {securityProfilesOperator: true}: the chart renders it, from the pinned webtop-nix, as a
+  #     SeccompProfile of the Security Profiles Operator (needs its CRD), which installs it on every
+  #     node; the pod uses it.
+  #   {type: Localhost, localhostProfile: <path below the kubelet's seccomp dir>}: installed another way.
+  # A container whose Localhost profile is not on its node yet does not start (the kubelet retries).
+  seccompProfile: null
   securityContext: null       # when set, replaces the whole default container securityContext (default caps: SYS_ADMIN, SYS_NICE for NixOS's kwin_wayland wrapper)
   shmSize: 1Gi
   runSizeLimit: 256Mi

@@ -159,8 +159,8 @@
         "seccompProfile": {
           "type": ["object", "null"],
           "additionalProperties": false,
-          "required": ["type"],
           "properties": {
+            "securityProfilesOperator": {"type": "boolean"},
             "type": {"enum": ["RuntimeDefault", "Localhost", "Unconfined"]},
             "localhostProfile": {"type": "string"}
           }
