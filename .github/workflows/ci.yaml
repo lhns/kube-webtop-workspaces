@@ -397,7 +397,7 @@ jobs:
           key: nix-built-${{ matrix.arch }}-${{ hashFiles('flake.lock', '**/*.nix') }}
       # -L prints the layer split table (webtop-nix image/split-layers.py) as well.
       - name: build image
-        run: nix build .#image .#image.layerSplit -L -o img
+        run: nix build .#image .#image.layerSplit .#image.builder -L -o img
       - name: layer table
         run: |
           {
@@ -433,6 +433,22 @@ jobs:
       - name: stop test container
         if: always()
         run: docker rm -f desktop-boot || true
+      # The builder (<tag>-builder) rebuilds this very system from its shipped source: webtop-nix's
+      # image/system/Dockerfile with `{ }` gives the image back unchanged (webtop-nix ADR 0020).
+      - name: builder rebuilds the image's system
+        if: matrix.arch == 'amd64'
+        timeout-minutes: 30
+        run: |
+          set -euo pipefail
+          nix run .#image.builder.copyToDockerDaemon
+          wn=$(nix eval --raw --impure --expr '(builtins.getFlake (toString ./.)).inputs.webtop-nix.outPath')
+          ctx=$(mktemp -d)
+          cp "$wn/image/system/Dockerfile" "$ctx/" && echo '{ }' > "$ctx/system.nix"
+          docker build --build-arg IMAGE="$DESKTOP_IMAGE:dev" --build-arg BUILDER="$DESKTOP_IMAGE:dev-builder" -t desktop-system "$ctx" 2>&1 | tail -n 20
+          peek() { docker run --rm --entrypoint /bin/busybox "$@"; }
+          [ "$(peek desktop-system readlink /sbin/init)" = "$(peek "$DESKTOP_IMAGE:dev" readlink /sbin/init)" ] || { echo "::error::{ } changed the system"; exit 1; }
+          [ "$(peek desktop-system cat /webtop-image-stamp)" = "$(peek "$DESKTOP_IMAGE:dev" cat /webtop-image-stamp)" ] || { echo "::error::{ } changed the stamp"; exit 1; }
+          docker image rm desktop-system "$DESKTOP_IMAGE:dev-builder" > /dev/null
 
       # ------ publish (main, tags) ------
       # By digest only: desktop-index puts the tags on the index. copyTo is skopeo copy from the Nix
@@ -446,7 +462,10 @@ jobs:
           set -euo pipefail
           nix run .#image.copyTo -- --dest-compress-format zstd --dest-compress-level 6 --digestfile digest \
             --dest-creds "${{ github.actor }}:${GHCR_TOKEN}" "docker://${DESKTOP_IMAGE}@@unknown-digest@@"
-          mkdir -p out && cp digest "out/${{ matrix.arch }}"
+          # The builder: the same layers plus one, so only that one is uploaded.
+          nix run .#image.builder.copyTo -- --dest-compress-format zstd --dest-compress-level 6 --digestfile digest-builder \
+            --dest-creds "${{ github.actor }}:${GHCR_TOKEN}" "docker://${DESKTOP_IMAGE}@@unknown-digest@@"
+          mkdir -p out && cp digest "out/${{ matrix.arch }}" && cp digest-builder "out/builder-${{ matrix.arch }}"
           echo "desktop image (${{ matrix.arch }}): \`${DESKTOP_IMAGE}@$(cat digest)\`" >> "$GITHUB_STEP_SUMMARY"
           REGISTRY_AUTH="${{ github.actor }}:${GHCR_TOKEN}" nix run .#layer-report -- img img-1/groups.json \
             --previous "$DESKTOP_IMAGE:main" --pushed "$DESKTOP_IMAGE@$(cat digest)" | tee -a "$GITHUB_STEP_SUMMARY" || echo "layer report failed (informational)"
@@ -456,7 +475,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: desktop-digest-${{ matrix.arch }}
-          path: out/${{ matrix.arch }}
+          path: out/
 
   # Off the critical path: only the digest is needed, and a failure here does not stop publishing.
   desktop-sbom:
@@ -528,15 +547,22 @@ jobs:
           TAGS: ${{ needs.meta.outputs.desktop_tags }}
         run: |
           set -euo pipefail
-          args=()
-          for tag in $TAGS; do args+=(-t "${DESKTOP_IMAGE}:${tag}"); done
-          for f in digests/*; do args+=("${DESKTOP_IMAGE}@$(cat "$f")"); done
-          docker buildx imagetools create "${args[@]}"
-          digest=$(docker buildx imagetools inspect "${DESKTOP_IMAGE}:${TAGS%% *}" --format '{{json .Manifest}}' | jq -r .digest)
-          docker buildx imagetools inspect "${DESKTOP_IMAGE}@${digest}"
-          echo "digest=$digest" >> "$GITHUB_OUTPUT"
-          for tag in $TAGS; do echo "pushed ${DESKTOP_IMAGE}:${tag}" >> "$GITHUB_STEP_SUMMARY"; done
-          echo "desktop image: \`${DESKTOP_IMAGE}@${digest}\`" >> "$GITHUB_STEP_SUMMARY"
+          # digests/<arch> and digests/builder-<arch>; the builder's tags are the image's with -builder.
+          for kind in image builder; do
+            suffix=; [ "$kind" = image ] || suffix=-builder
+            args=()
+            for tag in $TAGS; do args+=(-t "${DESKTOP_IMAGE}:${tag}${suffix}"); done
+            for f in digests/*; do
+              case "${f##*/}" in builder-*) k=builder ;; *) k=image ;; esac
+              [ "$k" != "$kind" ] || args+=("${DESKTOP_IMAGE}@$(cat "$f")")
+            done
+            docker buildx imagetools create "${args[@]}"
+            digest=$(docker buildx imagetools inspect "${DESKTOP_IMAGE}:${TAGS%% *}${suffix}" --format '{{json .Manifest}}' | jq -r .digest)
+            docker buildx imagetools inspect "${DESKTOP_IMAGE}@${digest}"
+            echo "$kind=$digest" >> "$GITHUB_OUTPUT"
+            for tag in $TAGS; do echo "pushed ${DESKTOP_IMAGE}:${tag}${suffix}" >> "$GITHUB_STEP_SUMMARY"; done
+            echo "desktop $kind: \`${DESKTOP_IMAGE}@${digest}\`" >> "$GITHUB_STEP_SUMMARY"
+          done
       - uses: sigstore/cosign-installer@v3
         with:
           cosign-release: v2.4.1
@@ -547,7 +573,7 @@ jobs:
         run: |
           # Rekor/Fulcio fail transiently; retry the whole call.
           for i in 1 2 3 4 5; do
-            cosign sign --recursive "${DESKTOP_IMAGE}@${{ steps.index.outputs.digest }}" && exit 0
+            cosign sign --recursive "${DESKTOP_IMAGE}@${{ steps.index.outputs.image }}" "${DESKTOP_IMAGE}@${{ steps.index.outputs.builder }}" && exit 0
             echo "cosign sign failed (attempt $i)"; sleep $((i * 15))
           done
           exit 1

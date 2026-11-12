@@ -5,7 +5,7 @@
     # webtop-nix's nixpkgs: one Qt tree with its grafted KWin (webtop-nix README, "KWin without a GPU"), and its image
     # builder's skopeo, so a layer compresses to the same blob as in the last build.
     nixpkgs.follows = "webtop-nix/nixpkgs";
-    webtop-nix.url = "github:lhns/webtop-nix/2dc9467354ca99706dfbe4ccf811df529ade1262";
+    webtop-nix.url = "github:lhns/webtop-nix/1060e38d035f4dd314af4ad27a66d1068afd23d7";
   };
 
   outputs = { self, nixpkgs, webtop-nix, ... }:
@@ -87,6 +87,16 @@
           tag = "dev";
           inherit nixos;
           copyToRoot = [ rootfs webtopInit stamp ];
+          # image.builder, published as <tag>-builder: an admin's system.nix is built into a derived
+          # image from it (webtop-nix ADR 0020). `source` is what evaluating the system reads.
+          builder = {
+            flake = self;
+            name = "desktop-${system}";
+            source = pkgs.lib.fileset.toSource {
+              root = ./.;
+              fileset = pkgs.lib.fileset.unions [ ./flake.nix ./flake.lock ./image ./agent ];
+            };
+          };
           config = {
             Entrypoint = [ "/webtop-init" ];
             StopSignal = "SIGRTMIN+3";

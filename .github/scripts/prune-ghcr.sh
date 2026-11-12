@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Prints (DRY_RUN=true, the default) or deletes old dev versions of this repo's ghcr packages.
-# Keeps the newest KEEP versions tagged 0.0.0-dev.*, and every version that also carries a release tag
-# (vX.Y.Z, X.Y.Z, latest). A deleted version's cosign signature/attestation tags (sha256-<digest>.*) go
-# with it. Untagged versions are left alone: they may be platform manifests of a kept image index. So
-# are the platform manifests of a deleted index and their signature tags (cosign sign --recursive).
-# Also removes the retired package PHASE0_PACKAGE. Needs GH_TOKEN with packages:write.
+# Keeps the newest KEEP versions tagged 0.0.0-dev.* (images and their -builder images counted apart),
+# and every version that also carries a release tag (vX.Y.Z, X.Y.Z, latest). A deleted version's cosign
+# signature/attestation tags (sha256-<digest>.*) go with it. Untagged versions are left alone: they may
+# be platform manifests of a kept image index. So are the platform manifests of a deleted index and
+# their signature tags (cosign sign --recursive). Also removes the retired package PHASE0_PACKAGE.
+# Needs GH_TOKEN with packages:write.
 set -euo pipefail
 
 owner=${OWNER:-lhns}
@@ -18,7 +19,8 @@ filter='
   def tags: .metadata.container.tags // [];
   def dev: tags | any(test("^0[.]0[.]0-dev[.]"));
   def released: tags | any(test("^v?[0-9]+[.][0-9]+[.][0-9]+$") or . == "latest");
-  ([.[] | select(dev and (released | not))] | sort_by(.created_at) | reverse | .[$keep:]) as $old
+  def builder: tags | any(endswith("-builder"));
+  ([.[] | select(dev and (released | not))] | group_by(builder) | map(sort_by(.created_at) | reverse | .[$keep:]) | add // []) as $old
   | ($old | map(.name)) as $names
   | ($old + [.[] | select(tags | any(test("^sha256-[0-9a-f]{64}[.]") and (.[7:71] as $d | $names | index("sha256:" + $d))))])
   | unique_by(.id) | .[] | [.id, (tags | join(","))] | @tsv'
