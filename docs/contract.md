@@ -693,7 +693,7 @@ most 64 characters (longer → `400`); it never becomes a metric label value (se
 
 `notices: true` asks for the desktop's `status.updatePending` in the answer: the response is then `200
 {"updatePending": true|false}` instead of `204`. The agent sends it with every report and keeps
-`/run/webtop/notices/update-pending.json` (webtop-nix's notice channel, its ADR 0017) in step: written while
+`/run/webtop/notices/update-pending.json` (webtop-nix's notice channel, its ADR 0019) in step: written while
 true, removed while false; a controller that answers `204` leaves it as it is. The notice reads "Updates are
 ready" / "Restart your desktop to apply them." with the `restart` action. The value is the one the
 reconciler last stored, so a change reaches the desktop with a report after it

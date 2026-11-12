@@ -1,5 +1,5 @@
 // Package notices keeps the desktop's notice files: webtop-nix shows each file of /run/webtop/notices
-// as a notification (its ADR 0017). The only notice sent from here is update-pending.
+// as a notification (its ADR 0019). The only notice sent from here is update-pending.
 package notices
 
 import (
@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/state"
 )
@@ -56,8 +57,11 @@ func SetUpdatePending(dir string, pending bool) error {
 
 // UpdatePendingFollower returns a func for api.Client.OnUpdatePending. Errors are logged once per change.
 func UpdatePendingFollower(dir string) func(bool) {
+	var mu sync.Mutex // reports come from the boot, steady and restore loops
 	failed := false
 	return func(pending bool) {
+		mu.Lock()
+		defer mu.Unlock()
 		err := SetUpdatePending(dir, pending)
 		if err != nil && !failed {
 			log.Printf("notices: update-pending: %v", err)

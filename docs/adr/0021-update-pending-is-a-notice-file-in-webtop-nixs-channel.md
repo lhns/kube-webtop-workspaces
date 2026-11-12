@@ -7,7 +7,7 @@
 
 A pending template update ([0006](0006-updates-apply-on-the-next-start.md)) applies at the next start, but only
 the Desktop status shows it, so a user who never restarts never learns of it. webtop-nix has a notice channel,
-root-owned files in `/run/webtop/notices/` shown as notifications (its ADR 0017).
+root-owned files in `/run/webtop/notices/` shown as notifications (its ADR 0019).
 
 ## Decision
 

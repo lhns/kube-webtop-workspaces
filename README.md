@@ -134,7 +134,7 @@ which the power hook reports as reason `suspend`.
 
 **Notices.** The agent keeps `/run/webtop/notices/update-pending.json` in step with the Desktop's `status.updatePending`
 (the answer to its 30 s report carries it, contract section 8.3), and webtop-nix shows the file as a notification with a Restart button
-([README, "Notices"](https://github.com/lhns/webtop-nix#notices), its ADR 0017; [ADR 0021](docs/adr/0021-update-pending-is-a-notice-file-in-webtop-nixs-channel.md)).
+([README, "Notices"](https://github.com/lhns/webtop-nix#notices), its ADR 0019; [ADR 0021](docs/adr/0021-update-pending-is-a-notice-file-in-webtop-nixs-channel.md)).
 Restart is Plasma's own, so it ends in `reboot.target` and the `reboot` report above, which applies the pending template. This is the only notice sent from here.
 
 **Boot progress and activity.** `webtop-agent run` reports the stage and progress from systemd's
