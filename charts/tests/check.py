@@ -155,6 +155,9 @@ for name, args in cases.items():
             fail(f"{name}: desktop.defaults replaced extraVolumes/extraVolumeMounts instead of appending")
     if cfg["desktop"].get("tunDevice", False) != (name == "all-on"):
         fail(f"{name}: desktop.tunDevice did not reach the config")
+    want_seccomp = {"type": "Localhost", "localhostProfile": "webtop-desktop.json"} if name == "all-on" else None
+    if cfg["desktop"].get("seccompProfile") != want_seccomp:
+        fail(f"{name}: desktop.seccompProfile: {cfg['desktop'].get('seccompProfile')}")
     if name == "all-on" and {"name": "FOO", "value": "bar"} not in cfg["desktop"]["extraEnv"]:
         fail(f"{name}: desktop.nix replaced desktop.extraEnv instead of appending")
 

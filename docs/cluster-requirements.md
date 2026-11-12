@@ -35,6 +35,18 @@ inside a user namespace, which needs the following.
   container needs `SYS_ADMIN`, `SYS_NICE` (to exec NixOS's kwin_wayland capability wrapper; real-time
   priority still fails harmlessly in a user namespace), `procMount: Unmasked` and runs as UID 0 inside the user namespace,
   so the `restricted` and `baseline` profiles reject it).
+- With `desktop.seccompProfile` set to a `Localhost` profile: the file on every node desktops can run
+  on, under the kubelet's seccomp directory (`<kubelet root-dir>/seccomp/`: `/var/lib/kubelet/seccomp/`,
+  k0s `/var/lib/k0s/kubelet/seccomp/`), before the value is set; a pod whose profile is missing does
+  not start. For bubblewrap and containers in the desktop, use webtop-nix's `seccomp/desktop.json`
+  (containerd's RuntimeDefault plus `pivot_root`) at a pinned commit:
+
+  ```sh
+  curl -fsSLo /var/lib/kubelet/seccomp/webtop-desktop.json \
+    https://raw.githubusercontent.com/lhns/webtop-nix/<commit>/seccomp/desktop.json
+  ```
+
+  then `desktop.seccompProfile: {type: Localhost, localhostProfile: webtop-desktop.json}`.
 - With `desktop.tunDevice`: `/dev/net/tun` on the nodes (the `tun` module). The default device rules of
   containerd/runc allow it, so the pod stays unprivileged.
 - A **StorageClass** for the per-user PVCs (`storage.storageClassName`, or a default class). The

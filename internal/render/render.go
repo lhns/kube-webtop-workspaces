@@ -101,14 +101,17 @@ func Service(cfg *config.Config, d *v1alpha1.Desktop) *corev1.Service {
 	}
 }
 
-func defaultSecurityContext() *corev1.SecurityContext {
+func defaultSecurityContext(seccomp *corev1.SeccompProfile) *corev1.SecurityContext {
+	if seccomp == nil {
+		seccomp = &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}
+	}
 	return &corev1.SecurityContext{
 		RunAsUser:    ptr(int64(0)),
 		RunAsNonRoot: ptr(false),
 		// SYS_NICE: NixOS's kwin_wayland capability wrapper cannot exec without it.
 		Capabilities:    &corev1.Capabilities{Add: []corev1.Capability{"SYS_ADMIN", "SYS_NICE"}},
 		ProcMount:       ptr(corev1.UnmaskedProcMount),
-		SeccompProfile:  &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+		SeccompProfile:  seccomp.DeepCopy(),
 		AppArmorProfile: &corev1.AppArmorProfile{Type: corev1.AppArmorProfileTypeUnconfined},
 	}
 }
@@ -118,7 +121,7 @@ func PodTemplate(cfg *config.Config, d *v1alpha1.Desktop) corev1.PodTemplateSpec
 	dc := cfg.Desktop
 	sc := dc.SecurityContext
 	if sc == nil {
-		sc = defaultSecurityContext()
+		sc = defaultSecurityContext(dc.SeccompProfile)
 	} else {
 		sc = sc.DeepCopy()
 	}

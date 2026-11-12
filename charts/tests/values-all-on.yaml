@@ -7,6 +7,7 @@ desktop:
   extraVolumes: [{name: data, emptyDir: {}}]
   extraVolumeMounts: [{name: data, mountPath: /data}]
   tunDevice: true
+  seccompProfile: {type: Localhost, localhostProfile: webtop-desktop.json}
   nix:
     extraSubstituters: [http://cache.example.org/a, http://cache.example.org/b]
     extraTrustedPublicKeys: ["a:AAAA", "b:BBBB"]

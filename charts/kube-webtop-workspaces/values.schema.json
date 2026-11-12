@@ -156,6 +156,15 @@
         },
         "title": {"type": "string"},
         "tunDevice": {"type": "boolean"},
+        "seccompProfile": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["type"],
+          "properties": {
+            "type": {"enum": ["RuntimeDefault", "Localhost", "Unconfined"]},
+            "localhostProfile": {"type": "string"}
+          }
+        },
         "securityContext": {"type": ["object", "null"]},
         "shmSize": {"type": ["string", "integer"]},
         "runSizeLimit": {"type": ["string", "integer"]},

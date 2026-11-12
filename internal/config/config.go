@@ -87,6 +87,8 @@ type Desktop struct {
 	StopAfterUnseen metav1.Duration `json:"stopAfterUnseen"`
 	// TunDevice mounts the node's /dev/net/tun: rootless container networking (pasta) in the desktop.
 	TunDevice bool `json:"tunDevice"`
+	// SeccompProfile of the default container securityContext; nil: RuntimeDefault.
+	SeccompProfile *corev1.SeccompProfile `json:"seccompProfile"`
 }
 
 // MinStopAfterUnseen keeps a login or gateway outage from reading as absent users.
