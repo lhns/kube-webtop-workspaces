@@ -153,6 +153,8 @@ for name, args in cases.items():
         # The user's own extras stay, the defaults are appended.
         if cfg["desktop"]["extraVolumes"][0] != {"name": "data", "emptyDir": {}} or cfg["desktop"]["extraVolumeMounts"][0]["name"] != "data":
             fail(f"{name}: desktop.defaults replaced extraVolumes/extraVolumeMounts instead of appending")
+    if cfg["desktop"].get("tunDevice", False) != (name == "all-on"):
+        fail(f"{name}: desktop.tunDevice did not reach the config")
     if name == "all-on" and {"name": "FOO", "value": "bar"} not in cfg["desktop"]["extraEnv"]:
         fail(f"{name}: desktop.nix replaced desktop.extraEnv instead of appending")
 

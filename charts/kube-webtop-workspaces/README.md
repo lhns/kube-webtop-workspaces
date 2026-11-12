@@ -58,6 +58,7 @@ unknown keys. Defaults are in `values.yaml`.
 | `desktop.runtimeClassName` | `""` | RuntimeClass with writable cgroups (not created by the chart) |
 | `desktop.hostUsers` | `false` | user namespace |
 | `desktop.port`, `resources`, `nodeSelector`, `tolerations`, `affinity`, `priorityClassName`, `podLabels`, `podAnnotations` | see values.yaml | desktop pod scheduling |
+| `desktop.tunDevice` | `false` | mount the node's `/dev/net/tun` (a `CharDevice` hostPath, no privilege): containers in the desktop (rootless Podman) get their own networks (pasta, compose networks, `-p`); without it they share the desktop's network |
 | `desktop.extraEnv`, `extraVolumes`, `extraVolumeMounts`, `securityContext` | | extra pod config; `securityContext` replaces the default container one |
 | `desktop.nix.extraSubstituters` / `extraTrustedPublicKeys` | `[]` / `[]` | extra binary caches in the desktops' `nix.conf`, after cache.nixos.org (passed as `WEBTOP_NIX_*` env) |
 | `desktop.maxAppScreens` | `4` | apps `/apps/<id>` may show at once (1-8), one Selkies screen each; each costs a KWin output plus a capture and an encoder (passed as `WEBTOP_MAX_APP_SCREENS` env) |

@@ -35,6 +35,8 @@ inside a user namespace, which needs the following.
   container needs `SYS_ADMIN`, `SYS_NICE` (to exec NixOS's kwin_wayland capability wrapper; real-time
   priority still fails harmlessly in a user namespace), `procMount: Unmasked` and runs as UID 0 inside the user namespace,
   so the `restricted` and `baseline` profiles reject it).
+- With `desktop.tunDevice`: `/dev/net/tun` on the nodes (the `tun` module). The default device rules of
+  containerd/runc allow it, so the pod stays unprivileged.
 - A **StorageClass** for the per-user PVCs (`storage.storageClassName`, or a default class). The
   controller never deletes PVCs; reclaiming them is an operator decision.
 

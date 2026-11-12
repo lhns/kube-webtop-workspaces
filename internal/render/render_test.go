@@ -141,6 +141,32 @@ func TestPodTemplate(t *testing.T) {
 	}
 }
 
+func TestTunDevice(t *testing.T) {
+	cfg, d := testConfig(t), testDesktop()
+	off := PodTemplate(cfg, d)
+	cfg.Desktop.TunDevice = true
+	on := PodTemplate(cfg, d)
+	var vol *corev1.Volume
+	for i := range on.Spec.Volumes {
+		if on.Spec.Volumes[i].Name == volTun {
+			vol = &on.Spec.Volumes[i]
+		}
+	}
+	if vol == nil || vol.HostPath == nil || vol.HostPath.Path != "/dev/net/tun" || *vol.HostPath.Type != corev1.HostPathCharDev {
+		t.Fatalf("tun volume: %+v", vol)
+	}
+	m := on.Spec.Containers[0].VolumeMounts
+	if last := m[len(m)-1]; last.Name != volTun || last.MountPath != "/dev/net/tun" {
+		t.Fatalf("tun mount: %+v", last)
+	}
+	if len(off.Spec.Volumes) != len(on.Spec.Volumes)-1 || TemplateHash(off) == TemplateHash(on) {
+		t.Fatal("tunDevice off must add nothing and on must change the template")
+	}
+	if on.Spec.Containers[0].SecurityContext.Privileged != nil {
+		t.Fatal("tunDevice must not make the pod privileged")
+	}
+}
+
 func TestDeployment(t *testing.T) {
 	cfg, d := testConfig(t), testDesktop()
 	dep := Deployment(cfg, d, 1)

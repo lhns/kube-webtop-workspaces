@@ -155,6 +155,7 @@
           "additionalProperties": {"type": "string", "maxLength": 256}
         },
         "title": {"type": "string"},
+        "tunDevice": {"type": "boolean"},
         "securityContext": {"type": ["object", "null"]},
         "shmSize": {"type": ["string", "integer"]},
         "runSizeLimit": {"type": ["string", "integer"]},

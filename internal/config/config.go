@@ -75,6 +75,8 @@ type Desktop struct {
 	ExtraVolumes                  []corev1.Volume               `json:"extraVolumes"`
 	ExtraVolumeMounts             []corev1.VolumeMount          `json:"extraVolumeMounts"`
 	SecurityContext               *corev1.SecurityContext       `json:"securityContext"`
+	// TunDevice mounts the node's /dev/net/tun: rootless container networking (pasta) in the desktop.
+	TunDevice bool `json:"tunDevice"`
 	ShmSize                       resource.Quantity             `json:"shmSize"`
 	RunSizeLimit                  resource.Quantity             `json:"runSizeLimit"`
 	TerminationGracePeriodSeconds *int64                        `json:"terminationGracePeriodSeconds"`

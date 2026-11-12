@@ -232,6 +232,7 @@ Rendered from the `desktop` and `storage` config sections. Fixed parts:
 | `/run` | emptyDir `Memory`, `desktop.runSizeLimit` (default 256Mi) |
 | `/dev/shm` | emptyDir `Memory`, `desktop.shmSize` (default 1Gi) |
 | `/run/webtop/sa` | projected `serviceAccountToken` (audience `powerApi.audience`, 3600 s, path `token`) |
+| `/dev/net/tun` | only with `desktop.tunDevice`: hostPath `/dev/net/tun`, type `CharDevice` |
 
 Env (plus `desktop.extraEnv`):
 
@@ -755,6 +756,7 @@ desktop:
   title: ""                       # text/template, see "Selkies settings"; the chart defaults it
   extraVolumes: []                # []corev1.Volume
   extraVolumeMounts: []           # []corev1.VolumeMount
+  tunDevice: false                # mount the node's /dev/net/tun
   securityContext: null           # replaces the default container securityContext
   shmSize: 1Gi
   runSizeLimit: 256Mi

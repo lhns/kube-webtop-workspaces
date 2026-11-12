@@ -27,6 +27,7 @@ const (
 	volRun        = "run"
 	volShm        = "shm"
 	volSA         = "webtop-sa"
+	volTun        = "tun"
 	portName      = "http"
 	agentPortName = "agent"
 )
@@ -163,6 +164,13 @@ func PodTemplate(cfg *config.Config, d *v1alpha1.Desktop) corev1.PodTemplateSpec
 				Path:              names.TokenFile,
 			}}},
 		}}},
+	}
+	// The runtime's default device rules allow tun (10:200); the pod needs no further privilege.
+	if dc.TunDevice {
+		mounts = append(mounts, corev1.VolumeMount{Name: volTun, MountPath: "/dev/net/tun"})
+		volumes = append(volumes, corev1.Volume{Name: volTun, VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{
+			Path: "/dev/net/tun", Type: ptr(corev1.HostPathCharDev),
+		}}})
 	}
 	volumes = append(volumes, dc.ExtraVolumes...)
 

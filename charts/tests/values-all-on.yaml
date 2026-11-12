@@ -6,6 +6,7 @@ desktop:
   extraEnv: [{name: FOO, value: bar}]
   extraVolumes: [{name: data, emptyDir: {}}]
   extraVolumeMounts: [{name: data, mountPath: /data}]
+  tunDevice: true
   nix:
     extraSubstituters: [http://cache.example.org/a, http://cache.example.org/b]
     extraTrustedPublicKeys: ["a:AAAA", "b:BBBB"]
