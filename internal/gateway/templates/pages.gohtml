@@ -137,7 +137,7 @@ main.wide{max-width:56rem}
   var f=document.getElementById("wake"),b=f.querySelector("button");
   f.addEventListener("submit",function(e){
     if(b.disabled){e.preventDefault();return}
-    setTimeout(function(){b.disabled=true;b.textContent="Waking…"},0);
+    setTimeout(function(){b.disabled=true;b.textContent="Wakingâ€¦"},0);
   });
   addEventListener("pageshow",function(e){if(e.persisted){b.disabled=false;b.textContent="Wake desktop"}});
 })();
