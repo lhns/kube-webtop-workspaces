@@ -106,6 +106,20 @@ desktop:
   # template data, never template text. Becomes SELKIES_UI_TITLE unless selkies sets it; "" keeps
   # Selkies' own title.
   title: "{{ .User }} – Desktop"
+  # Mount the node's /dev/net/tun (a CharDevice hostPath; the runtime's default device rules allow it,
+  # no privilege). Gives containers run inside the desktop (rootless Podman) their own networks; without
+  # it they share the desktop's network. On by default (the desktops ship rootless Podman/docker); set
+  # false on nodes without the tun module or under Pod Security baseline+ (hostPath is disallowed).
+  tunDevice: true
+  # Seccomp profile of the desktop container (null: RuntimeDefault). RuntimeDefault refuses pivot_root,
+  # which bubblewrap (buildFHSEnv apps, Flatpak) and containers in the desktop need. webtop-nix's
+  # seccomp/desktop.json is RuntimeDefault plus pivot_root (docs/cluster-requirements.md):
+  #   {securityProfilesOperator: true}: the chart renders it, from the pinned webtop-nix, as a
+  #     SeccompProfile of the Security Profiles Operator (needs its CRD), which installs it on every
+  #     node; the pod uses it.
+  #   {type: Localhost, localhostProfile: <path below the kubelet's seccomp dir>}: installed another way.
+  # A container whose Localhost profile is not on its node yet does not start (the kubelet retries).
+  seccompProfile: null
   securityContext: null       # when set, replaces the whole default container securityContext (default caps: SYS_ADMIN, SYS_NICE for NixOS's kwin_wayland wrapper)
   shmSize: 1Gi
   runSizeLimit: 256Mi

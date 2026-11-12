@@ -1,6 +1,17 @@
 {{- /* Rendered 1:1 into internal/config. Chart-only keys are stripped; the config parser rejects unknown fields. */ -}}
 {{- $_ := required "desktop.image is required" .Values.desktop.image }}
 {{- $desktop := set (omit (deepCopy .Values.desktop) "nix" "prePull" "softwareCenter" "maxAppScreens" "defaults" "timeZone" "locale") "serviceAccountName" (include "kwt.desktopServiceAccount" .) }}
+{{- /* seccompProfile.securityProfilesOperator is chart-only: the profile is rendered (seccompprofile.yaml) and the pod points at the operator's path. */}}
+{{- with .Values.desktop.seccompProfile }}
+{{- if .securityProfilesOperator }}
+{{- if or .type .localhostProfile }}{{ fail "desktop.seccompProfile: securityProfilesOperator sets type and localhostProfile itself" }}{{ end }}
+{{- $_ := set $desktop "seccompProfile" (dict "type" "Localhost" "localhostProfile" (printf "operator/%s.json" (include "kwt.seccompProfileName" $))) }}
+{{- else if (omit . "securityProfilesOperator") }}
+{{- $_ := set $desktop "seccompProfile" (omit . "securityProfilesOperator") }}
+{{- else }}
+{{- $_ := unset $desktop "seccompProfile" }}
+{{- end }}
+{{- end }}
 {{- $nixEnv := list }}
 {{- with .Values.desktop.nix.extraSubstituters }}{{ $nixEnv = append $nixEnv (dict "name" "WEBTOP_NIX_EXTRA_SUBSTITUTERS" "value" (join " " .)) }}{{ end }}
 {{- with .Values.desktop.nix.extraTrustedPublicKeys }}{{ $nixEnv = append $nixEnv (dict "name" "WEBTOP_NIX_EXTRA_TRUSTED_PUBLIC_KEYS" "value" (join " " .)) }}{{ end }}

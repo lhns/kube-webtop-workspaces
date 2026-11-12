@@ -4,6 +4,7 @@
 Needs helm and PyYAML. Run from anywhere: python3 charts/tests/check.py
 """
 import filecmp
+import json
 import pathlib
 import re
 import subprocess
@@ -153,6 +154,11 @@ for name, args in cases.items():
         # The user's own extras stay, the defaults are appended.
         if cfg["desktop"]["extraVolumes"][0] != {"name": "data", "emptyDir": {}} or cfg["desktop"]["extraVolumeMounts"][0]["name"] != "data":
             fail(f"{name}: desktop.defaults replaced extraVolumes/extraVolumeMounts instead of appending")
+    if cfg["desktop"].get("tunDevice") is not True:
+        fail(f"{name}: desktop.tunDevice did not reach the config")
+    want_seccomp = {"type": "Localhost", "localhostProfile": "webtop-desktop.json"} if name == "all-on" else None
+    if cfg["desktop"].get("seccompProfile") != want_seccomp:
+        fail(f"{name}: desktop.seccompProfile: {cfg['desktop'].get('seccompProfile')}")
     if name == "all-on" and {"name": "FOO", "value": "bar"} not in cfg["desktop"]["extraEnv"]:
         fail(f"{name}: desktop.nix replaced desktop.extraEnv instead of appending")
 
@@ -243,6 +249,23 @@ for name, args in cases.items():
                 fail(f"{name}: selector of {d['metadata']['name']} does not match its pod labels")
     print(f"ok: {name} ({len(docs)} objects)")
 
+# Seccomp profile through the Security Profiles Operator: the chart's copy of webtop-nix's profile, and the pod uses it.
+docs = render("--set", "desktop.image=x", "--set", "desktop.seccompProfile.securityProfilesOperator=true")
+sp = [d for d in docs if d["kind"] == "SeccompProfile"]
+want_spec = json.loads((CHART / "files/desktop-seccomp.json").read_text())
+if len(sp) != 1 or sp[0]["apiVersion"] != "security-profiles-operator.x-k8s.io/v1" or sp[0]["spec"] != want_spec \
+        or "namespace" in sp[0]["metadata"]:
+    fail(f"spo: SeccompProfile: {[d['metadata'] for d in sp]}")
+else:
+    cfg = yaml.safe_load(next(d for d in docs if d["kind"] == "ConfigMap")["data"]["config.yaml"])
+    want = {"type": "Localhost", "localhostProfile": f"operator/{sp[0]['metadata']['name']}.json"}
+    if cfg["desktop"].get("seccompProfile") != want:
+        fail(f"spo: desktop.seccompProfile {cfg['desktop'].get('seccompProfile')}, want {want}")
+    else:
+        print(f"ok: spo ({sp[0]['metadata']['name']})")
+if any(d["kind"] == "SeccompProfile" for d in render("--set", "desktop.image=x")):
+    fail("defaults: a SeccompProfile without securityProfilesOperator")
+
 # 3. Invalid values must be refused by the chart's own message, not by some other render error.
 def refuse(want, *args):
     bad = subprocess.run(["helm", "template", "r", str(CHART), "--kube-version", KUBE_VERSION, *args],
@@ -265,6 +288,8 @@ refuse("replaced by desktop.defaults", "--set", "desktop.image=x", "--set", "des
 refuse("plasma-localerc is not allowed", "--set", "desktop.image=x", "--set", "desktop.defaults.xdgConfig.plasma-localerc=x")
 refuse("not a plain file name", "--set", "desktop.image=x", "--set-json", 'desktop.defaults.xdgConfig={"a b":"x"}')
 refuse("LC_TIME", "--set", "desktop.image=x", "--set", "desktop.defaults.formats.LC_ALL=sv_SE.UTF-8")
+refuse("securityProfilesOperator sets type and localhostProfile itself", "--set", "desktop.image=x",
+       "--set", "desktop.seccompProfile.securityProfilesOperator=true", "--set", "desktop.seccompProfile.type=Localhost")
 print("ok: invalid values refused")
 
 sys.exit(1 if errors else 0)

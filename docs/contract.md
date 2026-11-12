@@ -219,7 +219,7 @@ Rendered from the `desktop` and `storage` config sections. Fixed parts:
   `runtimeClassName`, `terminationGracePeriodSeconds` (default 420; must exceed the setup unit's 5 min stop timeout plus the power hook
   timeout plus the session save).
 - Container `desktop`: `runAsUser: 0`, `runAsNonRoot: false`, capabilities add `SYS_ADMIN` and `SYS_NICE`,
-  `procMount: Unmasked`, `seccompProfile: RuntimeDefault`, `appArmorProfile: Unconfined`
+  `procMount: Unmasked`, `seccompProfile: RuntimeDefault` (or `desktop.seccompProfile`), `appArmorProfile: Unconfined`
   (`desktop.securityContext` replaces the whole container securityContext when set).
 - Readiness probe: TCP on `desktop.port`.
 - Ports: `http` = `desktop.port` (web client) and `agent` = 8081 (the in-pod agent's API for the
@@ -232,6 +232,7 @@ Rendered from the `desktop` and `storage` config sections. Fixed parts:
 | `/run` | emptyDir `Memory`, `desktop.runSizeLimit` (default 256Mi) |
 | `/dev/shm` | emptyDir `Memory`, `desktop.shmSize` (default 1Gi) |
 | `/run/webtop/sa` | projected `serviceAccountToken` (audience `powerApi.audience`, 3600 s, path `token`) |
+| `/dev/net/tun` | only with `desktop.tunDevice`: hostPath `/dev/net/tun`, type `CharDevice` |
 
 Env (plus `desktop.extraEnv`):
 
@@ -755,6 +756,8 @@ desktop:
   title: ""                       # text/template, see "Selkies settings"; the chart defaults it
   extraVolumes: []                # []corev1.Volume
   extraVolumeMounts: []           # []corev1.VolumeMount
+  tunDevice: false                # mount the node's /dev/net/tun
+  seccompProfile: null            # corev1.SeccompProfile of the default securityContext; null: RuntimeDefault
   securityContext: null           # replaces the default container securityContext
   shmSize: 1Gi
   runSizeLimit: 256Mi

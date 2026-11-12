@@ -141,6 +141,49 @@ func TestPodTemplate(t *testing.T) {
 	}
 }
 
+func TestTunDevice(t *testing.T) {
+	cfg, d := testConfig(t), testDesktop()
+	off := PodTemplate(cfg, d)
+	cfg.Desktop.TunDevice = true
+	on := PodTemplate(cfg, d)
+	var vol *corev1.Volume
+	for i := range on.Spec.Volumes {
+		if on.Spec.Volumes[i].Name == volTun {
+			vol = &on.Spec.Volumes[i]
+		}
+	}
+	if vol == nil || vol.HostPath == nil || vol.HostPath.Path != "/dev/net/tun" || *vol.HostPath.Type != corev1.HostPathCharDev {
+		t.Fatalf("tun volume: %+v", vol)
+	}
+	m := on.Spec.Containers[0].VolumeMounts
+	if last := m[len(m)-1]; last.Name != volTun || last.MountPath != "/dev/net/tun" {
+		t.Fatalf("tun mount: %+v", last)
+	}
+	if len(off.Spec.Volumes) != len(on.Spec.Volumes)-1 || TemplateHash(off) == TemplateHash(on) {
+		t.Fatal("tunDevice off must add nothing and on must change the template")
+	}
+	if on.Spec.Containers[0].SecurityContext.Privileged != nil {
+		t.Fatal("tunDevice must not make the pod privileged")
+	}
+}
+
+func TestSeccompProfile(t *testing.T) {
+	cfg, d := testConfig(t), testDesktop()
+	def := PodTemplate(cfg, d)
+	if sp := def.Spec.Containers[0].SecurityContext.SeccompProfile; sp.Type != corev1.SeccompProfileTypeRuntimeDefault {
+		t.Fatalf("default seccomp: %+v", sp)
+	}
+	cfg.Desktop.SeccompProfile = &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}
+	if TemplateHash(PodTemplate(cfg, d)) != TemplateHash(def) {
+		t.Fatal("an explicit RuntimeDefault must keep the template hash")
+	}
+	cfg.Desktop.SeccompProfile = &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeLocalhost, LocalhostProfile: ptr("webtop-desktop.json")}
+	sc := PodTemplate(cfg, d).Spec.Containers[0].SecurityContext
+	if sc.SeccompProfile.Type != corev1.SeccompProfileTypeLocalhost || *sc.SeccompProfile.LocalhostProfile != "webtop-desktop.json" || sc.Capabilities == nil {
+		t.Fatalf("Localhost seccomp: %+v", sc)
+	}
+}
+
 func TestDeployment(t *testing.T) {
 	cfg, d := testConfig(t), testDesktop()
 	dep := Deployment(cfg, d, 1)

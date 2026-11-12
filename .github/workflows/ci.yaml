@@ -144,6 +144,18 @@ jobs:
         run: |
           jq -e '.nodes.root.inputs.nixpkgs == ["webtop-nix", "nixpkgs"]' flake.lock \
             || { echo "::error::inputs.nixpkgs must be follows = \"webtop-nix/nixpkgs\""; exit 1; }
+      # The chart's SeccompProfile must be the profile of the webtop-nix the image is built from.
+      - name: chart seccomp profile is the pinned webtop-nix's
+        run: |
+          rev=$(jq -r '.nodes["webtop-nix"].locked.rev' flake.lock)
+          f=charts/kube-webtop-workspaces/files/desktop-seccomp.json
+          code=$(curl -sS -o /tmp/profile.json -w '%{http_code}' "https://raw.githubusercontent.com/lhns/webtop-nix/$rev/seccomp/desktop.json")
+          if [ "$code" = 404 ]; then
+            echo "::warning::webtop-nix $rev has no seccomp/desktop.json yet; $f is not checked"
+          else
+            [ "$code" = 200 ] || { echo "::error::fetching the profile: HTTP $code"; exit 1; }
+            cmp /tmp/profile.json "$f" || { echo "::error::$f differs from webtop-nix $rev: copy seccomp/desktop.json"; exit 1; }
+          fi
 
   integration:
     runs-on: ubuntu-latest

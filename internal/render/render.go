@@ -27,6 +27,7 @@ const (
 	volRun        = "run"
 	volShm        = "shm"
 	volSA         = "webtop-sa"
+	volTun        = "tun"
 	portName      = "http"
 	agentPortName = "agent"
 )
@@ -100,14 +101,17 @@ func Service(cfg *config.Config, d *v1alpha1.Desktop) *corev1.Service {
 	}
 }
 
-func defaultSecurityContext() *corev1.SecurityContext {
+func defaultSecurityContext(seccomp *corev1.SeccompProfile) *corev1.SecurityContext {
+	if seccomp == nil {
+		seccomp = &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}
+	}
 	return &corev1.SecurityContext{
 		RunAsUser:    ptr(int64(0)),
 		RunAsNonRoot: ptr(false),
 		// SYS_NICE: NixOS's kwin_wayland capability wrapper cannot exec without it.
 		Capabilities:    &corev1.Capabilities{Add: []corev1.Capability{"SYS_ADMIN", "SYS_NICE"}},
 		ProcMount:       ptr(corev1.UnmaskedProcMount),
-		SeccompProfile:  &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+		SeccompProfile:  seccomp.DeepCopy(),
 		AppArmorProfile: &corev1.AppArmorProfile{Type: corev1.AppArmorProfileTypeUnconfined},
 	}
 }
@@ -117,7 +121,7 @@ func PodTemplate(cfg *config.Config, d *v1alpha1.Desktop) corev1.PodTemplateSpec
 	dc := cfg.Desktop
 	sc := dc.SecurityContext
 	if sc == nil {
-		sc = defaultSecurityContext()
+		sc = defaultSecurityContext(dc.SeccompProfile)
 	} else {
 		sc = sc.DeepCopy()
 	}
@@ -163,6 +167,13 @@ func PodTemplate(cfg *config.Config, d *v1alpha1.Desktop) corev1.PodTemplateSpec
 				Path:              names.TokenFile,
 			}}},
 		}}},
+	}
+	// The runtime's default device rules allow tun (10:200); the pod needs no further privilege.
+	if dc.TunDevice {
+		mounts = append(mounts, corev1.VolumeMount{Name: volTun, MountPath: "/dev/net/tun"})
+		volumes = append(volumes, corev1.Volume{Name: volTun, VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{
+			Path: "/dev/net/tun", Type: ptr(corev1.HostPathCharDev),
+		}}})
 	}
 	volumes = append(volumes, dc.ExtraVolumes...)
 

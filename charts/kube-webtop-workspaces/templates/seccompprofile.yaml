@@ -1,0 +1,11 @@
+{{- /* webtop-nix's seccomp/desktop.json at the pinned webtop-nix revision (files/, checked in CI), installed on every node by the Security Profiles Operator. */ -}}
+{{- if (.Values.desktop.seccompProfile | default dict).securityProfilesOperator }}
+apiVersion: security-profiles-operator.x-k8s.io/v1
+kind: SeccompProfile
+metadata:
+  name: {{ include "kwt.seccompProfileName" . }}
+  labels:
+    {{- include "kwt.labels" . | nindent 4 }}
+spec:
+  {{- .Files.Get "files/desktop-seccomp.json" | fromJson | toYaml | nindent 2 }}
+{{- end }}

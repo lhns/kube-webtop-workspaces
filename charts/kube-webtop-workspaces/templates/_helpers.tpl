@@ -91,3 +91,8 @@ place its keys in webtop-nix's defaults directory (session.conf, xdg/<file>, hom
 {{- end -}}
 {{- dict "data" $data "items" $items | toJson -}}
 {{- end }}
+
+{{/* Cluster-scoped SeccompProfile of the desktops; the operator installs it as operator/<name>.json. */}}
+{{- define "kwt.seccompProfileName" -}}
+{{- printf "%s-%s-desktop" .Release.Namespace (include "kwt.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end }}
