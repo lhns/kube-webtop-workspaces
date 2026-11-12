@@ -341,8 +341,10 @@ type reportRequest struct {
 	LoggedOutAt *string `json:"loggedOutAt"`
 	LogoutPref  *bool   `json:"logoutPref"`
 	// LockedAt is when Lock was used (RFC 3339); LockPref is the user's own onLock choice.
-	LockedAt        *string `json:"lockedAt"`
-	LockPref        *bool   `json:"lockPref"`
+	LockedAt *string `json:"lockedAt"`
+	LockPref *bool   `json:"lockPref"`
+	// Notices asks for the answer to carry what the agent shows the user (200, not 204).
+	Notices         bool `json:"notices"`
 	SoftwareRestore *struct {
 		Active bool  `json:"active"`
 		Done   int32 `json:"done"`
@@ -486,7 +488,18 @@ func (s *Server) report(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.loginNameEvent(d, prevLogin)
+	if req.Notices {
+		sw.Header().Set("Content-Type", "application/json")
+		sw.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(sw).Encode(reportReply{UpdatePending: d.Status.UpdatePending})
+		return
+	}
 	sw.WriteHeader(http.StatusNoContent)
+}
+
+// reportReply is the answer to a report that sent notices: true (docs/contract.md, section 8.3).
+type reportReply struct {
+	UpdatePending bool `json:"updatePending"`
 }
 
 // loginNameEvent records a change of the desktop user's login name, e.g. an image update that adds

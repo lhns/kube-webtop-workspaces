@@ -26,6 +26,7 @@ import (
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/identity"
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/idle"
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/logout"
+	"github.com/lhns/kube-webtop-workspaces/agent/internal/notices"
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/powerhook"
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/restore"
 	"github.com/lhns/kube-webtop-workspaces/agent/internal/state"
@@ -163,6 +164,7 @@ func run(cfg config.Config) {
 	// What the account is (passwd, after the rename at activation), not what webtop-init asked for.
 	client.LoginName, client.HomePaths = du.Name, identity.HomePaths(cfg.HomePaths, du.Name)
 	client.LoginError = identity.Error(cfg.StateDir)
+	client.OnUpdatePending = notices.UpdatePendingFollower(filepath.Join(cfg.StateDir, notices.Subdir))
 	socket := du.WaylandSocket
 	if cfg.WaylandSocket != "" {
 		socket = func(context.Context) (string, error) { return cfg.WaylandSocket, nil }

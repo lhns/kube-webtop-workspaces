@@ -132,6 +132,11 @@ reports `asleep: true` at the freeze and `false` at the thaw, the steady reports
 Sleep that powers off (`WEBTOP_SUSPEND_MODE=poweroff` in the pod environment, or a failed freeze) leaves `/run/webtop/stop-reason` = `suspend`,
 which the power hook reports as reason `suspend`.
 
+**Notices.** The agent keeps `/run/webtop/notices/update-pending.json` in step with the Desktop's `status.updatePending`
+(the answer to its 30 s report carries it, contract section 8.3), and webtop-nix shows the file as a notification with a Restart button
+([README, "Notices"](https://github.com/lhns/webtop-nix#notices), its ADR 0017; [ADR 0021](docs/adr/0021-update-pending-is-a-notice-file-in-webtop-nixs-channel.md)).
+Restart is Plasma's own, so it ends in `reboot.target` and the `reboot` report above, which applies the pending template. This is the only notice sent from here.
+
 **Boot progress and activity.** `webtop-agent run` reports the stage and progress from systemd's
 boot progress, the user's `plasma-workspace.target` and Selkies' port, then `ready`. Afterwards it
 reports `connectedClients` (Selkies `GET /api/sessions`), `idleSeconds` and `asleep` every 30 s and when the
