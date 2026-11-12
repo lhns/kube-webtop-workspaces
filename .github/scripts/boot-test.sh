@@ -29,7 +29,7 @@ mkdir "$dir/persist"
 # zone and locale that tzl_check expects, and LC_TIME for ISO dates.
 mkdir -p "$dir/defaults/xdg"
 printf 'timeZone=Asia/Tokyo\nlocale=de_DE.UTF-8\nLC_TIME=sv_SE.UTF-8\n' > "$dir/defaults/session.conf"
-printf '[General]\nColorScheme=BreezeDark\n' > "$dir/defaults/xdg/kdeglobals"
+printf '[KDE]\nLookAndFeelPackage=org.kde.breezedark.desktop\n' > "$dir/defaults/xdg/kdeglobals"
 chmod -R a+rX "$dir/defaults"
 # A volume from before the login names, its home-paths already edited: /home/user is kept, the rest
 # must be ignored (ADR 0011). Owned by uid 1000 like a real home.
@@ -258,7 +258,7 @@ tzl_check() { # <zone> <locale> <abbreviation> <LC_TIME>
   docker exec desktop-boot localectl status | grep -qF "LANG=$2" || fail "localectl does not report $2"
   docker exec desktop-boot grep -qx "LC_TIME=$4" /etc/locale.conf || fail "/etc/locale.conf has no LC_TIME=$4: $(docker exec desktop-boot cat /etc/locale.conf)"
   docker exec desktop-boot grep -qx "LC_TIME=$4" /run/webtop/xdg-session/plasma-localerc || fail "plasma-localerc has no LC_TIME=$4"
-  docker exec desktop-boot grep -q 'ColorScheme=BreezeDark' /run/webtop/defaults/xdg/kdeglobals || fail "the snapshot has no xdg/kdeglobals"
+  docker exec desktop-boot grep -q 'LookAndFeelPackage=org.kde.breezedark.desktop' /run/webtop/defaults/xdg/kdeglobals || fail "the snapshot has no xdg/kdeglobals"
   # Past the wrapper (which loads /etc/locale.conf), then startplasma's own environment.
   for _ in $(seq 1 60); do
     docker exec desktop-boot sh -c 'grep -aq startplasma /proc/$(systemctl show -P MainPID webtop-session)/cmdline' && break

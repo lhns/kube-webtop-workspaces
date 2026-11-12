@@ -134,7 +134,7 @@ for name, args in cases.items():
     else:
         want_data = {
             "session.conf": "timeZone=Europe/Berlin\nlocale=de_DE.UTF-8\nlanguage=de:en\nLC_TIME=sv_SE.UTF-8\n",
-            "xdg-kdeglobals": "[General]\nColorScheme=BreezeDark\n",
+            "xdg-kdeglobals": "[KDE]\nLookAndFeelPackage=org.kde.breezedark.desktop\n",
             "xdg-kwinrc": "[Windows]\nFocusPolicy=ClickToFocus\n",
             "home.nix": "{ lib, ... }: { programs.git.enable = lib.mkDefault true; }",
         }
