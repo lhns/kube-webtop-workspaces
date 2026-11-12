@@ -57,29 +57,27 @@ type PowerAPI struct {
 }
 
 type Desktop struct {
-	Image              string                        `json:"image"`
-	ImagePullPolicy    corev1.PullPolicy             `json:"imagePullPolicy"`
-	ImagePullSecrets   []corev1.LocalObjectReference `json:"imagePullSecrets"`
-	Port               int32                         `json:"port"`
-	ServiceAccountName string                        `json:"serviceAccountName"`
-	RuntimeClassName   string                        `json:"runtimeClassName"`
-	PriorityClassName  string                        `json:"priorityClassName"`
-	HostUsers          *bool                         `json:"hostUsers"`
-	Resources          corev1.ResourceRequirements   `json:"resources"`
-	NodeSelector       map[string]string             `json:"nodeSelector"`
-	Tolerations        []corev1.Toleration           `json:"tolerations"`
-	Affinity           *corev1.Affinity              `json:"affinity"`
-	PodLabels          map[string]string             `json:"podLabels"`
-	PodAnnotations     map[string]string             `json:"podAnnotations"`
-	ExtraEnv           []corev1.EnvVar               `json:"extraEnv"`
-	ExtraVolumes       []corev1.Volume               `json:"extraVolumes"`
-	ExtraVolumeMounts  []corev1.VolumeMount          `json:"extraVolumeMounts"`
-	SecurityContext    *corev1.SecurityContext       `json:"securityContext"`
-	// TunDevice mounts the node's /dev/net/tun: rootless container networking (pasta) in the desktop.
-	TunDevice                     bool              `json:"tunDevice"`
-	ShmSize                       resource.Quantity `json:"shmSize"`
-	RunSizeLimit                  resource.Quantity `json:"runSizeLimit"`
-	TerminationGracePeriodSeconds *int64            `json:"terminationGracePeriodSeconds"`
+	Image                         string                        `json:"image"`
+	ImagePullPolicy               corev1.PullPolicy             `json:"imagePullPolicy"`
+	ImagePullSecrets              []corev1.LocalObjectReference `json:"imagePullSecrets"`
+	Port                          int32                         `json:"port"`
+	ServiceAccountName            string                        `json:"serviceAccountName"`
+	RuntimeClassName              string                        `json:"runtimeClassName"`
+	PriorityClassName             string                        `json:"priorityClassName"`
+	HostUsers                     *bool                         `json:"hostUsers"`
+	Resources                     corev1.ResourceRequirements   `json:"resources"`
+	NodeSelector                  map[string]string             `json:"nodeSelector"`
+	Tolerations                   []corev1.Toleration           `json:"tolerations"`
+	Affinity                      *corev1.Affinity              `json:"affinity"`
+	PodLabels                     map[string]string             `json:"podLabels"`
+	PodAnnotations                map[string]string             `json:"podAnnotations"`
+	ExtraEnv                      []corev1.EnvVar               `json:"extraEnv"`
+	ExtraVolumes                  []corev1.Volume               `json:"extraVolumes"`
+	ExtraVolumeMounts             []corev1.VolumeMount          `json:"extraVolumeMounts"`
+	SecurityContext               *corev1.SecurityContext       `json:"securityContext"`
+	ShmSize                       resource.Quantity             `json:"shmSize"`
+	RunSizeLimit                  resource.Quantity             `json:"runSizeLimit"`
+	TerminationGracePeriodSeconds *int64                        `json:"terminationGracePeriodSeconds"`
 	// Selkies is SELKIES_* settings for every desktop (docs/contract.md, "Selkies settings").
 	Selkies map[string]string `json:"selkies"`
 	// Title is a text/template for the browser tab title; see TitleData. Empty: Selkies' own.
@@ -87,6 +85,8 @@ type Desktop struct {
 	// StopAfterUnseen stops a desktop whose owner the gateway has not served for this long.
 	// 0 (the default) never stops one; otherwise at least MinStopAfterUnseen.
 	StopAfterUnseen metav1.Duration `json:"stopAfterUnseen"`
+	// TunDevice mounts the node's /dev/net/tun: rootless container networking (pasta) in the desktop.
+	TunDevice bool `json:"tunDevice"`
 }
 
 // MinStopAfterUnseen keeps a login or gateway outage from reading as absent users.
