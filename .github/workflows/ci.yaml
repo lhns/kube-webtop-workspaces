@@ -434,7 +434,7 @@ jobs:
         if: always()
         run: docker rm -f desktop-boot || true
       # The builder (<tag>-builder) rebuilds this very system from its shipped source: webtop-nix's
-      # image/system/Dockerfile with `{ }` gives the image back unchanged (webtop-nix ADR 0017).
+      # image/system/Dockerfile with `{ }` gives the image back unchanged (webtop-nix ADR 0020).
       - name: builder rebuilds the image's system
         if: matrix.arch == 'amd64'
         timeout-minutes: 30
