@@ -5,7 +5,7 @@
     # webtop-nix's nixpkgs: one Qt tree with its grafted KWin (webtop-nix README, "KWin without a GPU"), and its image
     # builder's skopeo, so a layer compresses to the same blob as in the last build.
     nixpkgs.follows = "webtop-nix/nixpkgs";
-    webtop-nix.url = "github:lhns/webtop-nix/1060e38d035f4dd314af4ad27a66d1068afd23d7";
+    webtop-nix.url = "github:lhns/webtop-nix/96b2ed5f3b1711b91c49da0fc2346ee568931ca5";
   };
 
   outputs = { self, nixpkgs, webtop-nix, ... }:
