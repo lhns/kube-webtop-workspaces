@@ -261,6 +261,7 @@ spec:
                     - exit
                     - admin
                     - unseen
+                    - error
                     type: string
                   time:
                     format: date-time

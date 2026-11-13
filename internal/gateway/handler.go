@@ -30,10 +30,15 @@ const (
 	reservedPrefix = "/.webtop"
 	wakePath       = reservedPrefix + "/wake"
 	logoutPath     = reservedPrefix + "/logout"
+	restartPath    = reservedPrefix + "/restart"
+	stopPath       = reservedPrefix + "/stop"
 	pingInterval   = 15 * time.Second
 	// wakeCookie marks "the user clicked Wake" for a minute; it is path-scoped to the desktop.
 	wakeCookie       = "webtop_wake"
 	wakeCookieMaxAge = 60
+	// restartGrace is how long after a Restart the boot page stands in for the error page: the
+	// status still shows the old pod's error until the controller has rolled it out.
+	restartGrace = 30 * time.Second
 )
 
 // Options configure a Handler.
@@ -291,6 +296,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			h.serveFocus(w, r, d)
+		case restartPath, stopPath:
+			if r.Method != http.MethodPost {
+				h.methodNotAllowed(w, http.MethodPost)
+				return
+			}
+			h.serveRecover(w, r, rt, d, cleaned == restartPath)
 		case wakePath:
 			if r.Method != http.MethodPost {
 				h.methodNotAllowed(w, http.MethodPost)
@@ -538,15 +549,93 @@ func (h *Handler) notRunning(w http.ResponseWriter, r *http.Request, rt *route, 
 		}
 		h.m.Starts.WithLabelValues(triggerNavigate).Inc()
 	}
+	if d.Status.Phase == v1alpha1.PhaseError && !h.restarting(d) {
+		h.failedPage(w, rt, d)
+		return
+	}
 	h.bootPage(w, rt, d)
+}
+
+// restarting is true shortly after the owner pressed Restart on the error page.
+func (h *Handler) restarting(d *v1alpha1.Desktop) bool {
+	t := d.Spec.RestartRequestedAt
+	return t != nil && h.now().Sub(t.Time) < restartGrace
 }
 
 func (h *Handler) bootPage(w http.ResponseWriter, rt *route, d *v1alpha1.Desktop) {
 	h.count(outBoot)
 	writePage(w, http.StatusOK, "boot", pageData{
 		Title: "Starting your desktop", Stage: stageText(d.Status.Stage), Progress: d.Status.BootProgress, Restore: restoring(d),
-		Message: d.Status.Message, EventsURL: rt.base + reservedPrefix + "/events",
+		Message: bootMessage(d), EventsURL: rt.base + reservedPrefix + "/events",
 	})
+}
+
+// failedPage is the page for phase Error: the reason in plain words and the recovery buttons.
+// Nothing the cluster reports (message, pod or node names) reaches it.
+func (h *Handler) failedPage(w http.ResponseWriter, rt *route, d *v1alpha1.Desktop) {
+	token, err := newCSRFToken()
+	if err != nil {
+		h.errorPage(w, http.StatusInternalServerError, "Error", "Could not create the page.", outError)
+		return
+	}
+	setCSRFCookie(w, token, h.secure)
+	h.count(outFailed)
+	writePage(w, http.StatusOK, "failed", pageData{
+		Title: "Your desktop couldn't start", Reason: failureWording(d.Status.Stage), CSRF: token,
+		CanRecover: recoverable(d), RestartURL: rt.base + restartPath, StopURL: rt.base + stopPath,
+		EventsURL: rt.base + reservedPrefix + "/events",
+	})
+}
+
+// recoverable is true when Restart or Stop can help: a failed pod start. An invalid name or a
+// foreign volume (stage Error) needs an administrator.
+func recoverable(d *v1alpha1.Desktop) bool {
+	return d.Status.Phase == v1alpha1.PhaseError && d.Status.Stage != stageErrorSetup
+}
+
+// serveRecover handles Restart and Stop from the error page. A restart request makes the
+// controller write the current template and roll the pod out, which also applies a pending
+// update (docs/contract.md, 3.2). Outside a recoverable error it does nothing, so a stale
+// page cannot reboot a working desktop.
+func (h *Handler) serveRecover(w http.ResponseWriter, r *http.Request, rt *route, d *v1alpha1.Desktop, restart bool) {
+	if d == nil {
+		h.errorPage(w, http.StatusNotFound, "Not found", "This desktop does not exist.", outNotFound)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
+	if err := r.ParseForm(); err != nil || !checkCSRF(r) {
+		h.errorPage(w, http.StatusForbidden, "Forbidden", "The request could not be verified. Reload the page and try again.", outDenied)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	if !recoverable(d) || d.Spec.PowerState != v1alpha1.PowerOn {
+		http.Redirect(w, r, rt.base+"/", http.StatusSeeOther)
+		return
+	}
+	if restart {
+		if err := h.store.Restart(r.Context(), d, h.now()); err != nil {
+			h.log.Error(err, "restarting Desktop", "desktop", d.Name)
+			w.Header().Set("Retry-After", "5")
+			h.errorPage(w, http.StatusServiceUnavailable, "Unavailable", "Your desktop could not be restarted. Try again in a moment.", outError)
+			return
+		}
+		h.m.Starts.WithLabelValues(triggerRestart).Inc()
+		h.count(outRestart)
+		http.Redirect(w, r, rt.base+"/", http.StatusSeeOther)
+		return
+	}
+	if err := h.store.PowerOff(r.Context(), d); err != nil {
+		h.log.Error(err, "stopping Desktop", "desktop", d.Name)
+		w.Header().Set("Retry-After", "5")
+		h.errorPage(w, http.StatusServiceUnavailable, "Unavailable", "Your desktop could not be stopped. Try again in a moment.", outError)
+		return
+	}
+	h.count(outStop)
+	// The controller records the stop a moment later; a redirect to "/" could meet the old
+	// state and start the desktop again, so show the off page now.
+	off := d.DeepCopy()
+	off.Status.LastStop = &v1alpha1.LastStop{Time: metav1.NewMicroTime(h.now()), Reason: v1alpha1.StopError}
+	h.offPage(w, rt, off, "")
 }
 
 func (h *Handler) offPage(w http.ResponseWriter, rt *route, d *v1alpha1.Desktop, app string) {

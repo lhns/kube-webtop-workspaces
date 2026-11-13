@@ -45,7 +45,7 @@ func metricStage(stage string) string {
 }
 
 // waitingErrors are container waiting reasons that make the desktop phase Error.
-var waitingErrors = []string{"ErrImagePull", "ImagePullBackOff", "CrashLoopBackOff", "CreateContainerConfigError"}
+var waitingErrors = []string{"ErrImagePull", "ImagePullBackOff", "InvalidImageName", "CrashLoopBackOff", "CreateContainerConfigError", "CreateContainerError", "RunContainerError"}
 
 // statusInput is everything computeStatus needs; it reads no client.
 type statusInput struct {

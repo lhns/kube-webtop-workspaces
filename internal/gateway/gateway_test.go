@@ -354,8 +354,8 @@ func TestStateTable(t *testing.T) {
 		{name: "nav, on and starting: boot", obj: desktop("alice", "alice", powered(v1alpha1.PowerOn), phase(v1alpha1.PhaseStarting),
 			func(d *v1alpha1.Desktop) { d.Status.Stage = "Booting"; d.Status.BootProgress = 40 }),
 			hdr: navHeaders, wantCode: 200, wantBody: "Booting", wantOn: true, wantNoStore: true, wantOutcome: outBoot},
-		{name: "nav, on and error: boot", obj: desktop("alice", "alice", powered(v1alpha1.PowerOn), phase(v1alpha1.PhaseError)),
-			hdr: navHeaders, wantCode: 200, wantBody: "Starting your desktop", wantOn: true, wantOutcome: outBoot},
+		{name: "nav, on and error: error page", obj: desktop("alice", "alice", powered(v1alpha1.PowerOn), phase(v1alpha1.PhaseError)),
+			hdr: navHeaders, wantCode: 200, wantBody: "Your desktop couldn&#39;t start", wantOn: true, wantCookie: true, wantNoStore: true, wantOutcome: outFailed},
 		{name: "xhr, on and starting: 503", obj: desktop("alice", "alice", powered(v1alpha1.PowerOn), phase(v1alpha1.PhaseStarting)),
 			hdr: xhr, wantCode: 503, wantRetry: true, wantOn: true, wantOutcome: outUnavailable},
 	}

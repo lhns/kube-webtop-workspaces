@@ -49,7 +49,7 @@ func eventOf(d *v1alpha1.Desktop, now time.Time, logout bool) statusEvent {
 	}
 	ev := statusEvent{
 		Phase: string(d.Status.Phase), Stage: stageText(d.Status.Stage), BootProgress: d.Status.BootProgress,
-		Message: d.Status.Message, PodUID: d.Status.PodUID,
+		Message: bootMessage(d), PodUID: d.Status.PodUID,
 		Asleep: d.Status.Asleep, SoftwareRestore: restoring(d),
 	}
 	if t := d.Status.LastLogout; logout && t != nil {
@@ -165,5 +165,17 @@ func stageText(stage string) string {
 	case v1alpha1.StageStoppingPrevious:
 		return "Waiting for the previous session to stop"
 	}
+	if failureStage(stage) {
+		return "Restarting" // a boot page only meets an Error right after Restart
+	}
 	return stage
+}
+
+// bootMessage is the status message the boot page may show: the kubelet's text for an Error
+// can name nodes, registries and paths, so it is not passed on.
+func bootMessage(d *v1alpha1.Desktop) string {
+	if d.Status.Phase == v1alpha1.PhaseError {
+		return ""
+	}
+	return d.Status.Message
 }

@@ -28,7 +28,7 @@ const (
 )
 
 // StopReason says why a desktop stopped. See docs/contract.md, "Stop reasons".
-// +kubebuilder:validation:Enum=user;idle;suspend;kube-stop;exit;admin;unseen
+// +kubebuilder:validation:Enum=user;idle;suspend;kube-stop;exit;admin;unseen;error
 type StopReason string
 
 const (
@@ -39,6 +39,7 @@ const (
 	StopExit     StopReason = "exit"
 	StopAdmin    StopReason = "admin"
 	StopUnseen   StopReason = "unseen"
+	StopError    StopReason = "error"
 )
 
 // Stage ids the gateway also reads (docs/contract.md, section 3.4).

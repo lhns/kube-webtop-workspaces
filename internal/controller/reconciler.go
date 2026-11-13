@@ -227,7 +227,11 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 
 	// 6. Stop recording: someone else set Off while the desktop ran.
 	if cur > 0 && want == 0 && !lifecycle.StopRecorded(d) {
-		if err := lifecycle.Stop(ctx, r.Client, d, v1alpha1.StopAdmin, r.now()); err != nil {
+		reason := v1alpha1.StopAdmin
+		if d.Status.Phase == v1alpha1.PhaseError {
+			reason = v1alpha1.StopError // the gateway's error page, or an admin giving up on a broken start
+		}
+		if err := lifecycle.Stop(ctx, r.Client, d, reason, r.now()); err != nil {
 			return reconcile.Result{}, err
 		}
 		*base = *d.DeepCopy()

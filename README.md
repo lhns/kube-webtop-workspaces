@@ -10,7 +10,7 @@ One Go binary (`cmd/kube-webtop-workspaces`), run as two Deployments:
 
 - **gateway** (`--mode=gateway`): sits behind a forward-auth proxy that sets the user and groups
   headers. It reverse-proxies each user to their own desktop (HTTP and websockets), starts it on a
-  top-level navigation, and serves the boot screen, the "desktop is off" page and, after Sleep, a "desktop is asleep" page with a Wake button. Admins can open any
+  top-level navigation, and serves the boot screen, the "desktop is off" page, after Sleep a "desktop is asleep" page with a Wake button, and when the pod cannot start (image pull, crash loop, bad container config) a "couldn't start" page with Restart and Stop buttons. Admins can open any
   desktop at `/u/<user>/`.
 - **single apps**: `/apps/<name>` (or `/u/<user>/apps/<name>` for admins) streams one application
   of the desktop instead of the whole desktop, where `<name>` is a desktop file id such as
@@ -115,6 +115,11 @@ since existing homes' `templates.sha256` are keyed by it.
 | Shut down in Plasma, `systemctl poweroff` | `poweroff.target` | `stop`/`user`, or `stop`/`idle` (heuristic below) |
 | Restart | `reboot.target` | `reboot` |
 | Sleep | `suspend.target` | no stop: the session is frozen, the pod keeps running (below); only the fallback is marker + poweroff, then `suspend`/`suspend` |
+
+When the pod never starts (phase `Error`) there is no desktop to leave from, so the gateway's error page offers the same two actions
+without the agent: **Restart desktop** sets `spec.restartRequestedAt` (the controller writes the current template and rolls the pod out,
+which also applies a pending update), **Stop desktop** sets `powerState: Off` (recorded as stop reason `error`, then the off page's Start
+works). The page names the cause in plain words and shows nothing the cluster reports; an invalid name or foreign volume has no buttons.
 
 `webtop-power-hook.service` (a boot-time `RemainAfterExit` unit whose `ExecStop` runs at shutdown,
 while the token, `resolv.conf` and `hosts` mounts still exist; it reads the target from the queued
