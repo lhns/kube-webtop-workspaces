@@ -1,0 +1,73 @@
+{{- $d := .Values.desktop }}
+{{- if and $d.tunDevice $d.tunDevicePlugin.enabled }}
+{{- $p := $d.tunDevicePlugin }}
+{{- $res := splitList "/" $d.tunResource }}
+{{- /* Serves desktop.tunResource: one /dev/net/tun shared by up to count pods per node (docs/adr/0023). */}}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "kwt.fullname" . }}-tun-device-plugin
+  labels:
+    {{- include "kwt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: tun-device-plugin
+spec:
+  selector:
+    matchLabels:
+      {{- include "kwt.selector" (dict "ctx" . "component" "tun-device-plugin") | nindent 6 }}
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        {{- include "kwt.labels" . | nindent 8 }}
+        app.kubernetes.io/component: tun-device-plugin
+    spec:
+      automountServiceAccountToken: false
+      {{- with $p.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- with $d.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $d.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $d.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: plugin
+          image: {{ $p.image | quote }}
+          args:
+            - --domain={{ index $res 0 }}
+            - --device
+            - {{ dict "name" (index $res 1) "groups" (list (dict "count" (int $p.count) "paths" (list (dict "path" "/dev/net/tun" "permissions" "rw")))) | toJson | quote }}
+          ports:
+            - {name: metrics, containerPort: 8080}
+          readinessProbe:
+            httpGet: {path: /health, port: metrics}
+          {{- with $p.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          # Listing the host's device nodes and writing a socket to the kubelet need no privilege.
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - {name: device-plugins, mountPath: /var/lib/kubelet/device-plugins}
+            - {name: dev, mountPath: /dev, readOnly: true}
+      volumes:
+        # Directory: a wrong path fails the pod instead of creating a directory the kubelet never reads.
+        - name: device-plugins
+          hostPath: {path: {{ $p.devicePluginDir | quote }}, type: Directory}
+        - name: dev
+          hostPath: {path: /dev, type: Directory}
+{{- end }}

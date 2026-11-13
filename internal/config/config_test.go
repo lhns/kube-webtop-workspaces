@@ -14,7 +14,7 @@ func TestDefaults(t *testing.T) {
 	}
 	if c.Names.Prefix != "desktop-" || c.Desktop.Port != 8080 ||
 		!*c.Controller.RequireAgentReady || len(c.Controller.CleanExitCodes) != 1 || c.Storage.MountPath != "/persist" ||
-		c.Controller.MaxConcurrentReconciles != 4 {
+		c.Controller.MaxConcurrentReconciles != 4 || c.Desktop.TunResource != "webtop.lhns.github.io/tun" {
 		t.Fatalf("unexpected defaults: %+v", c)
 	}
 	if c.ValidateController() == nil {
@@ -31,6 +31,8 @@ func TestRejects(t *testing.T) {
 		"namespace: ws\ndesktop: {stopAfterUnseen: 48h}\n",
 		"namespace: ws\ngateway: {logoutUrl: /logout}\n",
 		"namespace: ws\ngateway: {logoutUrl: 'javascript:alert(1)'}\n",
+		"namespace: ws\ndesktop: {tunResource: tun}\n",
+		"namespace: ws\ndesktop: {tunResource: 'a b/tun'}\n",
 	} {
 		if _, err := Parse([]byte(in)); err == nil {
 			t.Errorf("Parse(%q) succeeded", in)

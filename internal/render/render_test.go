@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/lhns/kube-webtop-workspaces/api/v1alpha1"
@@ -146,24 +147,26 @@ func TestTunDevice(t *testing.T) {
 	off := PodTemplate(cfg, d)
 	cfg.Desktop.TunDevice = true
 	on := PodTemplate(cfg, d)
-	var vol *corev1.Volume
-	for i := range on.Spec.Volumes {
-		if on.Spec.Volumes[i].Name == volTun {
-			vol = &on.Spec.Volumes[i]
-		}
+	tun := corev1.ResourceName(cfg.Desktop.TunResource)
+	c := on.Spec.Containers[0]
+	if q, ok := c.Resources.Limits[tun]; !ok || q.Value() != 1 {
+		t.Fatalf("tun limit: %+v", c.Resources.Limits)
 	}
-	if vol == nil || vol.HostPath == nil || vol.HostPath.Path != "/dev/net/tun" || *vol.HostPath.Type != corev1.HostPathCharDev {
-		t.Fatalf("tun volume: %+v", vol)
-	}
-	m := on.Spec.Containers[0].VolumeMounts
-	if last := m[len(m)-1]; last.Name != volTun || last.MountPath != "/dev/net/tun" {
-		t.Fatalf("tun mount: %+v", last)
-	}
-	if len(off.Spec.Volumes) != len(on.Spec.Volumes)-1 || TemplateHash(off) == TemplateHash(on) {
+	if _, ok := off.Spec.Containers[0].Resources.Limits[tun]; ok || TemplateHash(off) == TemplateHash(on) {
 		t.Fatal("tunDevice off must add nothing and on must change the template")
 	}
-	if on.Spec.Containers[0].SecurityContext.Privileged != nil {
+	// A hostPath for the device fails in a user-namespaced pod (idmapped mount).
+	if len(on.Spec.Volumes) != len(off.Spec.Volumes) || len(c.VolumeMounts) != len(off.Spec.Containers[0].VolumeMounts) {
+		t.Fatal("tunDevice must add no volume or mount")
+	}
+	if c.SecurityContext.Privileged != nil {
 		t.Fatal("tunDevice must not make the pod privileged")
+	}
+	// The configured limits stay, and the config's own map is not written.
+	cfg.Desktop.Resources.Limits = corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("1Gi")}
+	on = PodTemplate(cfg, d)
+	if l := on.Spec.Containers[0].Resources.Limits; len(l) != 2 || len(cfg.Desktop.Resources.Limits) != 1 {
+		t.Fatalf("limits: %+v, config: %+v", l, cfg.Desktop.Resources.Limits)
 	}
 }
 

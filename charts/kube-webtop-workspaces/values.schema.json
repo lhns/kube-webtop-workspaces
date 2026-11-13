@@ -156,6 +156,19 @@
         },
         "title": {"type": "string"},
         "tunDevice": {"type": "boolean"},
+        "tunResource": {"type": "string", "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?/[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?$"},
+        "tunDevicePlugin": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "image": {"type": "string", "minLength": 1},
+            "devicePluginDir": {"type": "string", "pattern": "^/"},
+            "count": {"type": "integer", "minimum": 1},
+            "priorityClassName": {"type": "string"},
+            "resources": {"type": "object"}
+          }
+        },
         "seccompProfile": {
           "type": ["object", "null"],
           "additionalProperties": false,

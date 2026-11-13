@@ -203,7 +203,9 @@ for name, args in cases.items():
     elif any(k in kinds for k in ("Ingress", "HTTPRoute", "ServiceMonitor")):
         fail(f"{name}: optional resources rendered by default")
 
-    ds = [d for d in docs if d["kind"] == "DaemonSet"]
+    def component(d):
+        return d["spec"]["template"]["metadata"]["labels"]["app.kubernetes.io/component"]
+    ds = [d for d in docs if d["kind"] == "DaemonSet" and component(d) == "desktop-prepull"]
     if name != "all-on":
         if ds:
             fail(f"{name}: desktop pre-pull DaemonSet rendered by default")
@@ -240,6 +242,34 @@ for name, args in cases.items():
             fail(f"{name}: pre-pull pod carries the desktop labels")
     if "prePull" in cfg["desktop"]:
         fail(f"{name}: chart-only desktop.prePull leaked into the config")
+
+    # The tun device plugin serves exactly the resource the controller requests (ADR 0023).
+    tun = [d for d in docs if d["kind"] == "DaemonSet" and component(d) == "tun-device-plugin"]
+    want_res = "devices.example.org/tun" if name == "all-on" else "webtop.lhns.github.io/tun"
+    if "tunDevicePlugin" in cfg["desktop"]:
+        fail(f"{name}: chart-only desktop.tunDevicePlugin leaked into the config")
+    if cfg["desktop"].get("tunDevice") is not True or cfg["desktop"].get("tunResource") != want_res:
+        fail(f"{name}: desktop tunDevice/tunResource {cfg['desktop'].get('tunDevice')}/{cfg['desktop'].get('tunResource')}")
+    if len(tun) != 1:
+        fail(f"{name}: want one tun device plugin DaemonSet, got {len(tun)}")
+    else:
+        pod = tun[0]["spec"]["template"]["spec"]
+        c = pod["containers"][0]
+        domain, res = want_res.split("/")
+        dev = json.loads(c["args"][2])
+        if c["args"][:2] != [f"--domain={domain}", "--device"] or dev["name"] != res                 or dev["groups"] != [{"count": 110, "paths": [{"path": "/dev/net/tun", "permissions": "rw"}]}]:
+            fail(f"{name}: tun device plugin args {c['args']}")
+        if "@sha256:" not in c["image"]:
+            fail(f"{name}: tun device plugin image not pinned by digest: {c['image']}")
+        want_dir = "/opt/kubelet/device-plugins" if name == "all-on" else "/var/lib/kubelet/device-plugins"
+        vols = {v["name"]: v["hostPath"] for v in pod["volumes"]}
+        if vols != {"device-plugins": {"path": want_dir, "type": "Directory"}, "dev": {"path": "/dev", "type": "Directory"}}:
+            fail(f"{name}: tun device plugin volumes {vols}")
+        if c["securityContext"].get("privileged") or c["securityContext"]["capabilities"] != {"drop": ["ALL"]}                 or pod.get("automountServiceAccountToken") is not False or "hostUsers" in pod:
+            fail(f"{name}: tun device plugin must run unprivileged without a token")
+        if name == "all-on" and (pod.get("nodeSelector") != {"kubernetes.io/os": "linux"}
+                                 or pod.get("tolerations") != [{"key": "gpu", "operator": "Exists"}]):
+            fail(f"{name}: tun device plugin does not use the desktop nodeSelector/tolerations")
 
     for d in docs:
         if d["kind"] == "Deployment":
@@ -290,6 +320,13 @@ refuse("not a plain file name", "--set", "desktop.image=x", "--set-json", 'deskt
 refuse("LC_TIME", "--set", "desktop.image=x", "--set", "desktop.defaults.formats.LC_ALL=sv_SE.UTF-8")
 refuse("securityProfilesOperator sets type and localhostProfile itself", "--set", "desktop.image=x",
        "--set", "desktop.seccompProfile.securityProfilesOperator=true", "--set", "desktop.seccompProfile.type=Localhost")
+refuse("desktop.tunResource", "--set", "desktop.image=x", "--set", "desktop.tunResource=tun")
 print("ok: invalid values refused")
+
+# tunDevice off (or the plugin off): no plugin DaemonSet.
+for args in (["--set", "desktop.tunDevice=false"], ["--set", "desktop.tunDevicePlugin.enabled=false"]):
+    if any(d["kind"] == "DaemonSet" for d in render("--set", "desktop.image=x", *args)):
+        fail(f"tun device plugin rendered with {args}")
+print("ok: tun device plugin off")
 
 sys.exit(1 if errors else 0)
