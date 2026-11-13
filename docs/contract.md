@@ -861,9 +861,9 @@ Gateway:
 
 | metric | type | labels |
 | --- | --- | --- |
-| `webtop_gateway_requests_total` | counter | `outcome` (`proxy`, `boot`, `off`, `start`, `asleep`, `wake`, `app`, `capped`, `unavailable`, `denied`, `notfound`, `error`) |
+| `webtop_gateway_requests_total` | counter | `outcome` (`proxy`, `boot`, `off`, `start`, `asleep`, `wake`, `failed`, `restart`, `stop`, `app`, `capped`, `unavailable`, `denied`, `notfound`, `error`) |
 | `webtop_gateway_websockets` | gauge | — |
-| `webtop_gateway_starts_total` | counter | `trigger` (`create`, `navigate`, `button`) |
+| `webtop_gateway_starts_total` | counter | `trigger` (`create`, `navigate`, `button`, `restart`) |
 
 Plus the controller-runtime and Go/process defaults.
 
