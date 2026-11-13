@@ -114,7 +114,7 @@ desktop:
   tunResource: webtop.lhns.github.io/tun
   # Chart-only DaemonSet of squat/generic-device-plugin serving tunResource, rendered with tunDevice.
   # Runs on the nodes desktops can run on (their nodeSelector, tolerations, affinity). Needs hostPath
-  # (/dev and devicePluginDir): its namespace must allow Pod Security privileged. Disable it to run a
+  # (/dev/net and devicePluginDir): its namespace must allow Pod Security privileged. Disable it to run a
   # plugin of your own; tunResource must then match what that plugin serves.
   tunDevicePlugin:
     enabled: true

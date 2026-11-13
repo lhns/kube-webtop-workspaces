@@ -25,6 +25,6 @@ idmapped; in Kubernetes only a device plugin's allocation puts a device there wi
 
 - Without a plugin serving the resource on a node, desktops stay `Pending` there with
   `Insufficient <tunResource>` instead of failing to start.
-- The plugin mounts the host's `/dev` and the kubelet's device plugin directory; its namespace needs
+- The plugin mounts the host's `/dev/net` and the kubelet's device plugin directory; its namespace needs
   Pod Security `privileged`, which the desktops' namespace already has.
 - Turning `tunDevice` on or off changes the pod template, so running desktops get `updatePending`.

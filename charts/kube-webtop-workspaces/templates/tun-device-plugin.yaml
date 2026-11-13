@@ -63,11 +63,13 @@ spec:
               type: RuntimeDefault
           volumeMounts:
             - {name: device-plugins, mountPath: /var/lib/kubelet/device-plugins}
-            - {name: dev, mountPath: /dev, readOnly: true}
+            # Only /dev/net: a read-only host /dev leaves no place for the kubelet's /dev/termination-log.
+            - {name: dev-net, mountPath: /dev/net, readOnly: true}
       volumes:
         # Directory: a wrong path fails the pod instead of creating a directory the kubelet never reads.
         - name: device-plugins
           hostPath: {path: {{ $p.devicePluginDir | quote }}, type: Directory}
-        - name: dev
-          hostPath: {path: /dev, type: Directory}
+        # Missing without the tun module: the pod then does not start on that node.
+        - name: dev-net
+          hostPath: {path: /dev/net, type: Directory}
 {{- end }}

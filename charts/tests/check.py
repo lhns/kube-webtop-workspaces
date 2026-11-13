@@ -263,7 +263,7 @@ for name, args in cases.items():
             fail(f"{name}: tun device plugin image not pinned by digest: {c['image']}")
         want_dir = "/opt/kubelet/device-plugins" if name == "all-on" else "/var/lib/kubelet/device-plugins"
         vols = {v["name"]: v["hostPath"] for v in pod["volumes"]}
-        if vols != {"device-plugins": {"path": want_dir, "type": "Directory"}, "dev": {"path": "/dev", "type": "Directory"}}:
+        if vols != {"device-plugins": {"path": want_dir, "type": "Directory"}, "dev-net": {"path": "/dev/net", "type": "Directory"}}:
             fail(f"{name}: tun device plugin volumes {vols}")
         if c["securityContext"].get("privileged") or c["securityContext"]["capabilities"] != {"drop": ["ALL"]}                 or pod.get("automountServiceAccountToken") is not False or "hostUsers" in pod:
             fail(f"{name}: tun device plugin must run unprivileged without a token")
