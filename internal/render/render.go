@@ -14,6 +14,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
@@ -27,7 +28,6 @@ const (
 	volRun        = "run"
 	volShm        = "shm"
 	volSA         = "webtop-sa"
-	volTun        = "tun"
 	portName      = "http"
 	agentPortName = "agent"
 )
@@ -168,14 +168,16 @@ func PodTemplate(cfg *config.Config, d *v1alpha1.Desktop) corev1.PodTemplateSpec
 			}}},
 		}}},
 	}
-	// The runtime's default device rules allow tun (10:200); the pod needs no further privilege.
-	if dc.TunDevice {
-		mounts = append(mounts, corev1.VolumeMount{Name: volTun, MountPath: "/dev/net/tun"})
-		volumes = append(volumes, corev1.Volume{Name: volTun, VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{
-			Path: "/dev/net/tun", Type: ptr(corev1.HostPathCharDev),
-		}}})
-	}
 	volumes = append(volumes, dc.ExtraVolumes...)
+
+	res := *dc.Resources.DeepCopy()
+	// A device, not a hostPath: a user-namespaced pod's volumes are idmapped, which devtmpfs refuses.
+	if dc.TunDevice {
+		if res.Limits == nil {
+			res.Limits = corev1.ResourceList{}
+		}
+		res.Limits[corev1.ResourceName(dc.TunResource)] = resource.MustParse("1")
+	}
 
 	container := corev1.Container{
 		Name:            names.ContainerName,
@@ -187,7 +189,7 @@ func PodTemplate(cfg *config.Config, d *v1alpha1.Desktop) corev1.PodTemplateSpec
 		},
 		Env:             env,
 		VolumeMounts:    mounts,
-		Resources:       *dc.Resources.DeepCopy(),
+		Resources:       res,
 		SecurityContext: sc,
 		ReadinessProbe: &corev1.Probe{
 			ProbeHandler:  corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(dc.Port)}},

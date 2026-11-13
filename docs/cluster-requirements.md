@@ -52,8 +52,10 @@ inside a user namespace, which needs the following.
   ```
 
   then `desktop.seccompProfile: {type: Localhost, localhostProfile: webtop-desktop.json}`.
-- With `desktop.tunDevice` (chart default; set `false` to skip it): `/dev/net/tun` on the nodes (the `tun` module). The default device rules of
-  containerd/runc allow it, so the pod stays unprivileged.
+- With `desktop.tunDevice` (chart default; set `false` to skip it): `/dev/net/tun` on the nodes (the `tun` module),
+  served as the extended resource `desktop.tunResource` by a device plugin: the chart's
+  (`desktop.tunDevicePlugin`, on by default) or your own. Without one, desktops stay `Pending` with
+  `Insufficient <tunResource>` ([ADR 0023](adr/0023-tun-is-a-device-plugin-resource.md)).
 - A **StorageClass** for the per-user PVCs (`storage.storageClassName`, or a default class). The
   controller never deletes PVCs; reclaiming them is an operator decision.
 

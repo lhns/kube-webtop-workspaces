@@ -7,6 +7,8 @@ desktop:
   extraVolumes: [{name: data, emptyDir: {}}]
   extraVolumeMounts: [{name: data, mountPath: /data}]
   tunDevice: true
+  tunResource: devices.example.org/tun
+  tunDevicePlugin: {devicePluginDir: /opt/kubelet/device-plugins}
   seccompProfile: {type: Localhost, localhostProfile: webtop-desktop.json}
   nix:
     extraSubstituters: [http://cache.example.org/a, http://cache.example.org/b]

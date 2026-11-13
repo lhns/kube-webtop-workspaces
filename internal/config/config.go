@@ -16,6 +16,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/yaml"
 
 	"github.com/lhns/kube-webtop-workspaces/internal/names"
@@ -85,8 +86,10 @@ type Desktop struct {
 	// StopAfterUnseen stops a desktop whose owner the gateway has not served for this long.
 	// 0 (the default) never stops one; otherwise at least MinStopAfterUnseen.
 	StopAfterUnseen metav1.Duration `json:"stopAfterUnseen"`
-	// TunDevice mounts the node's /dev/net/tun: rootless container networking (pasta) in the desktop.
-	TunDevice bool `json:"tunDevice"`
+	// TunDevice gives the desktop /dev/net/tun (rootless container networking) by requesting
+	// TunResource, an extended resource of a device plugin (docs/adr/0023).
+	TunDevice   bool   `json:"tunDevice"`
+	TunResource string `json:"tunResource"`
 	// SeccompProfile of the default container securityContext; nil: RuntimeDefault.
 	SeccompProfile *corev1.SeccompProfile `json:"seccompProfile"`
 }
@@ -205,6 +208,7 @@ func (c *Config) Default() {
 	if d.RunSizeLimit.IsZero() {
 		d.RunSizeLimit = resource.MustParse("256Mi")
 	}
+	def(&d.TunResource, "webtop.lhns.github.io/tun")
 	if d.TerminationGracePeriodSeconds == nil {
 		d.TerminationGracePeriodSeconds = ptr(int64(420))
 	}
@@ -257,6 +261,9 @@ func (c *Config) validate() error {
 	}
 	if c.Gateway.LockLogsOut && c.Gateway.LogoutURL == "" {
 		errs = append(errs, errors.New("gateway.lockLogsOut: requires gateway.logoutUrl"))
+	}
+	if r := c.Desktop.TunResource; !strings.Contains(r, "/") || len(validation.IsQualifiedName(r)) > 0 {
+		errs = append(errs, fmt.Errorf("desktop.tunResource %q: must be an extended resource name, <domain>/<name>", r))
 	}
 	errs = append(errs, c.validateSelkies())
 	return errors.Join(errs...)

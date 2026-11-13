@@ -1,6 +1,6 @@
 {{- /* Rendered 1:1 into internal/config. Chart-only keys are stripped; the config parser rejects unknown fields. */ -}}
 {{- $_ := required "desktop.image is required" .Values.desktop.image }}
-{{- $desktop := set (omit (deepCopy .Values.desktop) "nix" "prePull" "softwareCenter" "maxAppScreens" "defaults" "timeZone" "locale") "serviceAccountName" (include "kwt.desktopServiceAccount" .) }}
+{{- $desktop := set (omit (deepCopy .Values.desktop) "nix" "prePull" "tunDevicePlugin" "softwareCenter" "maxAppScreens" "defaults" "timeZone" "locale") "serviceAccountName" (include "kwt.desktopServiceAccount" .) }}
 {{- /* seccompProfile.securityProfilesOperator is chart-only: the profile is rendered (seccompprofile.yaml) and the pod points at the operator's path. */}}
 {{- with .Values.desktop.seccompProfile }}
 {{- if .securityProfilesOperator }}

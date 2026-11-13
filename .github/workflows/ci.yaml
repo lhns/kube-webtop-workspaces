@@ -229,6 +229,29 @@ jobs:
           python3 -c "import yaml" 2>/dev/null || pip install --quiet pyyaml
           python3 charts/tests/check.py
 
+  # The tun device plugin on a real kubelet: envtest has none, and only a running kubelet and
+  # containerd show whether a user-namespaced pod gets the device (docs/adr/0023).
+  tun-userns:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: unit
+    steps:
+      - uses: actions/checkout@v7
+      - uses: azure/setup-helm@v5
+        with:
+          version: v3.16.3
+      - name: install k3s
+        run: |
+          set -euo pipefail
+          curl -sSfLo "$RUNNER_TEMP/k3s" https://github.com/k3s-io/k3s/releases/download/v1.36.5%2Bk3s1/k3s
+          echo "d73847bcd3c5fccef0115b372e2f9a91f3032dc84bbf71518a4617565294d313  $RUNNER_TEMP/k3s" | sha256sum -c
+          sudo install -m 755 "$RUNNER_TEMP/k3s" /usr/local/bin/k3s
+      - name: tun device in a user-namespaced pod
+        run: sudo env "PATH=$PATH" .github/scripts/tun-userns-test.sh
+      - name: k3s log
+        if: failure()
+        run: sudo tail -n 100 /tmp/k3s.log
+
   # ------ controller image ---------------------------------------------------
   # Built once: the scanned image's layers are the ones pushed (same builder, so the second step is a cache hit).
   controller-image:

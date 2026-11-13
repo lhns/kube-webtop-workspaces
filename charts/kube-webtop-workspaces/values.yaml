@@ -106,11 +106,28 @@ desktop:
   # template data, never template text. Becomes SELKIES_UI_TITLE unless selkies sets it; "" keeps
   # Selkies' own title.
   title: "{{ .User }} – Desktop"
-  # Mount the node's /dev/net/tun (a CharDevice hostPath; the runtime's default device rules allow it,
-  # no privilege). Gives containers run inside the desktop (rootless Podman) their own networks; without
-  # it they share the desktop's network. On by default (the desktops ship rootless Podman/docker); set
-  # false on nodes without the tun module or under Pod Security baseline+ (hostPath is disallowed).
+  # Give the desktop the node's /dev/net/tun, so containers run inside it (rootless Podman) get their
+  # own networks; without it they share the desktop's network. The pod requests one tunResource, an
+  # extended resource of a device plugin (a hostPath fails in a user-namespaced pod, docs/adr/0023).
+  # Without a plugin serving tunResource on a node, desktops stay Pending there ("Insufficient <tunResource>").
   tunDevice: true
+  tunResource: webtop.lhns.github.io/tun
+  # Chart-only DaemonSet of squat/generic-device-plugin serving tunResource, rendered with tunDevice.
+  # Runs on the nodes desktops can run on (their nodeSelector, tolerations, affinity). Needs hostPath
+  # (/dev/net and devicePluginDir): its namespace must allow Pod Security privileged. Disable it to run a
+  # plugin of your own; tunResource must then match what that plugin serves.
+  tunDevicePlugin:
+    enabled: true
+    image: ghcr.io/squat/generic-device-plugin:0.2.0@sha256:66c8d5c270eb2b721f1064c549b9b7898152a6d2f0163380a5d37dc7636c20ff
+    # The kubelet's device plugin socket directory. Fixed in the kubelet, not below its root dir:
+    # /var/lib/kubelet/device-plugins on k0s too.
+    devicePluginDir: /var/lib/kubelet/device-plugins
+    # Desktops per node that can get the device; the kubelet's default maxPods.
+    count: 110
+    priorityClassName: ""
+    resources:
+      requests: {cpu: 10m, memory: 16Mi}
+      limits: {memory: 64Mi}
   # Seccomp profile of the desktop container (null: RuntimeDefault). RuntimeDefault refuses pivot_root,
   # which bubblewrap (buildFHSEnv apps, Flatpak) and containers in the desktop need. webtop-nix's
   # seccomp/desktop.json is RuntimeDefault plus pivot_root (docs/cluster-requirements.md):
