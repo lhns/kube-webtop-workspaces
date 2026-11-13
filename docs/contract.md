@@ -139,7 +139,7 @@ labels/annotations to an adopted PVC; it never changes its spec.
      **A running desktop is never restarted by an update.**
 5. **Replicas:** 1 iff `powerState=On`, else 0.
 6. **Stop recording:** when the controller scales 1→0 and `status.lastStop.time < status.lastStart`
-   (nobody recorded a reason), it records reason `admin`. The unseen sweep records `unseen`.
+   (nobody recorded a reason), it records reason `admin`, or `error` while the phase is `Error`. The unseen sweep records `unseen`.
 7. **Clean exit:** while `powerState=On`, a container termination (current or last state) with an
    exit code in `controller.cleanExitCodes` (default `[0]`) and `finishedAt > status.lastStart` is a
    stop with reason `exit`: `powerState=Off`, Deployment to 0. Not an exit stop if
@@ -159,6 +159,7 @@ Only the leader reconciles. Status is written with merge patches of the fields i
 | `kube-stop` | agent (PID 1 got the stop signal from a pod deletion); never recorded |
 | `exit` | controller (clean exit without a recorded stop) |
 | `admin` | controller (`powerState` set `Off` by someone else) |
+| `error` | controller (`powerState` set `Off` by someone else while phase is `Error`: the gateway's error page, section 7.5) |
 | `unseen` | controller (`desktop.stopAfterUnseen`, section 6) |
 
 ### 3.4 Phase and stage
@@ -173,7 +174,7 @@ Only the leader reconciles. Status is written with merge patches of the fields i
 | container waiting (`ContainerCreating`), a `Pulling` event of the pod has no later `Pulled` | `Starting` | `PullingImage` |
 | container waiting, a `FailedAttachVolume` event has no later `SuccessfulAttachVolume` (and no pull is running) | `Starting` | `AttachingVolume` |
 | container waiting, otherwise | `Starting` | `CreatingContainer` |
-| `ErrImagePull`/`ImagePullBackOff`/`CrashLoopBackOff`/`CreateContainerConfigError` | `Error` | the waiting reason (+ `message`) |
+| `ErrImagePull`/`ImagePullBackOff`/`InvalidImageName`/`CrashLoopBackOff`/`CreateContainerConfigError`/`CreateContainerError`/`RunContainerError` | `Error` | the waiting reason (+ `message`) |
 | container terminated, restart pending | `Starting` | `Booting` |
 | container running, no agent report | `Starting` | `Booting` |
 | agent reported, not ready | `Starting` | agent's `stage` (free text, ≤ 64 characters) |
@@ -379,6 +380,7 @@ keeps running until stopped:
 | `<base>/.webtop/start` | POST start, never proxied |
 | `<base>/.webtop/focus?screen=<n\|main>` | POST, `204` `no-store`, same authz as the desktop, same-origin like start (section 7.5), never proxied, never starts or wakes: `503` unless `Running`, `400` unless `screen` matches `^[0-9]{1,9}$\|^main$`. Relays to the agent's `POST /api/v1/focus/<screen>` (section 7.7); the agent's `404` (no app on that screen) is passed on, other failures are `502`. `reload.js` calls it |
 | `<base>/.webtop/wake` | POST wake from the sleep page (section 7.5), never proxied |
+| `<base>/.webtop/restart`, `<base>/.webtop/stop` | POST from the error page (section 7.5), never proxied |
 | `<base>/.webtop/apps/<id>/icon` | GET/HEAD, same authz as the desktop, never proxied: the app's icon from the agent (section 7.6) |
 | `<base>/apps/` | top-level `GET` only: the apps overview (section 7.6). Any other request to it is proxied |
 | `<base>/apps/<name>` | top-level `GET` only: single-app streaming (section 7.6). The gateway owns this path for navigations; any other request to it is proxied like every other path |
@@ -424,7 +426,8 @@ A request is a **navigation** iff:
 | no Desktop (own path) | create with `powerState: On` → boot page | 503 |
 | `Off`, no `status.lastStop` | patch `powerState: On` → boot page | 503 |
 | `Off`, `status.lastStop` set | **off page** "desktop is off — start it?" | 503 |
-| `On`, not `Running` (incl. `Error`) | boot page | 503 |
+| `On`, not `Running`, not `Error` | boot page | 503 |
+| `On`, phase `Error` | **error page** "Your desktop couldn't start" (boot page for 30 s after Restart) | 503 |
 
 503 responses carry `Retry-After: 5` and never start anything. Boot page, off page, SSE and all
 gateway error pages send `Cache-Control: no-store`.
@@ -457,6 +460,18 @@ cookie: the page sets cookie `webtop_csrf` (random 32 bytes, base64url, `HttpOnl
 accepted only if field = cookie (constant-time) and the request is same-origin (`Sec-Fetch-Site:
 same-origin` if present, else `Origin` host = `Host`; neither → reject). Success: patch
 `powerState: On`, `303` to `<base>/`. Failure: 403.
+
+**Error page / restart and stop:** for phase `Error` the page gives the cause in plain words by stage
+(`ErrImagePull`/`ImagePullBackOff`/`InvalidImageName` "The desktop image couldn't be downloaded.",
+`CrashLoopBackOff` "The desktop keeps crashing while it starts.", `CreateContainerConfigError`
+"The desktop's container couldn't be set up.", `Error` "Your desktop's name or storage couldn't be set up. An
+administrator has to fix this.", anything else "The desktop's container failed to start."). `status.message`, pod and node names never
+reach it. Except for stage `Error` it has two forms with the off page's CSRF cookie and field, `POST <base>/.webtop/restart`
+(patch `spec.restartRequestedAt=now`; the controller then applies the template as for a reboot, section 3.2 step 4) and
+`POST <base>/.webtop/stop` (patch `powerState: Off`; the stop is recorded as `error`, and the response is the off page). Same authz as
+start; both do nothing but `303` to `<base>/` unless the desktop is `On` and in a recoverable `Error`. They are counted as outcomes
+`restart` and `stop`, the page as `failed`, and a Restart as start trigger `restart`. The page follows the SSE stream and reloads
+when the phase leaves `Error`; the boot page reloads when it turns to `Error`, and its events carry no `message` then.
 
 **Sleep page / wake:** Sleep (ADR 0019) freezes the stream, so a tab would stay on the last frame.
 `status` carries `"asleep": true` while `status.asleep` is set (omitted otherwise), and `reload.js`
@@ -644,7 +659,7 @@ Missing/invalid token → 401. Valid token but checks 2–4 fail → 403. TokenR
 {"action": "stop|suspend|reboot", "reason": "user|idle|suspend|kube-stop"}
 ```
 
-`reason` may be omitted for `reboot`. `unseen`, `exit`, `admin` → 400. Effects, **completed before the response**:
+`reason` may be omitted for `reboot`. `unseen`, `exit`, `admin`, `error` → 400. Effects, **completed before the response**:
 
 | action / reason | effect |
 | --- | --- |

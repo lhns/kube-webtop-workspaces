@@ -489,3 +489,65 @@ func TestSoftwareRestoreResetWithoutPod(t *testing.T) {
 	// No pod here: an earlier pod's restore must not show on the next boot page.
 	eventually(t, "softwareRestore reset", func() bool { return getDesktop(t, "gina").Status.SoftwareRestore == nil })
 }
+
+// The error page's buttons: a restart from phase Error rolls the current template out (a pending
+// update included), and a stop from it is recorded with reason error.
+func TestRecoverFromError(t *testing.T) {
+	needEnv(t)
+	defer setImage("img:1")
+	createDesktop(t, "ivan", true)
+	waitRunning(t, "ivan")
+	ctx := context.Background()
+	image := func() string { return tryDeployment("ivan").Spec.Template.Spec.Containers[0].Image }
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "desktop-ivan-x", Namespace: testNS, Labels: names.Labels("ivan")},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "desktop", Image: "img:1"}}},
+	}
+	if err := suite.c.Create(ctx, pod); err != nil {
+		t.Fatal(err)
+	}
+	pod.Status.ContainerStatuses = []corev1.ContainerStatus{{
+		Name: "desktop", Image: "img:1",
+		State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff", Message: "back-off"}},
+	}}
+	if err := suite.c.Status().Update(ctx, pod); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "phase Error", func() bool {
+		d := getDesktop(t, "ivan")
+		return d.Status.Phase == v1alpha1.PhaseError && d.Status.Stage == "CrashLoopBackOff"
+	})
+
+	setImage("img:2")
+	poke(t, "ivan")
+	eventually(t, "updatePending", func() bool { return getDesktop(t, "ivan").Status.UpdatePending })
+	if image() != "img:1" {
+		t.Fatal("an erroring desktop's template must not change by itself")
+	}
+
+	// Restart: what the gateway patches.
+	patchSpec(t, "ivan", func(d *v1alpha1.Desktop) {
+		now := metav1.Now()
+		d.Spec.RestartRequestedAt = &now
+	})
+	eventually(t, "template applied by restart", func() bool {
+		d := getDesktop(t, "ivan")
+		return image() == "img:2" && !d.Status.UpdatePending && d.Status.ObservedRestartAt != nil && replicas(tryDeployment("ivan")) == 1
+	})
+	if _, ok := tryDeployment("ivan").Spec.Template.Annotations[names.AnnotationRestartedAt]; !ok {
+		t.Fatal("restarted-at not stamped")
+	}
+
+	// Stop: what the gateway patches. The error is the reason.
+	patchSpec(t, "ivan", func(d *v1alpha1.Desktop) { d.Spec.PowerState = v1alpha1.PowerOff })
+	eventually(t, "scaled to 0, stop recorded as error", func() bool {
+		ls := getDesktop(t, "ivan").Status.LastStop
+		return replicas(tryDeployment("ivan")) == 0 && ls != nil && ls.Reason == v1alpha1.StopError
+	})
+
+	// Start again with a newer template: it is applied.
+	setImage("img:3")
+	patchSpec(t, "ivan", func(d *v1alpha1.Desktop) { d.Spec.PowerState = v1alpha1.PowerOn })
+	eventually(t, "new template on start", func() bool { return image() == "img:3" && replicas(tryDeployment("ivan")) == 1 })
+}

@@ -18,6 +18,9 @@ type Store interface {
 	Get(ctx context.Context, name string) (*v1alpha1.Desktop, error)
 	Create(ctx context.Context, d *v1alpha1.Desktop) error
 	PowerOn(ctx context.Context, d *v1alpha1.Desktop) error
+	// Restart sets spec.restartRequestedAt; PowerOff sets spec.powerState=Off (the controller records the stop).
+	Restart(ctx context.Context, d *v1alpha1.Desktop, at time.Time) error
+	PowerOff(ctx context.Context, d *v1alpha1.Desktop) error
 	// Touch sets spec.lastSeen and, when not empty, spec.displayName.
 	Touch(ctx context.Context, d *v1alpha1.Desktop, seen time.Time, displayName string) error
 }
@@ -44,6 +47,21 @@ func (s clientStore) Create(ctx context.Context, d *v1alpha1.Desktop) error {
 func (s clientStore) PowerOn(ctx context.Context, d *v1alpha1.Desktop) error {
 	obj := d.DeepCopy()
 	obj.Spec.PowerState = v1alpha1.PowerOn
+	return s.c.Patch(ctx, obj, client.MergeFrom(d))
+}
+
+// Restart merge-patches only spec.restartRequestedAt.
+func (s clientStore) Restart(ctx context.Context, d *v1alpha1.Desktop, at time.Time) error {
+	obj := d.DeepCopy()
+	t := metav1.NewTime(at)
+	obj.Spec.RestartRequestedAt = &t
+	return s.c.Patch(ctx, obj, client.MergeFrom(d))
+}
+
+// PowerOff merge-patches only spec.powerState.
+func (s clientStore) PowerOff(ctx context.Context, d *v1alpha1.Desktop) error {
+	obj := d.DeepCopy()
+	obj.Spec.PowerState = v1alpha1.PowerOff
 	return s.c.Patch(ctx, obj, client.MergeFrom(d))
 }
 

@@ -14,6 +14,9 @@ const (
 	outCapped      = "capped"
 	outAsleep      = "asleep"
 	outWake        = "wake"
+	outFailed      = "failed"
+	outRestart     = "restart"
+	outStop        = "stop"
 	outApps        = "apps"
 	outUnavailable = "unavailable"
 	outDenied      = "denied"
@@ -26,6 +29,7 @@ const (
 	triggerCreate   = "create"
 	triggerNavigate = "navigate"
 	triggerButton   = "button"
+	triggerRestart  = "restart"
 )
 
 // Metrics are the gateway's own series (docs/contract.md, section 11).

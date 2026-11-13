@@ -20,6 +20,10 @@ time{white-space:nowrap}
 .btn:hover{background:var(--accent-h)}
 .btn:active{background:var(--accent-a);transform:translateY(1px)}
 .btn:focus-visible{outline:3px solid var(--accent);outline-offset:3px}
+.btn.alt{color:var(--fg);background:transparent;border:1px solid var(--line)}
+.btn.alt:hover{border-color:var(--accent)}
+.btns{display:flex;flex-wrap:wrap;gap:0 .75rem;justify-content:center}
+.btns form{margin:0}
 .btn:disabled{opacity:.6;cursor:progress;transform:none}
 @media(max-width:480px){main{padding:1.75rem 1.25rem}.btn{display:block;width:100%}}
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
@@ -80,7 +84,7 @@ main.wide{max-width:56rem}
     if(!pullTimer){pullTimer=setInterval(showPull,1000)}
   }
   var restoreEl=document.getElementById("restore");
-  var idleTimer=null;
+  var idleTimer=null,errTimer=null,sawOther=false;
   var es=new EventSource({{.EventsURL}});
   es.addEventListener("status",function(e){
     var s=JSON.parse(e.data);
@@ -93,6 +97,14 @@ main.wide{max-width:56rem}
     if(s.phase==="Off"||s.phase==="Stopping"){
       if(!idleTimer){idleTimer=setTimeout(function(){location.reload()},30000)}
     }else if(idleTimer){clearTimeout(idleTimer);idleTimer=null}
+    // Error: reload to get the error page. Right after Restart the status still shows the old
+    // error, so a page that opened on one waits before it looks again.
+    if(s.phase==="Error"){
+      if(!errTimer){errTimer=setTimeout(function(){location.reload()},sawOther?1500:30000)}
+    }else{
+      sawOther=true;
+      if(errTimer){clearTimeout(errTimer);errTimer=null}
+    }
   });
   es.addEventListener("ready",function(){es.close();location.reload()});
 })();
@@ -140,6 +152,41 @@ main.wide{max-width:56rem}
     setTimeout(function(){b.disabled=true;b.textContent="Waking…"},0);
   });
   addEventListener("pageshow",function(e){if(e.persisted){b.disabled=false;b.textContent="Wake desktop"}});
+})();
+</script>
+{{template "foot" .}}{{end}}
+
+{{define "failed"}}{{template "head" .}}
+<h1>{{.Title}}</h1>
+<p class="lead">{{.Reason}}</p>
+{{if .CanRecover}}<p class="muted">Restarting applies any pending update. Stopping keeps your files.</p>
+<div class="btns">
+<form method="post" action="{{.RestartURL}}" class="act" data-busy="Restarting…">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<button class="btn" type="submit">Restart desktop</button>
+</form>
+<form method="post" action="{{.StopURL}}" class="act" data-busy="Stopping…">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<button class="btn alt" type="submit">Stop desktop</button>
+</form>
+</div>{{end}}
+<script>
+(function(){
+  var fs=document.querySelectorAll("form.act");
+  function all(d){for(var i=0;i<fs.length;i++){fs[i].querySelector("button").disabled=d}}
+  Array.prototype.forEach.call(fs,function(f){
+    var b=f.querySelector("button"),label=b.textContent;
+    f.addEventListener("submit",function(e){
+      if(b.disabled){e.preventDefault();return}
+      // Disable after the submit has been collected: a disabled button is not a form field, and the CSRF field is separate.
+      setTimeout(function(){all(true);b.textContent=f.getAttribute("data-busy")},0);
+    });
+    addEventListener("pageshow",function(e){if(e.persisted){all(false);b.textContent=label}});
+  });
+  // The desktop recovered or was stopped meanwhile: show the right page.
+  var es=new EventSource({{.EventsURL}});
+  es.addEventListener("status",function(e){if(JSON.parse(e.data).phase!=="Error"){es.close();location.reload()}});
+  es.addEventListener("ready",function(){es.close();location.reload()});
 })();
 </script>
 {{template "foot" .}}{{end}}
