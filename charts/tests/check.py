@@ -257,7 +257,8 @@ for name, args in cases.items():
         c = pod["containers"][0]
         domain, res = want_res.split("/")
         dev = json.loads(c["args"][2])
-        if c["args"][:2] != [f"--domain={domain}", "--device"] or dev["name"] != res                 or dev["groups"] != [{"count": 110, "paths": [{"path": "/dev/net/tun", "permissions": "rw"}]}]:
+        if (c["args"][:2] != [f"--domain={domain}", "--device"] or dev["name"] != res
+                or dev["groups"] != [{"count": 110, "paths": [{"path": "/dev/net/tun", "permissions": "rw"}]}]):
             fail(f"{name}: tun device plugin args {c['args']}")
         if "@sha256:" not in c["image"]:
             fail(f"{name}: tun device plugin image not pinned by digest: {c['image']}")
@@ -265,7 +266,8 @@ for name, args in cases.items():
         vols = {v["name"]: v["hostPath"] for v in pod["volumes"]}
         if vols != {"device-plugins": {"path": want_dir, "type": "Directory"}, "dev-net": {"path": "/dev/net", "type": "Directory"}}:
             fail(f"{name}: tun device plugin volumes {vols}")
-        if c["securityContext"].get("privileged") or c["securityContext"]["capabilities"] != {"drop": ["ALL"]}                 or pod.get("automountServiceAccountToken") is not False or "hostUsers" in pod:
+        if (c["securityContext"].get("privileged") or c["securityContext"]["capabilities"] != {"drop": ["ALL"]}
+                or pod.get("automountServiceAccountToken") is not False or "hostUsers" in pod):
             fail(f"{name}: tun device plugin must run unprivileged without a token")
         if name == "all-on" and (pod.get("nodeSelector") != {"kubernetes.io/os": "linux"}
                                  or pod.get("tolerations") != [{"key": "gpu", "operator": "Exists"}]):
